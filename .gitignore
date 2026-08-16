@@ -1,6 +1,7 @@
 # 本地构建产物（由 `make build` / `make cross` 生成，勿提交）
 /panda-xiangqi
 /panda-xiangqi.exe
+/panda-xiangqi-windows-amd64.exe
 /qi-jing
 /qi-jing.exe
 /qi-jing.exe~
@@ -16,7 +17,14 @@ config.yaml
 fnpack.exe
 *.fpk
 fnos/panda-xiangqi/app/server/panda-xiangqi
+fnos/panda-xiangqi/app/server/engines/
 fnos/panda-xiangqi-arm/
+
+# 内置皮卡鱼引擎（官方 release 二进制 + NNUE 权重，体量大，单独放置、勿入库）
+dist-engines/
+
+# 临时下载 / 解包目录（7z 与解压产物，勿入库）
+.tmp_engines/
 
 # 图标草稿与一次性生成脚本（非源码）
 icon-drafts/

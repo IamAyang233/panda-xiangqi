@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -47,6 +48,14 @@ func filepathBase(p string) string {
 	return p
 }
 
+// fileExists 判断文件是否存在（用于探测随包内置的 NNUE 权重）。
+func fileExists(p string) bool {
+	if _, err := os.Stat(p); err != nil {
+		return false
+	}
+	return true
+}
+
 func (e *UCIEngine) start() error {
 	cmd := exec.Command(e.path)
 	stdin, err := cmd.StdinPipe()
@@ -77,10 +86,20 @@ func (e *UCIEngine) start() error {
 		close(e.lines)
 	}()
 
+	// 部分打包器（如 fnpack）不会保留可执行位，这里尽力补上 +x，
+	// 否则静态链接的皮卡鱼二进制无法被 os/exec 直接拉起。
+	_ = os.Chmod(e.path, 0o755)
+
 	e.send("uci")
 	if err := e.expect("uciok", 5*time.Second); err != nil {
 		e.kill()
 		return err
+	}
+
+	// 指向随包内置的 NNUE 权重文件，避免引擎因找不到 pikafish.nnue 而退出。
+	// 该文件与引擎二进制同目录（engines/pikafish.nnue）。
+	if nnue := filepath2(e.path) + "/pikafish.nnue"; fileExists(nnue) {
+		e.send("setoption name EvalFile value " + nnue)
 	}
 	e.send("isready")
 	if err := e.expect("readyok", 5*time.Second); err != nil {

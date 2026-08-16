@@ -50,6 +50,8 @@ func candidatePaths(cfgPath string) []string {
 		dir := filepath2(exe)
 		for _, name := range []string{"pikafish", "Pikafish", "pikafish.exe", "Pikafish.exe"} {
 			list = append(list, dir+"/"+name)
+			// 兼容随包内置：可执行文件同目录下的 engines/ 子目录（README 文档约定）
+			list = append(list, dir+"/engines/"+name)
 		}
 	}
 	return list

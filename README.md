@@ -72,9 +72,11 @@ make test      # 全部测试
 make cross     # Windows/Linux/macOS 三平台产物 → dist/
 ```
 
-## 皮卡鱼（可选，提升高档棋力）
+## 皮卡鱼（UCI 引擎，飞牛 fnOS 版随包内置）
 
-自研 SimpleEngine 保证开箱可玩；放入皮卡鱼可获得特大级棋力：
+飞牛 fnOS 版（x86 / arm）的 `panda-xiangqi-x86.fpk` / `panda-xiangqi-arm.fpk` **已随包内置皮卡鱼（Pikafish）引擎与 `pikafish.nnue` 权重**，零外部依赖、开箱即用；引擎二进制与权重位于 `app/server/engines/` 下，并由服务端在启动时自动 `chmod +x` 并指向内置权重。低档位（1~4）始终使用自研 SimpleEngine，5 档及以上优先皮卡鱼，缺失或崩溃时自动回退自研引擎。
+
+本地源码构建 / 桌面运行（非 fnOS 包）如需皮卡鱼，可任选其一放入：
 
 ```bash
 # 方式一：PATH 中
@@ -86,7 +88,9 @@ pikafish --version
 engine: /path/to/pikafish
 ```
 
-> 皮卡鱼为 GPLv3：闭源分发时请引导用户自行下载引擎，勿随包分发。
+> 皮卡鱼为 GPLv3。随 fnOS 包分发时，其许可证（`Copying.txt` / `NNUE-License.md`）已一并内置在 `app/server/engines/` 中；源码见官方仓库 `official-pikafish/Pikafish`。
+>
+> 自定义打包：把官方 release 的 `Linux/pikafish-*`（x86_64，取 `sse41-popcnt` 以兼顾老 CPU）或 `Android/pikafish-armv8`（aarch64）以及 `pikafish.nnue` 放进仓库根 `dist-engines/{x86_64,aarch64}/` 与 `dist-engines/pikafish.nnue`，再 `make fpk` / `make fpk-arm` 即自动嵌入（该目录已在 `.gitignore` 中忽略，不入库）。
 
 ## 大模型对弈配置
 

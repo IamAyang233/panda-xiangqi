@@ -7,7 +7,14 @@ LDFLAGS := -s -w
 FNK_PKG := fnos/panda-xiangqi
 FNK_BIN := $(FNK_PKG)/app/server/panda-xiangqi
 
-.PHONY: all test build run clean cross docker puzzle-check fpk
+# 内置皮卡鱼引擎（可选）：把官方 release 的二进制与 pikafish.nnue 放入 dist-engines/
+# 后，fpk / fpk-arm 会将其嵌入 app/server/engines/。该目录已在 .gitignore 中忽略（不入库）。
+ENGINE_DIST := dist-engines
+ENGINE_NNUE := $(ENGINE_DIST)/pikafish.nnue
+ENGINE_X86  := $(ENGINE_DIST)/x86_64/pikafish
+ENGINE_ARM  := $(ENGINE_DIST)/aarch64/pikafish
+
+.PHONY: all test build run clean cross docker puzzle-check fpk fpk-arm
 
 all: build
 
@@ -45,21 +52,43 @@ clean:
 
 ## fpk: 交叉编译 linux/amd64 静态二进制并打包为飞牛 fnOS .fpk 原生应用
 ##   需先安装 fnpack（https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64）。
+##   若 dist-engines/ 下存在皮卡鱼二进制与 pikafish.nnue，则随包内置。
 fpk:
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(FNK_BIN) ./cmd/server
+	@if [ -f $(ENGINE_X86) ] && [ -f $(ENGINE_NNUE) ]; then \
+		mkdir -p $(FNK_PKG)/app/server/engines; \
+		cp $(ENGINE_X86) $(FNK_PKG)/app/server/engines/pikafish; \
+		cp $(ENGINE_NNUE) $(FNK_PKG)/app/server/engines/pikafish.nnue; \
+		cp $(ENGINE_DIST)/Copying.txt $(FNK_PKG)/app/server/engines/Copying.txt; \
+		cp $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)/app/server/engines/NNUE-License.md; \
+		echo "[fpk] 内置皮卡鱼(x86_64) 已嵌入"; \
+	else \
+		echo "[fpk] 未找到 dist-engines，跳过内置引擎"; \
+	fi
 	fnpack build --directory $(FNK_PKG)
+	mv panda-xiangqi.fpk panda-xiangqi-x86.fpk
 
 ## fpk-arm: 交叉编译 linux/arm64 并打包 ARM 版 .fpk（自动复制目录、改 platform、产物重命名）
 ##   临时复制 fnos/panda-xiangqi-arm 目录并把 manifest 的 platform=x86 改为 arm，打包后
 ##   重命名为 panda-xiangqi-arm.fpk，最后清理临时目录。会自动保护已存在的 x86 版
-##   panda-xiangqi.fpk 不被覆盖。
+##   panda-xiangqi-x86.fpk 不被覆盖。
 fpk-arm:
 	rm -rf $(FNK_PKG)-arm
 	cp -r $(FNK_PKG) $(FNK_PKG)-arm
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(FNK_PKG)-arm/app/server/panda-xiangqi ./cmd/server
+	@if [ -f $(ENGINE_ARM) ] && [ -f $(ENGINE_NNUE) ]; then \
+		mkdir -p $(FNK_PKG)-arm/app/server/engines; \
+		cp $(ENGINE_ARM) $(FNK_PKG)-arm/app/server/engines/pikafish; \
+		cp $(ENGINE_NNUE) $(FNK_PKG)-arm/app/server/engines/pikafish.nnue; \
+		cp $(ENGINE_DIST)/Copying.txt $(FNK_PKG)-arm/app/server/engines/Copying.txt; \
+		cp $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)-arm/app/server/engines/NNUE-License.md; \
+		echo "[fpk-arm] 内置皮卡鱼(aarch64) 已嵌入"; \
+	else \
+		echo "[fpk-arm] 未找到 dist-engines，跳过内置引擎"; \
+	fi
 	sed -i 's/^platform=x86$$/platform=arm/' $(FNK_PKG)-arm/manifest
-	@if [ -f panda-xiangqi.fpk ]; then mv panda-xiangqi.fpk panda-xiangqi.fpk.bak; fi
+	@if [ -f panda-xiangqi-x86.fpk ]; then mv panda-xiangqi-x86.fpk panda-xiangqi-x86.fpk.bak; fi
 	fnpack build --directory $(FNK_PKG)-arm
 	mv panda-xiangqi.fpk panda-xiangqi-arm.fpk
-	@if [ -f panda-xiangqi.fpk.bak ]; then mv panda-xiangqi.fpk.bak panda-xiangqi.fpk; fi
+	@if [ -f panda-xiangqi-x86.fpk.bak ]; then mv panda-xiangqi-x86.fpk.bak panda-xiangqi-x86.fpk; fi
 	rm -rf $(FNK_PKG)-arm
