@@ -1,0 +1,15 @@
+# 熊猫象棋服务配置示例：复制为 config.yaml 后按需修改；环境变量可覆盖同名项
+#   QIJING_PORT / QIJING_ENGINE / QIJING_PUZZLES / QIJING_OPEN_BROWSER
+
+# 监听端口
+port: 8080
+
+# 皮卡鱼（Pikafish）引擎路径。留空则自动探测 PATH 与程序同目录 engines/；
+# 未找到时全部档位由自研 SimpleEngine 兜底，开箱可玩。
+# engine: /path/to/pikafish
+
+# 外置残局目录（覆盖内嵌残局；用于扩充残局内容）
+# puzzles: ./puzzles
+
+# 启动时自动打开浏览器（个人使用推荐 true；服务器部署设为 false）
+open_browser: true

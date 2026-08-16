@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "panda-xiangqi.main": {
+      "title": "熊猫象棋",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/panda-xiangqi",
+      "gatewaySocket": "app.sock",
+      "url": "/app/panda-xiangqi",
+      "allUsers": true
+    }
+  }
+}

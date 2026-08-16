@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17130e">
+<title>熊猫象棋 · 中国象棋对战平台</title>
+<link rel="stylesheet" href="css/main.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5.5' cy='6' r='2.5' fill='%23111'/%3E%3Ccircle cx='18.5' cy='6' r='2.5' fill='%23111'/%3E%3Ccircle cx='12' cy='13' r='8' fill='%23fff' stroke='%23111' stroke-width='1'/%3E%3Cellipse cx='8.8' cy='12' rx='2' ry='2.6' fill='%23111'/%3E%3Cellipse cx='15.2' cy='12' rx='2' ry='2.6' fill='%23111'/%3E%3Ccircle cx='8.8' cy='12.4' r='.8' fill='%23fff'/%3E%3Ccircle cx='15.2' cy='12.4' r='.8' fill='%23fff'/%3E%3Cpath d='M11 15.6h2l-.6 1.2h-.8z' fill='%23111'/%3E%3C/svg%3E">
+</head>
+<body>
+<!-- SVG 图标库（描边风格，随 currentColor 变色） -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <defs>
+    <symbol id="i-panda" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="5.6" cy="5.6" r="2.4"/><circle cx="18.4" cy="5.6" r="2.4"/>
+      <circle cx="12" cy="13" r="8"/>
+      <ellipse cx="8.8" cy="12" rx="1.9" ry="2.5"/><ellipse cx="15.2" cy="12" rx="1.9" ry="2.5"/>
+      <circle cx="8.8" cy="12.4" r=".7" fill="currentColor" stroke="none"/>
+      <circle cx="15.2" cy="12.4" r=".7" fill="currentColor" stroke="none"/>
+      <path d="M11.1 15.7h1.8l-.6 1.2h-.6z" fill="currentColor" stroke="none"/>
+      <path d="M12 17v1.2M10.6 19.4c.5.5 1.1.5 1.4 0 .3-.5.9-.5 1.4 0"/>
+    </symbol>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 11l9-8 9 8"/><path d="M5 10v11h14V10"/>
+    </symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9.5a3.5 3.5 0 0 1 0 5"/><path d="M18.5 7a7 7 0 0 1 0 10"/>
+    </symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="8" cy="17" r="2" fill="var(--panel)"/>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M5 5l14 14M19 5L5 19"/>
+    </symbol>
+    <symbol id="i-robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="8" width="14" height="11" rx="2.5"/><path d="M12 8V5"/><circle cx="12" cy="3.8" r="1.2"/>
+      <circle cx="9.5" cy="13" r=".9" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r=".9" fill="currentColor" stroke="none"/><path d="M9.5 16.5h5"/><path d="M5 11H3.5M20.5 11H19"/>
+    </symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+      <path d="M12 3l2.1 5.9L20 11l-5.9 2.1L12 19l-2.1-5.9L4 11l5.9-2.1L12 3z"/><path d="M19 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z"/>
+    </symbol>
+    <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8.5" cy="8" r="3"/><path d="M2.8 20c.8-3.4 3-5.3 5.7-5.3s4.9 1.9 5.7 5.3"/>
+      <circle cx="16.8" cy="9" r="2.4"/><path d="M16 14.6c2.6.4 4.7 2.3 5.4 5.2"/>
+    </symbol>
+    <symbol id="i-piece" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8.5" r="5.2"/><path d="M9.4 8.4h5.2M12 5.8v5.2"/><path d="M6.5 21h11M8.7 21c.4-2.6 1.6-4.4 3.3-4.4s2.9 1.8 3.3 4.4"/>
+    </symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-4"/>
+    </symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3a6 6 0 0 0-3.4 10.9c.9.7 1.4 1.6 1.4 2.6h4c0-1 .5-1.9 1.4-2.6A6 6 0 0 0 12 3z"/><path d="M9.5 19.5h5M10.5 22h3"/>
+    </symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 22V3"/><path d="M5 4c4-2 6.5 2 10.5.2V13C11.5 14.8 9 11 5 13"/>
+    </symbol>
+    <symbol id="i-flip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 3v18M8 3L5 6.2M8 3l3 3.2M16 21V3M16 21l-3-3.2M16 21l3-3.2"/>
+    </symbol>
+    <symbol id="i-restart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3.5V8h-4.5"/>
+    </symbol>
+    <symbol id="i-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5"/><path d="M4 12h10M10 8l4 4-4 4"/>
+    </symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 3v5M15 3v5"/><path d="M6 8h12v3.5a6 6 0 0 1-12 0V8z"/><path d="M12 17.5V22"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <!-- 顶栏 -->
+  <header id="topbar">
+    <button id="btn-home" class="icon-btn" title="返回大厅" hidden><svg class="icon"><use href="#i-home"/></svg></button>
+    <div class="brand">
+      <svg class="icon brand-logo"><use href="#i-panda"/></svg>
+      <span class="brand-cn">熊猫象棋</span>
+      <span class="brand-en">PANDA XIANGQI</span>
+    </div>
+    <div class="top-actions">
+      <button id="btn-sound" class="icon-btn" title="音效开关"><svg class="icon"><use id="sound-use" href="#i-sound"/></svg></button>
+      <button id="btn-settings" class="icon-btn" title="设置"><svg class="icon"><use href="#i-settings"/></svg></button>
+    </div>
+  </header>
+
+  <!-- 大厅 -->
+  <main id="screen-lobby" class="screen">
+    <div class="hero">
+      <div class="hero-seal"><svg class="icon"><use href="#i-panda"/></svg></div>
+      <h1>熊猫象棋</h1>
+      <p class="hero-sub">木盘楸枰 · 纹枰对坐 · 车马炮争锋</p>
+    </div>
+    <div class="mode-grid">
+      <button class="mode-card" data-mode="engine">
+        <div class="mode-icon"><svg class="icon"><use href="#i-robot"/></svg></div>
+        <div class="mode-name">人机对战</div>
+        <div class="mode-desc">本地引擎 · 16 档棋力<br>从入门到特大级</div>
+      </button>
+      <button class="mode-card" data-mode="llm">
+        <div class="mode-icon"><svg class="icon"><use href="#i-sparkle"/></svg></div>
+        <div class="mode-name">大模型对弈</div>
+        <div class="mode-desc">AI 棋手附棋评讲解<br>支持 OpenAI 兼容接口</div>
+      </button>
+      <button class="mode-card" data-mode="local_2p">
+        <div class="mode-icon"><svg class="icon"><use href="#i-people"/></svg></div>
+        <div class="mode-name">双人同屏</div>
+        <div class="mode-desc">同一屏幕轮流落子<br>支持视角翻转</div>
+      </button>
+      <button class="mode-card" data-mode="puzzle">
+        <div class="mode-icon"><svg class="icon"><use href="#i-piece"/></svg></div>
+        <div class="mode-name">残局挑战</div>
+        <div class="mode-desc">经典杀型排局<br>三星评价 · 引擎验证</div>
+      </button>
+    </div>
+    <footer class="lobby-footer">
+      <span id="engine-info"></span>
+      <button id="btn-about-lobby" class="link-btn">关于 · 检查更新 · Bug 反馈</button>
+    </footer>
+  </main>
+
+  <!-- 对局 -->
+  <main id="screen-game" class="screen" hidden>
+    <div class="game-layout">
+      <div class="board-panel">
+        <div class="player-bar top">
+          <div class="avatar black">将</div>
+          <div class="player-info">
+            <div class="player-name" id="opp-name">黑方</div>
+            <div class="player-state" id="opp-state"></div>
+          </div>
+        </div>
+        <div class="llm-bubble" id="llm-bubble" hidden></div>
+        <div class="board-wrap">
+          <canvas id="board-canvas"></canvas>
+          <div id="check-flash"></div>
+        </div>
+        <div class="player-bar bottom">
+          <div class="avatar red">帅</div>
+          <div class="player-info">
+            <div class="player-name" id="self-name">红方</div>
+            <div class="player-state" id="self-state"></div>
+          </div>
+        </div>
+        <div class="game-controls">
+          <button id="btn-undo" class="ctl-btn"><svg class="icon"><use href="#i-undo"/></svg><span>悔棋</span></button>
+          <button id="btn-hint" class="ctl-btn"><svg class="icon"><use href="#i-bulb"/></svg><span>提示</span></button>
+          <button id="btn-resign" class="ctl-btn"><svg class="icon"><use href="#i-flag"/></svg><span>认输</span></button>
+          <button id="btn-flip" class="ctl-btn" title="翻转视角"><svg class="icon"><use href="#i-flip"/></svg><span>翻转</span></button>
+          <button id="btn-restart" class="ctl-btn" hidden><svg class="icon"><use href="#i-restart"/></svg><span>重开</span></button>
+        </div>
+      </div>
+      <aside class="side-panel">
+        <div class="panel-title" id="panel-title">对局</div>
+        <div class="move-list" id="move-list"></div>
+        <div class="puzzle-goal" id="puzzle-goal" hidden></div>
+        <button id="btn-exit" class="ctl-btn danger"><svg class="icon"><use href="#i-exit"/></svg><span>返回大厅</span></button>
+      </aside>
+    </div>
+    <div id="result-overlay" class="overlay" hidden>
+      <div class="result-card" id="result-card">
+        <div class="result-stars" id="result-stars" hidden></div>
+        <div class="result-title" id="result-title"></div>
+        <div class="result-sub" id="result-sub"></div>
+        <div class="result-actions">
+          <button id="btn-result-restart" class="ctl-btn" hidden>再来一局</button>
+          <button id="btn-result-close" class="ctl-btn">查看棋盘</button>
+          <button id="btn-result-exit" class="ctl-btn danger">返回大厅</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 残局选择 -->
+  <main id="screen-puzzles" class="screen" hidden>
+    <div class="puzzle-head">
+      <h2>残局挑战</h2>
+      <div class="difficulty-tabs" id="difficulty-tabs">
+        <button class="tab active" data-diff="">全部</button>
+        <button class="tab" data-diff="入门">入门</button>
+        <button class="tab" data-diff="初级">初级</button>
+        <button class="tab" data-diff="中级">中级</button>
+        <button class="tab" data-diff="高级">高级</button>
+        <button class="tab" data-diff="大师">大师</button>
+      </div>
+    </div>
+    <div class="puzzle-grid" id="puzzle-grid"></div>
+  </main>
+
+  <!-- 关于 -->
+  <main id="screen-about" class="screen" hidden>
+    <div class="about-wrap">
+      <div class="about-hero">
+        <div class="about-logo"><svg class="icon"><use href="#i-panda"/></svg></div>
+        <div class="about-title">熊猫象棋</div>
+        <div class="about-ver" id="about-version">PANDA XIANGQI</div>
+      </div>
+
+      <section class="settings-section about-update">
+        <h3>检查更新</h3>
+        <div class="settings-row">
+          <button id="btn-check-update" class="ctl-btn"><svg class="icon"><use href="#i-restart"/></svg><span>检查更新</span></button>
+          <span id="update-status" class="test-result"></span>
+        </div>
+        <div class="changelog" id="changelog"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Bug 反馈</h3>
+        <label>类别
+          <select id="fb-category">
+            <option>功能异常</option>
+            <option>规则问题</option>
+            <option>棋力/引擎</option>
+            <option>大模型对弈</option>
+            <option>界面/适配</option>
+            <option>建议</option>
+            <option>其他</option>
+          </select>
+        </label>
+        <label>标题<input id="fb-title" placeholder="一句话描述问题"></label>
+        <label>详细描述<textarea id="fb-desc" rows="4" placeholder="复现步骤、期望行为、实际行为…"></textarea></label>
+        <label>联系方式（可选）<input id="fb-contact" placeholder="邮箱 / 微信，便于回访"></label>
+        <label class="inline check"><input id="fb-logs" type="checkbox" checked> 附带诊断信息（仅用于排障，不含任何账号数据）</label>
+        <div class="settings-row">
+          <button id="btn-feedback" class="ctl-btn"><svg class="icon"><use href="#i-exit"/></svg><span>提交反馈</span></button>
+          <span id="fb-result" class="test-result"></span>
+        </div>
+      </section>
+
+      <section class="settings-section about-text">
+        <h3>关于本作</h3>
+        <p>熊猫象棋 —— 内置皮卡鱼（Pikafish）引擎人机对战（16 档）、大模型对弈（OpenAI 兼容 + 引擎候选增强）、双人对弈与残局闯关（引擎验证）。</p>
+      </section>
+    </div>
+  </main>
+
+  <!-- 设置 -->
+  <div id="settings-overlay" class="overlay" hidden>
+    <div class="settings-card">
+      <div class="settings-head"><h2>设置</h2><button id="btn-settings-close" class="icon-btn"><svg class="icon"><use href="#i-close"/></svg></button></div>
+      <section class="settings-section">
+        <h3>大模型对弈（OpenAI 兼容）</h3>
+        <label>Base URL<input id="llm-baseurl" placeholder="https://api.deepseek.com/v1"></label>
+        <label>API Key<input id="llm-apikey" type="password" placeholder="sk-...（仅保存在本机浏览器）"></label>
+        <label>模型名称<input id="llm-model" placeholder="deepseek-chat / glm-4 / qwen-plus ..."></label>
+        <label class="inline">温度 <input id="llm-temp" type="number" step="0.1" min="0" max="2" value="0.3"></label>
+        <label class="inline">超时(ms) <input id="llm-timeout" type="number" step="1000" min="3000" value="30000"></label>
+        <label class="inline check"><input id="llm-assist" type="checkbox" checked> 引擎候选增强（本地引擎先筛强着，AI 从中选解——更快更强）</label>
+        <label class="inline check"><input id="llm-legal" type="checkbox" checked> 非增强模式下附带合法着法表（着法更稳）</label>
+        <div class="settings-row">
+          <button id="btn-llm-test" class="ctl-btn"><svg class="icon"><use href="#i-plug"/></svg><span>连通性测试</span></button>
+          <span id="llm-test-result" class="test-result"></span>
+        </div>
+      </section>
+      <section class="settings-section">
+        <h3>外观与音效</h3>
+        <label>棋子皮肤
+          <select id="theme-pieces">
+            <option value="wood">木质（经典）</option>
+            <option value="jade">玉石（青翠）</option>
+            <option value="porcelain">白瓷（雅致）</option>
+          </select>
+        </label>
+        <label>棋盘
+          <select id="theme-board">
+            <option value="maple">原木暖黄</option>
+            <option value="ebony">黑檀深沉</option>
+          </select>
+        </label>
+        <label class="inline check"><input id="theme-particles" type="checkbox" checked> 粒子特效（关闭可提升低端设备流畅度）</label>
+      </section>
+      <section class="settings-section about">
+        <h3>关于</h3>
+        <p>熊猫象棋 —— 内置皮卡鱼（Pikafish）引擎的人机 / 大模型 / 双人 / 残局中国象棋对战平台。</p>
+        <button id="btn-about" class="ctl-btn"><svg class="icon"><use href="#i-panda"/></svg><span>关于 · 检查更新 · 反馈</span></button>
+      </section>
+    </div>
+  </div>
+
+  <!-- 对局模式设置弹窗 -->
+  <div id="setup-overlay" class="overlay" hidden>
+    <div class="settings-card" id="setup-card"></div>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# 本地构建产物（由 `make build` / `make cross` 生成，勿提交）
+/panda-xiangqi
+/panda-xiangqi.exe
+/qi-jing
+/qi-jing.exe
+/qi-jing.exe~
+dist/
+
+# 运行时日志
+server.log
+
+# 本地配置（保留 config.yaml.example）
+config.yaml
+
+# 飞牛 fnOS 打包产物（由 `make fpk` 重新生成，勿提交）
+fnpack.exe
+panda-xiangqi.fpk
+fnos/panda-xiangqi/app/server/panda-xiangqi
+
+# 图标草稿与一次性生成脚本（非源码）
+icon-drafts/
+_logo_*.py
+icon_*_512.png

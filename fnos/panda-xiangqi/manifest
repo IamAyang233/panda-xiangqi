@@ -1,0 +1,21 @@
+appname=panda-xiangqi
+version=1.1.0
+display_name=熊猫象棋
+desc=熊猫象棋（PanDa Xiangqi）是一款中国象棋对战平台：内置皮卡鱼（Pikafish）引擎人机对战、大模型对弈、双人对弈与残局闯关。
+source=thirdparty
+platform=x86
+maintainer=PanDa
+maintainer_url=https://www.aykeji.cn
+distributor=PanDa
+
+# 统一网关（Socket 转发）需要较新的 fnOS；如你的设备版本更低且网关可用，可下调此值。
+os_min_version=1.1.3100
+
+desktop_uidir=ui
+desktop_applaunchname=panda-xiangqi.main
+
+# Socket 模式：应用监听 Unix Socket，由网关转发，无需固定端口、无需 root。
+ctl_stop=true
+checkport=false
+
+changelog=1.1.0：飞牛 fnOS 统一网关原生应用（免 root、专用用户运行）；内置皮卡鱼引擎人机对战、大模型对弈、双人对弈与残局闯关；内置推送更新检测与反馈入口；单二进制内嵌前端与全部残局，零外部依赖。

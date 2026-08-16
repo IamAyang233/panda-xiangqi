@@ -1,0 +1,125 @@
+#!/bin/bash
+#
+# 熊猫象棋（PanDa Xiangqi）生命周期脚本
+# 由飞牛 fnOS 以 start / stop / status 调用。
+#
+# 运行模型：统一网关（Socket 模式）
+#   - 应用监听 ${TRIM_APPDEST}/app.sock 上的 Unix Socket
+#   - 网关将 /app/panda-xiangqi 转发到该 Socket（不剥离前缀）
+#   - 进程以 config/privilege 声明的专用用户（run-as: package）运行，无需 root
+#
+# 日志与 PID 写入 TRIM_PKGVAR，符合 fnOS 的目录约定。
+
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+
+APP_DIR="${TRIM_APPDEST}/server"
+BINARY="${APP_DIR}/panda-xiangqi"
+
+# 与 manifest / app/ui/config 保持一致
+GATEWAY_PREFIX="/app/panda-xiangqi"
+SOCKET_PATH="${TRIM_APPDEST}/app.sock"
+
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+check_process() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+status_app() {
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+    if [ -n "$pid" ] && check_process "$pid"; then
+      return 0
+    fi
+    rm -f "$PID_FILE"
+  fi
+  return 1
+}
+
+start_app() {
+  if status_app; then
+    return 0
+  fi
+
+  # fnpack 在 Windows/macOS 构建机上打包时会丢失 Unix 可执行位（默认 0666）。
+  # 生命周期脚本以 root 或应用专属用户运行，可在启动时恢复可执行位。
+  chmod 0755 "$BINARY" 2>/dev/null || true
+
+  if [ ! -x "$BINARY" ]; then
+    echo "缺少可执行文件或权限不足: $BINARY" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+  fi
+
+  # 清理可能残留的 Socket（二进制启动时会自行重建）
+  rm -f "$SOCKET_PATH"
+
+  log_msg "启动熊猫象棋 (${TRIM_APPNAME} ${TRIM_APPVER})..."
+  cd "$APP_DIR" || exit 1
+
+  QIJING_SOCKET_PATH="$SOCKET_PATH" \
+  QIJING_GATEWAY_PREFIX="$GATEWAY_PREFIX" \
+  QIJING_OPEN_BROWSER="false" \
+    "$BINARY" >> "$LOG_FILE" 2>&1 &
+
+  echo "$!" > "$PID_FILE"
+  log_msg "已启动，PID=$(cat "$PID_FILE")，Socket=$SOCKET_PATH"
+}
+
+stop_app() {
+  log_msg "停止熊猫象棋..."
+
+  if [ ! -f "$PID_FILE" ]; then
+    rm -f "$SOCKET_PATH"
+    return 0
+  fi
+
+  local pid
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+
+  if [ -z "$pid" ] || ! check_process "$pid"; then
+    rm -f "$PID_FILE"
+    rm -f "$SOCKET_PATH"
+    return 0
+  fi
+
+  # 先优雅终止，超时（10s）后再强制杀死
+  kill -TERM "$pid" 2>> "$LOG_FILE" || true
+
+  local count=0
+  while check_process "$pid" && [ "$count" -lt 10 ]; do
+    sleep 1
+    count=$((count + 1))
+  done
+
+  if check_process "$pid"; then
+    kill -KILL "$pid" 2>> "$LOG_FILE" || true
+    sleep 1
+  fi
+
+  rm -f "$PID_FILE"
+  rm -f "$SOCKET_PATH"
+}
+
+case "$1" in
+  start)
+    start_app
+    ;;
+  stop)
+    stop_app
+    ;;
+  status)
+    if status_app; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    echo "Unknown command: ${1:-<none>}" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+    ;;
+esac

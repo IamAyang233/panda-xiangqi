@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- 熊猫象棋 Logo：木质棋子 × 熊猫脸 × 朱红"象"印 -->
+  <defs>
+    <radialGradient id="woodG" cx="0.38" cy="0.30" r="0.92">
+      <stop offset="0" stop-color="#f9eccf"/>
+      <stop offset="0.60" stop-color="#e6c48d"/>
+      <stop offset="1" stop-color="#c3924f"/>
+    </radialGradient>
+  </defs>
+
+  <!-- 棋子盘体 -->
+  <circle cx="48" cy="48" r="45" fill="url(#woodG)" stroke="#8a5a28" stroke-width="2.6"/>
+  <circle cx="48" cy="48" r="41.5" fill="none" stroke="#fff6dc" stroke-width="1" opacity="0.45"/>
+  <circle cx="48" cy="48" r="36" fill="none" stroke="#8a5a28" stroke-width="1.4" opacity="0.5"/>
+  <circle cx="48" cy="48" r="33" fill="none" stroke="#a9793f" stroke-width="1" stroke-dasharray="2.6 2.2" opacity="0.6"/>
+  <!-- 顶部高光 -->
+  <ellipse cx="48" cy="30" rx="22" ry="7.5" fill="#ffffff" opacity="0.10"/>
+
+  <!-- 熊猫 -->
+  <g>
+    <!-- 耳 -->
+    <circle cx="35.5" cy="32.5" r="8.6" fill="#2a231c"/>
+    <circle cx="35.5" cy="32.5" r="4.2" fill="#4a3f33"/>
+    <circle cx="60.5" cy="32.5" r="8.6" fill="#2a231c"/>
+    <circle cx="60.5" cy="32.5" r="4.2" fill="#4a3f33"/>
+    <!-- 脸 -->
+    <circle cx="48" cy="49.5" r="17.8" fill="#f6f0e4" stroke="#2a231c" stroke-width="1.4"/>
+    <!-- 眼斑 -->
+    <ellipse cx="41.6" cy="49.3" rx="4.5" ry="5.9" transform="rotate(-16 41.6 49.3)" fill="#2a231c"/>
+    <ellipse cx="54.4" cy="49.3" rx="4.5" ry="5.9" transform="rotate(16 54.4 49.3)" fill="#2a231c"/>
+    <!-- 眼 -->
+    <circle cx="42.6" cy="48.5" r="1.6" fill="#ffffff"/>
+    <circle cx="53.4" cy="48.5" r="1.6" fill="#ffffff"/>
+    <!-- 鼻 / 人中 / 嘴 -->
+    <path d="M45.8 55.2h4.4L48 57.7z" fill="#2a231c" stroke="#2a231c" stroke-width="0.8" stroke-linejoin="round"/>
+    <path d="M48 57.7v1.7" stroke="#2a231c" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M45.3 61.2q2.7 2.1 5.4 0" fill="none" stroke="#2a231c" stroke-width="1.3" stroke-linecap="round"/>
+  </g>
+
+  <!-- 朱红"象"印 -->
+  <g transform="translate(60.5 59.5) rotate(-9)">
+    <rect x="0" y="0" width="17" height="17" rx="3.2" fill="#c33d2e" stroke="#9c2f22" stroke-width="1"/>
+    <text x="8.5" y="12.9" font-size="11.5" text-anchor="middle" fill="#ffffff"
+          font-family="STKaiti,KaiTi,'Noto Serif SC',serif" font-weight="700">象</text>
+  </g>
+</svg>

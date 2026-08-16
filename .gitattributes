@@ -1,0 +1,2 @@
+# 统一以 LF 结尾，避免 Windows 检出时引入 CRLF（Go 源码需 LF）
+* text=auto eol=lf

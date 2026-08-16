@@ -1,0 +1,508 @@
+/* 棋境 · 设计系统：现代中式 —— 深色调 + 鎏金强调 + 水墨点缀 */
+:root {
+  --bg: #17130e;
+  --bg-2: #201a13;
+  --panel: #2a231a;
+  --panel-2: #342b1f;
+  --line: #4a3d2c;
+  --gold: #d4a941;
+  --gold-soft: #b08f3e;
+  --gold-glow: rgba(212, 169, 65, 0.35);
+  --text: #f0e6d2;
+  --text-dim: #a89a80;
+  --red: #e05a3a;
+  --red-deep: #b03a22;
+  --ink: #2c2620;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --radius: 14px;
+  font-size: 15px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; } /* 防止组件 display 规则覆盖 hidden */
+html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 70% -10%, rgba(212,169,65,0.08), transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, rgba(224,90,58,0.05), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+/* SVG 图标 */
+.icon { width: 1.15em; height: 1.15em; vertical-align: -0.2em; flex-shrink: 0; }
+
+#app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+
+/* ---------- 顶栏 ---------- */
+#topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 18px;
+  background: linear-gradient(180deg, rgba(42,35,26,0.95), rgba(42,35,26,0.75));
+  border-bottom: 1px solid var(--line);
+  z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.brand-logo { width: 26px; height: 26px; color: var(--gold); filter: drop-shadow(0 0 8px var(--gold-glow)); }
+.brand-cn {
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", serif;
+  font-size: 21px; letter-spacing: 4px; color: var(--gold); white-space: nowrap;
+  text-shadow: 0 0 18px var(--gold-glow);
+}
+.brand-en { font-size: 10px; letter-spacing: 3px; color: var(--text-dim); white-space: nowrap; }
+.top-actions { margin-left: auto; display: flex; gap: 6px; }
+.icon-btn {
+  background: transparent; border: 1px solid var(--line); color: var(--text-dim);
+  border-radius: 10px; padding: 7px; font-size: 17px; transition: all 0.15s;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 38px; min-height: 38px;
+}
+.icon-btn:hover { border-color: var(--gold-soft); color: var(--gold); }
+
+/* ---------- 屏幕 ---------- */
+.screen { flex: 1; overflow: hidden; position: relative; }
+#screen-lobby, #screen-puzzles { overflow-y: auto; }
+
+/* ---------- 大厅 ---------- */
+.hero { text-align: center; padding: 40px 20px 22px; position: relative; }
+.hero h1 {
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", serif;
+  font-size: 56px; letter-spacing: 14px; text-indent: 14px;
+  color: var(--text);
+  text-shadow: 0 2px 0 #00000055, 0 0 40px var(--gold-glow);
+}
+.hero-seal {
+  position: absolute; top: 32px; left: 50%; margin-left: -218px;
+  width: 52px; height: 52px; display: grid; place-items: center;
+  color: #fff;
+  background: linear-gradient(160deg, var(--red), var(--red-deep));
+  border-radius: 10px; transform: rotate(-8deg);
+  box-shadow: var(--shadow); opacity: 0; animation: seal-in 0.8s 0.3s forwards;
+}
+.hero-seal .icon { width: 36px; height: 36px; }
+@keyframes seal-in { to { opacity: 0.92; } }
+.hero-sub { color: var(--text-dim); letter-spacing: 4px; margin-top: 10px; }
+
+.mode-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px; max-width: 1000px; margin: 28px auto; padding: 0 24px;
+}
+.mode-card {
+  position: relative; text-align: left;
+  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 24px 22px 20px; color: var(--text);
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+  overflow: hidden;
+}
+.mode-card::after {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(300px 120px at 90% -20%, var(--gold-glow), transparent 70%);
+  opacity: 0; transition: opacity 0.25s;
+}
+.mode-card:hover { transform: translateY(-4px); border-color: var(--gold-soft); box-shadow: var(--shadow); }
+.mode-card:hover::after { opacity: 1; }
+.mode-icon {
+  width: 52px; height: 52px; border-radius: 50%; margin-bottom: 12px;
+  display: grid; place-items: center;
+  background: linear-gradient(160deg, rgba(212,169,65,0.16), rgba(212,169,65,0.04));
+  border: 1px solid var(--gold-soft); color: var(--gold);
+}
+.mode-icon .icon { width: 28px; height: 28px; }
+.mode-name { font-size: 19px; font-weight: 600; letter-spacing: 2px; margin-bottom: 8px; color: var(--gold); }
+.mode-desc { font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+.lobby-footer { text-align: center; padding: 18px; color: var(--text-dim); font-size: 12px; }
+
+/* ---------- 对局布局 ---------- */
+.game-layout {
+  height: 100%; display: flex; gap: 16px; padding: 14px 16px;
+  max-width: 1200px; margin: 0 auto;
+}
+.board-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.board-wrap { flex: 1; position: relative; display: grid; place-items: center; min-height: 0; }
+#board-canvas {
+  max-width: 100%; max-height: 100%;
+  border-radius: 12px; box-shadow: var(--shadow);
+  touch-action: manipulation;
+}
+#check-flash {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(224,60,40,0.5) 100%);
+}
+#check-flash.on { animation: check-pulse 0.9s ease-out; }
+@keyframes check-pulse { 0% {opacity: 0;} 25% {opacity: 1;} 100% {opacity: 0;} }
+
+.player-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; min-height: 58px; position: relative;
+}
+.avatar {
+  width: 42px; height: 42px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-family: "STKaiti", "KaiTi", serif; font-size: 22px; font-weight: 700;
+  border: 2px solid; box-shadow: inset 0 -4px 8px rgba(0,0,0,0.35), 0 3px 8px rgba(0,0,0,0.4);
+}
+.avatar.red { color: #ffe9dd; background: radial-gradient(circle at 35% 30%, #d96a4a, #8e2f1a); border-color: #f3b49b; }
+.avatar.black { color: #f2ede3; background: radial-gradient(circle at 35% 30%, #574a3c, #211b14); border-color: #8a7a64; }
+.player-name { font-weight: 600; letter-spacing: 1px; }
+.player-state { font-size: 12px; color: var(--text-dim); margin-top: 2px; min-height: 16px; }
+.player-state.thinking { color: var(--gold); }
+.player-state.thinking::after { content: "…"; animation: dots 1.2s infinite steps(4); }
+@keyframes dots { 0% {content: "";} 25% {content: ".";} 50% {content: "..";} 75% {content: "...";} }
+
+.game-controls { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; padding: 2px 8px 8px; }
+.ctl-btn {
+  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); color: var(--text);
+  border-radius: 10px; padding: 8px 14px; font-size: 13px; letter-spacing: 1px;
+  transition: all 0.15s;
+  display: inline-flex; align-items: center; gap: 6px; justify-content: center;
+}
+.ctl-btn:hover:not(:disabled) { border-color: var(--gold-soft); color: var(--gold); }
+.ctl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ctl-btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+/* 棋评解说条：固定占位（常显/常隐都保持高度），绝不遮挡棋盘、绝不顶动布局 */
+.llm-bubble {
+  margin: 0 12px 6px;
+  min-height: 34px; display: flex; align-items: center;
+  background: linear-gradient(160deg, rgba(212,169,65,0.12), rgba(212,169,65,0.04));
+  border: 1px solid var(--line); border-left: 3px solid var(--gold-soft); border-radius: 8px;
+  padding: 4px 12px; font-size: 13px; color: var(--text-dim);
+  line-height: 1.5; overflow: hidden;
+}
+.llm-bubble.has-comment {
+  color: var(--text); border-color: var(--gold-soft);
+  animation: bubble-in 0.35s ease-out;
+}
+@keyframes bubble-in { from { transform: translateY(8px); opacity: 0; } }
+
+/* ---------- 侧栏 ---------- */
+.side-panel {
+  width: 240px; display: flex; flex-direction: column; gap: 10px;
+  background: linear-gradient(180deg, var(--panel), var(--bg-2));
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 14px;
+}
+.panel-title { font-size: 15px; font-weight: 600; letter-spacing: 2px; color: var(--gold); }
+.move-list {
+  flex: 1; overflow-y: auto; min-height: 0;
+  font-size: 14px; line-height: 2; scrollbar-width: thin;
+}
+.move-list .mv-row { display: flex; gap: 8px; padding: 0 4px; border-radius: 6px; }
+.move-list .mv-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.move-list .mv-no { color: var(--text-dim); width: 26px; text-align: right; }
+.move-list .mv-red { color: #f0a288; }
+.move-list .mv-black { color: #cdc4b2; }
+.move-list .mv-cur { background: var(--gold-glow) !important; border-radius: 6px; }
+.puzzle-goal {
+  border: 1px dashed var(--gold-soft); border-radius: 10px;
+  padding: 10px; font-size: 13px; line-height: 1.8; color: var(--text-dim);
+}
+.puzzle-goal b { color: var(--gold); }
+
+/* ---------- 弹层 ---------- */
+.overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(10, 8, 5, 0.72); backdrop-filter: blur(4px);
+  display: grid; place-items: center; animation: overlay-in 0.2s;
+}
+@keyframes overlay-in { from { opacity: 0; } }
+.result-card, .settings-card {
+  background: linear-gradient(170deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--gold-soft); border-radius: 18px;
+  padding: 34px 38px; min-width: 320px; max-width: 520px;
+  box-shadow: var(--shadow); text-align: center;
+  animation: card-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes card-in { from { transform: scale(0.88); opacity: 0; } }
+.settings-card { text-align: left; max-height: 86vh; overflow-y: auto; width: min(520px, 92vw); }
+.settings-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.settings-head h2 { font-size: 18px; letter-spacing: 4px; color: var(--gold); }
+
+.result-title {
+  font-family: "STKaiti", "KaiTi", serif;
+  font-size: 40px; letter-spacing: 10px; margin: 8px 0 6px;
+}
+.result-title.win { color: var(--gold); text-shadow: 0 0 30px var(--gold-glow); }
+.result-title.lose { color: var(--red); text-shadow: 0 0 30px rgba(224,90,58,0.4); }
+.result-title.draw { color: var(--text-dim); }
+.result-sub { color: var(--text-dim); font-size: 14px; margin-bottom: 20px; letter-spacing: 2px; }
+.result-actions { display: flex; gap: 10px; justify-content: center; }
+.result-stars { font-size: 40px; letter-spacing: 8px; height: 56px; }
+.result-stars .star { display: inline-block; opacity: 0.25; filter: grayscale(1); }
+.result-stars .star.lit {
+  opacity: 1; filter: none;
+  animation: star-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.4) forwards;
+}
+@keyframes star-pop { from { transform: scale(2.2) rotate(20deg); opacity: 0; } }
+
+/* ---------- 设置表单 ---------- */
+.settings-section { border-top: 1px solid var(--line); padding: 14px 0; }
+.settings-section h3 { font-size: 14px; color: var(--gold); letter-spacing: 2px; margin-bottom: 10px; }
+.settings-section label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
+.settings-section label.inline { flex-direction: row; align-items: center; gap: 10px; }
+.settings-section label.check { flex-direction: row; align-items: center; gap: 8px; }
+.settings-section input:not([type=checkbox]), .settings-section select {
+  background: var(--bg-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 8px 10px; font-size: 14px; outline: none; flex: 1;
+}
+.settings-section input:focus, .settings-section select:focus { border-color: var(--gold-soft); }
+.settings-row { display: flex; align-items: center; gap: 12px; }
+.test-result { font-size: 13px; }
+.test-result.ok { color: #7ec97e; }
+.test-result.bad { color: var(--red); }
+.about p { font-size: 12px; color: var(--text-dim); line-height: 1.9; }
+
+/* ---------- 残局 ---------- */
+.puzzle-head {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  padding: 22px 26px 8px;
+  max-width: 1100px; margin: 0 auto; width: 100%;
+}
+.puzzle-head h2 { font-family: "STKaiti", "KaiTi", serif; letter-spacing: 6px; font-size: 26px; }
+.difficulty-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.tab {
+  background: transparent; border: 1px solid var(--line); color: var(--text-dim);
+  padding: 6px 16px; border-radius: 999px; font-size: 13px; transition: all 0.15s;
+}
+.tab.active, .tab:hover { border-color: var(--gold-soft); color: var(--gold); }
+.puzzle-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px; padding: 18px 26px 40px;
+  max-width: 1100px; margin: 0 auto; width: 100%;
+}
+.puzzle-card {
+  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px; text-align: left; color: var(--text);
+  transition: all 0.16s;
+}
+.puzzle-card:hover { transform: translateY(-3px); border-color: var(--gold-soft); box-shadow: var(--shadow); }
+.puzzle-name { font-size: 16px; font-weight: 600; letter-spacing: 1px; margin-bottom: 4px; }
+.puzzle-meta { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.puzzle-goal-tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; }
+.puzzle-goal-tag.win { background: rgba(212,169,65,0.15); color: var(--gold); border: 1px solid var(--gold-soft); }
+.puzzle-goal-tag.draw { background: rgba(160,160,160,0.12); color: var(--text-dim); border: 1px solid var(--line); }
+.puzzle-stars { color: var(--gold); font-size: 15px; letter-spacing: 3px; }
+
+/* ---------- 自定义滚动条（替代浏览器原生样式） ---------- */
+.move-list, .settings-card, #screen-lobby, #screen-puzzles, .puzzle-grid {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-soft) transparent;
+}
+.move-list::-webkit-scrollbar,
+.settings-card::-webkit-scrollbar,
+#screen-lobby::-webkit-scrollbar,
+#screen-puzzles::-webkit-scrollbar,
+.puzzle-grid::-webkit-scrollbar {
+  width: 6px; height: 6px;
+}
+.move-list::-webkit-scrollbar-thumb,
+.settings-card::-webkit-scrollbar-thumb,
+#screen-lobby::-webkit-scrollbar-thumb,
+#screen-puzzles::-webkit-scrollbar-thumb,
+.puzzle-grid::-webkit-scrollbar-thumb {
+  background: var(--gold-soft); border-radius: 3px;
+}
+.move-list::-webkit-scrollbar-thumb:hover,
+.settings-card::-webkit-scrollbar-thumb:hover,
+#screen-lobby::-webkit-scrollbar-thumb:hover,
+#screen-puzzles::-webkit-scrollbar-thumb:hover {
+  background: var(--gold);
+}
+.move-list::-webkit-scrollbar-track,
+.settings-card::-webkit-scrollbar-track,
+#screen-lobby::-webkit-scrollbar-track,
+#screen-puzzles::-webkit-scrollbar-track,
+.puzzle-grid::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.04); border-radius: 3px;
+}
+
+/* ---------- 关于页 ---------- */
+.about-wrap {
+  max-width: 640px; margin: 0 auto; padding: 26px 22px 60px;
+  overflow-y: auto; height: 100%;
+  scrollbar-width: thin; scrollbar-color: var(--gold-soft) transparent;
+}
+.about-wrap::-webkit-scrollbar { width: 6px; }
+.about-wrap::-webkit-scrollbar-thumb { background: var(--gold-soft); border-radius: 3px; }
+.about-hero { text-align: center; padding: 10px 0 22px; }
+.about-logo {
+  width: 84px; height: 84px; margin: 0 auto 12px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--gold);
+  border: 2px solid var(--gold-soft);
+  background: radial-gradient(circle at 35% 30%, rgba(212,169,65,0.2), rgba(212,169,65,0.04));
+  box-shadow: 0 0 30px var(--gold-glow);
+}
+.about-logo .icon { width: 54px; height: 54px; }
+.about-title {
+  font-family: "STKaiti", "KaiTi", serif; font-size: 30px; letter-spacing: 8px; text-indent: 8px;
+}
+.about-ver { color: var(--text-dim); font-size: 13px; letter-spacing: 2px; margin-top: 6px; }
+.about-wrap .settings-section { text-align: left; background: transparent; }
+.about-text p { font-size: 13px; color: var(--text-dim); line-height: 1.9; }
+
+.changelog { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.changelog-empty { color: var(--text-dim); font-size: 13px; padding: 8px 0; }
+.changelog-item {
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+}
+.changelog-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.changelog-ver { color: var(--gold); font-weight: 700; font-size: 15px; }
+.changelog-date { color: var(--text-dim); font-size: 12px; }
+.changelog-title { color: var(--text); font-size: 13px; flex: 1 1 100%; }
+.changelog-dl { color: #6fa8d5; font-size: 13px; text-decoration: none; border-bottom: 1px dashed #6fa8d5; }
+.changelog-body {
+  margin-top: 8px; white-space: pre-wrap; word-break: break-word;
+  font-family: inherit; font-size: 13px; line-height: 1.8; color: var(--text);
+  max-height: 260px; overflow-y: auto;
+}
+.link-btn {
+  background: none; border: none; color: var(--gold-soft); font-size: 12px;
+  letter-spacing: 1px; padding: 4px 8px; text-decoration: underline dotted;
+}
+.link-btn:hover { color: var(--gold); }
+#fb-desc, textarea#fb-desc {
+  background: var(--bg-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 8px 10px; font-size: 14px; font-family: inherit;
+  resize: vertical; outline: none;
+}
+#fb-desc:focus { border-color: var(--gold-soft); }
+@media (max-width: 620px) {
+  .about-wrap { padding: 16px 14px 50px; }
+  .about-title { font-size: 24px; letter-spacing: 5px; }
+}
+
+/* ---------- 主题化确认弹窗 ---------- */
+.confirm-card {
+  background: linear-gradient(170deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--gold-soft); border-radius: 16px;
+  padding: 26px 30px 22px; min-width: 280px; max-width: 360px;
+  box-shadow: var(--shadow); text-align: center;
+  animation: card-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+.confirm-icon {
+  width: 44px; height: 44px; margin: 0 auto 12px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 24px; font-weight: 700; color: var(--gold);
+  border: 2px solid var(--gold-soft);
+  background: radial-gradient(circle at 35% 30%, rgba(212,169,65,0.22), rgba(212,169,65,0.05));
+}
+.confirm-text { font-size: 15px; line-height: 1.7; margin-bottom: 18px; letter-spacing: 0.5px; }
+.confirm-actions { display: flex; gap: 10px; justify-content: center; }
+.confirm-ok.danger-strong {
+  border-color: var(--red); color: #ffb3a3;
+  background: linear-gradient(160deg, rgba(224,90,58,0.22), rgba(224,90,58,0.08));
+}
+.confirm-ok.danger-strong:hover { color: #ffd0c4; }
+
+/* ---------- Toast ---------- */
+#toast {
+  position: fixed; left: 50%; top: 74px; transform: translateX(-50%) translateY(-16px);
+  background: rgba(42,35,26,0.95); border: 1px solid var(--gold-soft);
+  color: var(--text); padding: 9px 22px; border-radius: 999px; font-size: 14px;
+  opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 200;
+  box-shadow: var(--shadow); max-width: 80vw;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.error { border-color: var(--red); }
+
+/* ---------- 平板 ---------- */
+@media (max-width: 860px) {
+  :root { font-size: 14px; }
+  .brand-en { display: none; }
+  .hero h1 { font-size: 44px; letter-spacing: 10px; text-indent: 10px; }
+  .hero-seal { margin-left: -170px; width: 46px; height: 46px; }
+  .hero-seal .icon { width: 32px; height: 32px; }
+  .game-layout { flex-direction: column; padding: 8px; gap: 8px; }
+  .side-panel { width: auto; max-height: 190px; }
+  .puzzle-head { padding: 16px 16px 4px; gap: 12px; }
+  .puzzle-grid { padding: 14px 16px 30px; }
+}
+
+/* ---------- 手机 ---------- */
+@media (max-width: 620px) {
+  :root { font-size: 14px; }
+  #topbar { padding: 8px 10px; gap: 8px; }
+  .brand-cn { font-size: 18px; letter-spacing: 2px; }
+  .brand-logo { width: 22px; height: 22px; }
+  .hero { padding: 22px 10px 12px; }
+  .hero h1 { font-size: 34px; letter-spacing: 6px; text-indent: 6px; }
+  .hero-sub { font-size: 12px; letter-spacing: 2px; }
+  .hero-seal {
+    position: static; margin: 0 auto 10px; transform: rotate(-4deg);
+    width: 46px; height: 46px; animation-delay: 0.1s;
+  }
+  .mode-grid { grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px auto; padding: 0 12px; }
+  .mode-card { padding: 14px 12px 12px; }
+  .mode-icon { width: 44px; height: 44px; margin-bottom: 8px; }
+  .mode-icon .icon { width: 24px; height: 24px; }
+  .mode-name { font-size: 16px; }
+  .mode-desc { font-size: 12px; }
+
+  /* 对局 */
+  .game-layout { padding: 6px; gap: 6px; }
+  .player-bar { min-height: 42px; padding: 3px 8px; gap: 8px; }
+  .avatar { width: 32px; height: 32px; font-size: 16px; }
+  .player-name { font-size: 13px; }
+  .player-state { font-size: 11px; }
+  .llm-bubble { margin: 0 8px 4px; min-height: 30px; font-size: 12px; padding: 3px 10px; }
+  .game-controls { gap: 6px; padding: 2px 4px 4px; }
+  .ctl-btn { padding: 8px 12px; font-size: 12px; letter-spacing: 0; min-height: 38px; }
+  .ctl-btn .icon { width: 1em; height: 1em; }
+  /* 侧栏压成横条：标题+返回一行，着法矮列表 */
+  .side-panel {
+    max-height: none; flex-direction: row; flex-wrap: wrap;
+    align-items: center; padding: 8px 10px; gap: 4px 8px;
+  }
+  .panel-title { font-size: 13px; }
+  .side-panel #btn-exit { margin-left: auto; padding: 6px 10px; font-size: 12px; min-height: 34px; }
+  .move-list { flex: 1 1 100%; max-height: 62px; font-size: 12.5px; line-height: 1.8; }
+  .puzzle-goal { flex: 1 1 100%; font-size: 12px; padding: 7px 9px; }
+  #screen-game { padding-bottom: env(safe-area-inset-bottom); }
+
+  /* 弹窗 */
+  .result-card { min-width: 0; width: calc(100vw - 48px); padding: 24px 18px; }
+  .result-title { font-size: 30px; letter-spacing: 6px; }
+  .result-actions { flex-wrap: wrap; }
+  .settings-card { width: calc(100vw - 32px); padding: 18px 16px; }
+  .settings-section input:not([type=checkbox]), .settings-section select { font-size: 13px; padding: 7px 8px; }
+  .level-grid { grid-template-columns: repeat(3, 1fr); }
+  .setup-model { font-size: 12px; word-break: break-all; }
+
+  /* 残局 */
+  .puzzle-head { flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 14px 2px; }
+  .difficulty-tabs { overflow-x: auto; width: 100%; padding-bottom: 4px; }
+  .tab { padding: 5px 12px; font-size: 12px; white-space: nowrap; }
+  .puzzle-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 12px 14px 30px; }
+  .puzzle-name { font-size: 14px; }
+
+  #toast { font-size: 13px; padding: 8px 16px; top: 62px; width: max-content; max-width: 88vw; }
+}
+
+/* ---------- 小屏手机 ---------- */
+@media (max-width: 400px) {
+  .mode-grid { grid-template-columns: 1fr; }
+  .level-grid { grid-template-columns: repeat(3, 1fr); }
+  .ctl-btn span { display: none; }          /* 窄屏仅保留图标 */
+  .ctl-btn { padding: 8px 11px; }
+  .hero h1 { font-size: 30px; }
+}
+
+/* ---------- 开局设置弹窗 ---------- */
+.side-pick { gap: 10px; margin-bottom: 12px; }
+.side-btn.active, .lv-btn.active {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: linear-gradient(160deg, rgba(212,169,65,0.18), rgba(212,169,65,0.06));
+}
+.level-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px;
+}
+.level-grid .lv-btn { padding: 7px 4px; font-size: 12px; text-align: center; }
+.setup-model { font-size: 13px; color: var(--text-dim); margin: 6px 0 10px; }
+.setup-model b { color: var(--gold); }

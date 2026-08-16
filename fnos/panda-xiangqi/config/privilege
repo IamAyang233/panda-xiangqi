@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "panda_xiangqi",
+  "groupname": "panda_xiangqi"
+}
