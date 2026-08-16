@@ -12,10 +12,11 @@ server.log
 # 本地配置（保留 config.yaml.example）
 config.yaml
 
-# 飞牛 fnOS 打包产物（由 `make fpk` 重新生成，勿提交）
+# 飞牛 fnOS 打包产物（由 `make fpk` / `make fpk-arm` 重新生成，勿提交）
 fnpack.exe
-panda-xiangqi.fpk
+*.fpk
 fnos/panda-xiangqi/app/server/panda-xiangqi
+fnos/panda-xiangqi-arm/
 
 # 图标草稿与一次性生成脚本（非源码）
 icon-drafts/

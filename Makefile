@@ -48,3 +48,18 @@ clean:
 fpk:
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(FNK_BIN) ./cmd/server
 	fnpack build --directory $(FNK_PKG)
+
+## fpk-arm: 交叉编译 linux/arm64 并打包 ARM 版 .fpk（自动复制目录、改 platform、产物重命名）
+##   临时复制 fnos/panda-xiangqi-arm 目录并把 manifest 的 platform=x86 改为 arm，打包后
+##   重命名为 panda-xiangqi-arm.fpk，最后清理临时目录。会自动保护已存在的 x86 版
+##   panda-xiangqi.fpk 不被覆盖。
+fpk-arm:
+	rm -rf $(FNK_PKG)-arm
+	cp -r $(FNK_PKG) $(FNK_PKG)-arm
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(FNK_PKG)-arm/app/server/panda-xiangqi ./cmd/server
+	sed -i 's/^platform=x86$$/platform=arm/' $(FNK_PKG)-arm/manifest
+	@if [ -f panda-xiangqi.fpk ]; then mv panda-xiangqi.fpk panda-xiangqi.fpk.bak; fi
+	fnpack build --directory $(FNK_PKG)-arm
+	mv panda-xiangqi.fpk panda-xiangqi-arm.fpk
+	@if [ -f panda-xiangqi.fpk.bak ]; then mv panda-xiangqi.fpk.bak panda-xiangqi.fpk; fi
+	rm -rf $(FNK_PKG)-arm
