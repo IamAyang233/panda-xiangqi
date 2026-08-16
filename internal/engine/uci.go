@@ -57,6 +57,10 @@ func fileExists(p string) bool {
 }
 
 func (e *UCIEngine) start() error {
+	// fnpack 等打包器不会保留可执行位（打包为 0o666），必须在拉起子进程前补回 +x，
+	// 否则 os/exec 在 Start 时会因权限不足直接失败（握手逻辑根本走不到）。
+	_ = os.Chmod(e.path, 0o755)
+
 	cmd := exec.Command(e.path)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -85,10 +89,6 @@ func (e *UCIEngine) start() error {
 		}
 		close(e.lines)
 	}()
-
-	// 部分打包器（如 fnpack）不会保留可执行位，这里尽力补上 +x，
-	// 否则静态链接的皮卡鱼二进制无法被 os/exec 直接拉起。
-	_ = os.Chmod(e.path, 0o755)
 
 	e.send("uci")
 	if err := e.expect("uciok", 5*time.Second); err != nil {
