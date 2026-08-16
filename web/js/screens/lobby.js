@@ -29,27 +29,6 @@ export function initLobby(onStart) {
       openSetup(mode, onStart);
     };
   });
-  loadEngineInfo();
-}
-
-// loadEngineInfo 拉取 /api/status，把真实引擎名称与可用状态显示在大厅底部，
-// 取代原先写死的“内置皮卡鱼”文案——避免与运行时实际可用性不符。
-async function loadEngineInfo() {
-  const el = document.getElementById('engine-info');
-  if (!el) return;
-  try {
-    const st = await api('/api/status');
-    if (st.uciAvailable) {
-      el.className = 'ok';
-      el.innerHTML = `引擎：<b>${st.engine || 'Pikafish'}</b> · 已内置可用`;
-    } else {
-      el.className = 'warn';
-      el.textContent = '引擎：自研算法（皮卡鱼未启用，已自动兜底）';
-    }
-  } catch {
-    el.className = 'err';
-    el.textContent = '引擎状态获取失败';
-  }
 }
 
 function openSetup(mode, onStart) {

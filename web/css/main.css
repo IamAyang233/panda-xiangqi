@@ -115,10 +115,6 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .mode-name { font-size: 19px; font-weight: 600; letter-spacing: 2px; margin-bottom: 8px; color: var(--gold); }
 .mode-desc { font-size: 13px; color: var(--text-dim); line-height: 1.7; }
 .lobby-footer { text-align: center; padding: 18px; color: var(--text-dim); font-size: 12px; }
-#engine-info { display: inline-block; margin-bottom: 8px; padding: 3px 10px; border-radius: 999px; font-size: 12px; line-height: 1.6; }
-#engine-info.ok { color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); }
-#engine-info.warn { color: #e0a23a; background: color-mix(in srgb, #e0a23a 14%, transparent); }
-#engine-info.err { color: #d9695f; background: color-mix(in srgb, #d9695f 14%, transparent); }
 
 /* ---------- 对局布局 ---------- */
 .game-layout {
