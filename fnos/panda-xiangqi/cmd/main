@@ -3,11 +3,8 @@
 # 熊猫象棋（PanDa Xiangqi）生命周期脚本
 # 由飞牛 fnOS 以 start / stop / status 调用。
 #
-# 运行模型：统一网关（Socket 模式）
-#   - 应用监听 ${TRIM_APPDEST}/app.sock 上的 Unix Socket
-#   - 网关将 /app/panda-xiangqi 转发到该 Socket（不剥离前缀）
-#   - 进程以 config/privilege 声明的专用用户（run-as: package）运行，无需 root
-#
+# Socket 模式：监听 ${TRIM_APPDEST}/app.sock，网关转发 /app/panda-xiangqi。
+
 # 日志与 PID 写入 TRIM_PKGVAR，符合 fnOS 的目录约定。
 
 LOG_FILE="${TRIM_PKGVAR}/app.log"
@@ -46,8 +43,7 @@ start_app() {
     return 0
   fi
 
-  # fnpack 在 Windows/macOS 构建机上打包时会丢失 Unix 可执行位（默认 0666）。
-  # 生命周期脚本以 root 或应用专属用户运行，可在启动时恢复可执行位。
+  # fnpack 打包会丢失可执行位，补回 +x
   chmod 0755 "$BINARY" 2>/dev/null || true
 
   if [ ! -x "$BINARY" ]; then
