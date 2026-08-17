@@ -13,7 +13,7 @@ import (
 // 应用标识与版本（PanDa「推送更新」后台录入时使用同一 app_name）。
 const (
 	AppName    = "panda-xiangqi"
-	AppVersion = "1.1.0"
+	AppVersion = "1.1.3"
 )
 
 const updateHTTPTimeout = 8 * time.Second
