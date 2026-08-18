@@ -1,6 +1,6 @@
 # 熊猫象棋 Makefile：测试 / 构建 / 交叉编译 / 运行 / 大模型联调 / 飞牛 fpk 打包
 BINARY := panda-xiangqi
-VERSION := 1.1.6
+VERSION := 1.1.7
 LDFLAGS := -s -w
 
 # 飞牛 fnOS 原生应用包目录与包内二进制路径（与 manifest appname 对应）。
