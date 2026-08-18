@@ -1,0 +1,147 @@
+[
+  {
+    "id": "pzl-023",
+    "name": "钓鱼马",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/6H2/9/9/3RRR3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "d1e1"
+    ],
+    "tags": [
+      "杀法",
+      "钓鱼马",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-024",
+    "name": "八角马",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/2H6/9/9/3RRR3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "d1e1"
+    ],
+    "tags": [
+      "杀法",
+      "八角马",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-025",
+    "name": "闷宫",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "3aka3/9/4P4/9/3R1R3/9/9/4C4/3K5/9 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "d5d9"
+    ],
+    "tags": [
+      "杀法",
+      "闷宫",
+      "炮",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-026",
+    "name": "大刀剜心",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/4a4/9/9/3R1R3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 3,
+    "solution": [
+      "d5d6",
+      "e8f9",
+      "f5e5",
+      "f9e8",
+      "d6d9"
+    ],
+    "tags": [
+      "杀法",
+      "大刀剜心",
+      "车",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-027",
+    "name": "对面笑",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/9/9/3R1R3/9/9/9/4K4/9 w - - 0 1",
+    "parMoves": 2,
+    "solution": [
+      "e1f1",
+      "e9e8",
+      "f5e5"
+    ],
+    "tags": [
+      "杀法",
+      "对面笑",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-028",
+    "name": "拔簧马",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/6H2/9/3R1R3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "d5e5"
+    ],
+    "tags": [
+      "杀法",
+      "拔簧马",
+      "马",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-029",
+    "name": "送佛归殿",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/3P5/9/3R1R3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 2,
+    "solution": [
+      "d1d2",
+      "e9d9",
+      "f5f9"
+    ],
+    "tags": [
+      "杀法",
+      "送佛归殿",
+      "兵",
+      "红先胜"
+    ],
+    "verified": true
+  }
+]
