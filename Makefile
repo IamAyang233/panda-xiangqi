@@ -1,6 +1,6 @@
 # 熊猫象棋 Makefile：测试 / 构建 / 交叉编译 / 运行 / 大模型联调 / 飞牛 fpk 打包
 BINARY := panda-xiangqi
-VERSION := 1.1.3
+VERSION := 1.1.5
 LDFLAGS := -s -w
 
 # 飞牛 fnOS 原生应用包目录与包内二进制路径（与 manifest appname 对应）。
@@ -65,8 +65,8 @@ fpk:
 	else \
 		echo "[fpk] 未找到 dist-engines，跳过内置引擎"; \
 	fi
-	fnpack build --directory $(FNK_PKG)
-	mv panda-xiangqi.fpk panda-xiangqi-x86.fpk
+	./fnpack.exe build --directory $(FNK_PKG)
+	mv panda-xiangqi.fpk panda-xiangqi_$(VERSION)_x86.fpk
 
 ## fpk-arm: 交叉编译 linux/arm64 并打包 ARM 版 .fpk（自动复制目录、改 platform、产物重命名）
 ##   临时复制 fnos/panda-xiangqi-arm 目录并把 manifest 的 platform=x86 改为 arm，打包后
@@ -87,8 +87,8 @@ fpk-arm:
 		echo "[fpk-arm] 未找到 dist-engines，跳过内置引擎"; \
 	fi
 	sed -i 's/^platform=x86$$/platform=arm/' $(FNK_PKG)-arm/manifest
-	@if [ -f panda-xiangqi-x86.fpk ]; then mv panda-xiangqi-x86.fpk panda-xiangqi-x86.fpk.bak; fi
-	fnpack build --directory $(FNK_PKG)-arm
-	mv panda-xiangqi.fpk panda-xiangqi-arm.fpk
-	@if [ -f panda-xiangqi-x86.fpk.bak ]; then mv panda-xiangqi-x86.fpk.bak panda-xiangqi-x86.fpk; fi
+	@if [ -f panda-xiangqi_$(VERSION)_x86.fpk ]; then mv panda-xiangqi_$(VERSION)_x86.fpk panda-xiangqi_$(VERSION)_x86.fpk.bak; fi
+	./fnpack.exe build --directory $(FNK_PKG)-arm
+	mv panda-xiangqi.fpk panda-xiangqi_$(VERSION)_arm.fpk
+	@if [ -f panda-xiangqi_$(VERSION)_x86.fpk.bak ]; then mv panda-xiangqi_$(VERSION)_x86.fpk.bak panda-xiangqi_$(VERSION)_x86.fpk; fi
 	rm -rf $(FNK_PKG)-arm

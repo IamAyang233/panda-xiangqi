@@ -379,19 +379,19 @@ export class BoardRenderer {
                    [1, 7], [7, 7], [0, 6], [2, 6], [4, 6], [6, 6], [8, 6]];
     for (const [f, r] of marks) this._posMark(ctx, X(f), Y(r), sk.line, f === 0, f === 8);
 
-    // 楚河 漢界
+    // 楚河 漢界（居中于 X(2)/X(6)；用 textAlign=center 避免右侧文字溢出棋盘外框）
     ctx.fillStyle = sk.text;
-    ctx.globalAlpha = 0.85;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
     const fs = Math.round(cell * 0.62);
     ctx.font = `600 ${fs}px "STKaiti","KaiTi","Noto Serif SC",serif`;
-    ctx.textBaseline = 'middle';
     const riverY = (Y(4) + Y(5)) / 2;
-    ctx.save();
     ctx.globalAlpha = 0.8;
-    ctx.fillText('楚  河', X(1) - fs * 0.6, riverY);
-    ctx.translate(X(7) + fs * 0.6, riverY);
+    ctx.fillText('楚  河', X(2), riverY);
+    ctx.save();
+    ctx.translate(X(6), riverY);
     ctx.rotate(Math.PI);
-    ctx.fillText('漢  界', -fs * 2.2, 0);
+    ctx.fillText('漢  界', 0, 0);
     ctx.restore();
     ctx.globalAlpha = 1;
 

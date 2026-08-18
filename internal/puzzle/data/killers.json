@@ -1,0 +1,162 @@
+[
+  {
+    "id": "pzl-015",
+    "name": "铁门栓",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/9/9/3R1R3/9/9/9/3K5/R8 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "a0e0"
+    ],
+    "tags": [
+      "杀法",
+      "铁门栓",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-016",
+    "name": "卧槽马",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/4H4/9/3RRR3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "e7f9"
+    ],
+    "tags": [
+      "杀法",
+      "卧槽马",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-017",
+    "name": "挂角马",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/9/7H1/3CCC3/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 3,
+    "solution": [
+      "d5c5",
+      "e9e8",
+      "h6g8",
+      "e8f8",
+      "g8f6"
+    ],
+    "tags": [
+      "杀法",
+      "挂角马",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-018",
+    "name": "天地炮",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/9/9/C8/9/9/3C1C3/3K5/4C4 w - - 0 1",
+    "parMoves": 2,
+    "solution": [
+      "d2e2",
+      "e9f9",
+      "a5f5"
+    ],
+    "tags": [
+      "杀法",
+      "天地炮",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-019",
+    "name": "海底捞月",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/3RCR3/9/9/9/9/9/9/3K5/2C6 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "c0e0"
+    ],
+    "tags": [
+      "杀法",
+      "海底捞月",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-020",
+    "name": "二鬼拍门",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/9/7H1/9/3R5/9/9/9/3K5/R8 w - - 0 1",
+    "parMoves": 2,
+    "solution": [
+      "a0b0",
+      "e9f9",
+      "b0b9"
+    ],
+    "tags": [
+      "杀法",
+      "二鬼拍门",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-021",
+    "name": "双马饮泉",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "3aka3/9/2H1H4/9/9/9/9/9/3K5/9 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "e7g8"
+    ],
+    "tags": [
+      "杀法",
+      "双马饮泉",
+      "红先胜"
+    ],
+    "verified": true
+  },
+  {
+    "id": "pzl-022",
+    "name": "车兵",
+    "source": "经典杀法",
+    "difficulty": "初级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "4k4/2P6/9/9/5R3/9/9/9/3K5/R8 w - - 0 1",
+    "parMoves": 1,
+    "solution": [
+      "a0e0"
+    ],
+    "tags": [
+      "杀法",
+      "车兵",
+      "红先胜"
+    ],
+    "verified": true
+  }
+]
