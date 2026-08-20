@@ -1,7 +1,7 @@
 appname=panda-xiangqi
 version=1.2.4
 display_name=熊猫象棋
-desc=熊猫象棋（PanDa Xiangqi）是一款中国象棋对战平台：集成皮卡鱼（Pikafish）UCI 引擎（fnOS 版 x86 / arm 随包内置、零外部依赖）、大模型对弈、双人对弈与残局闯关。
+desc=熊猫象棋 —— 国风中国象棋工具。<br>-本地引擎 16 档棋力人机对战<br>-大模型 AI 对弈，附带棋谱讲解，兼容 OpenAI 接口<br>-双人同屏，棋盘翻转，亲友线下对弈<br>-经典残局挑战，星级评分练杀招<br>古朴国风界面，下棋练棋一步到位。
 source=thirdparty
 platform=x86
 maintainer=PanDa
