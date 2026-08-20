@@ -1,6 +1,6 @@
 # 熊猫象棋 Makefile：测试 / 构建 / 交叉编译 / 运行 / 大模型联调 / 飞牛 fpk 打包
 BINARY := panda-xiangqi
-VERSION := 1.2.4
+VERSION := 1.2.6
 # 编译期注入版本号：单文件 exe / 无 manifest 场景兜底，避免“检查更新”误报 0.0.0
 LDFLAGS := -s -w -X github.com/IamAyang233/panda-xiangqi/internal/api.buildVersion=$(VERSION)
 
