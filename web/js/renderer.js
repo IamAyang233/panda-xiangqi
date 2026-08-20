@@ -31,6 +31,8 @@ export class BoardRenderer {
     this.shake = 0;
     this.dirty = true;
     this.redrawBoard = true;
+    this.pieceTiles = new Map();   // 棋子贴图缓存（含柔和投影，预渲染一次，绘制时只 drawImage）
+    this._resizeTimer = null;
 
     // 画质自适应（A19）
     this.quality = 2;            // 2=全特效 1=粒子减半 0=粒子关闭
@@ -44,13 +46,19 @@ export class BoardRenderer {
     this.lastT = performance.now();
 
     canvas.addEventListener('pointerdown', (e) => this._onClick(e));
-    this._ro = new ResizeObserver(() => { this.resize(); });
+    // 防抖：移动端滚动/地址栏伸缩、桌面窗口微调会高频触发尺寸变化，避免棋盘层反复重建导致卡顿。
+    this._ro = new ResizeObserver(() => {
+      if (this._resizeTimer) clearTimeout(this._resizeTimer);
+      this._resizeTimer = setTimeout(() => this.resize(), 80);
+    });
     this._ro.observe(canvas.parentElement);
   }
 
   destroy() {
     cancelAnimationFrame(this._raf);
     this._ro.disconnect();
+    if (this._resizeTimer) clearTimeout(this._resizeTimer);
+    this.pieceTiles.clear();
   }
 
   setTheme({ skin, boardSkin }) {
@@ -98,13 +106,15 @@ export class BoardRenderer {
     const piece = this.board.get(toKey);
     if (!piece) { this.dirty = true; return; }
     this.board.delete(toKey);
-    // 恢复被吃子：按 FEN 字符解析颜色/类型
+    // 恢复被吃子：按 FEN 字符解析颜色/类型。type 必须为数字，与 board.js 的 fenToType 一致，
+    // 否则 _drawPiece 用 pieceChars[color][type-1] 取字时 type-1 为 NaN，会画出 "undefined" 英文（悔棋时一闪）。
     let restored = null;
     if (capturedChar) {
       const isRed = capturedChar === capturedChar.toUpperCase();
       const ch = capturedChar.toLowerCase();
-      const typeMap = { r: 'rook', n: 'knight', c: 'cannon', b: 'bishop', a: 'advisor', k: 'king', p: 'pawn' };
-      const type = typeMap[ch] || 'pawn';
+      // 数字编码对齐 fenToType：k=1 将 a=2 士 b=3 象 n=4 马 r=5 车 c=6 炮 p=7 兵
+      const typeMap = { k: 1, a: 2, b: 3, e: 3, n: 4, h: 4, r: 5, c: 6, p: 7 };
+      const type = typeMap[ch] || 7;
       restored = { color: isRed ? 'red' : 'black', type };
       this.board.set(toKey, restored);
     }
@@ -188,6 +198,7 @@ export class BoardRenderer {
     this.canvas.height = Math.round(availH * this.dpr);
     this.redrawBoard = true;
     this.dirty = true;
+    this.pieceTiles.clear();   // 尺寸/dpr 已变，旧尺寸贴图失效，重建缓存
   }
 
   // _xy 交叉点像素坐标（含翻转）
@@ -486,56 +497,84 @@ export class BoardRenderer {
     }
   }
 
-  _drawPiece(ctx, x, y, piece, { alpha = 1, scale = 1 } = {}) {
-    const R = this.cell * 0.44 * scale;
+  // 预渲染棋子贴图（含柔和投影）。仅在 skin/cell/quality 变化时生成一次，
+  // 之后每帧只 drawImage，彻底避免原实现每帧每棋子执行 ctx.filter blur（卡顿主因）。
+  _getPieceTile(color, type) {
     const skin = pieceSkins[this.skin] || pieceSkins.wood;
-    const colors = piece.color === 'red' ? skin.red : skin.black;
-    const char = pieceChars[piece.color][piece.type - 1];
+    const colors = color === 'red' ? skin.red : skin.black;
+    const ch = pieceChars[color][type - 1];
+    const hi = this.quality >= 2 ? 'h' : 'l';
+    const rPix = Math.round(this.cell * 0.44 * this.dpr);
+    const key = `${this.skin}|${color}|${type}|${hi}|${rPix}`;
+    let tile = this.pieceTiles.get(key);
+    if (tile) return tile;
 
-    ctx.save();
-    ctx.globalAlpha = alpha;
+    const r = this.cell * 0.44;                 // 棋子基础半径（CSS px，不含动画缩放）
+    const pad = r * 0.6;                        // 容纳投影偏移与模糊溢出
+    const size = r * 2 + pad * 2;
+    const dpr = this.dpr;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(size * dpr));
+    c.height = Math.max(1, Math.ceil(size * dpr));
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cx = size / 2, cy = size / 2;
 
-    // 投影
+    // 投影（一次性模糊）
     ctx.fillStyle = skin.shadow;
     ctx.beginPath();
-    ctx.ellipse(x + R * 0.08, y + R * 0.22, R * 0.98, R * 0.88, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + r * 0.08, cy + r * 0.22, r * 0.98, r * 0.88, 0, 0, Math.PI * 2);
     ctx.filter = this.quality >= 2 ? 'blur(2px)' : 'none';
     ctx.fill();
     ctx.filter = 'none';
 
     // 盘体：径向渐变模拟立体
-    const g = ctx.createRadialGradient(x - R * 0.35, y - R * 0.4, R * 0.1, x, y, R);
+    const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r);
     g.addColorStop(0, colors.face1);
     g.addColorStop(0.75, colors.face2);
     g.addColorStop(1, colors.rim);
     ctx.beginPath();
-    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = g;
     ctx.fill();
 
     // 外缘
-    ctx.lineWidth = Math.max(1.5, R * 0.09);
+    ctx.lineWidth = Math.max(1.5, r * 0.09);
     ctx.strokeStyle = colors.rim;
     ctx.stroke();
 
     // 内环
     ctx.beginPath();
-    ctx.arc(x, y, R * 0.78, 0, Math.PI * 2);
-    ctx.lineWidth = Math.max(1, R * 0.055);
+    ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, r * 0.055);
     ctx.strokeStyle = colors.ring;
-    ctx.globalAlpha = alpha * 0.75;
+    ctx.globalAlpha = 0.75;
     ctx.stroke();
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = 1;
 
     // 字
-    ctx.font = `700 ${Math.round(R * 1.02)}px "STKaiti","KaiTi","SimKai","Noto Serif SC",serif`;
+    ctx.font = `700 ${Math.round(r * 1.02)}px "STKaiti","KaiTi","SimKai","Noto Serif SC",serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = colors.text;
     ctx.shadowColor = 'rgba(255,255,255,0.35)';
     ctx.shadowOffsetY = -0.8;
     ctx.shadowBlur = this.quality >= 2 ? 1.5 : 0;
-    ctx.fillText(char, x, y + R * 0.05);
+    ctx.fillText(ch, cx, cy + r * 0.05);
+    ctx.shadowBlur = 0;
+
+    tile = { canvas: c, size, center: cx };
+    this.pieceTiles.set(key, tile);
+    return tile;
+  }
+
+  _drawPiece(ctx, x, y, piece, { alpha = 1, scale = 1 } = {}) {
+    // 贴图按基础半径预渲染，动画缩放由 drawImage 承担，零额外开销。
+    const tile = this._getPieceTile(piece.color, piece.type);
+    const s = tile.size * scale;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(tile.canvas, x - tile.center * scale, y - tile.center * scale, s, s);
     ctx.restore();
   }
 

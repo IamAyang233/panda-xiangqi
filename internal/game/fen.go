@@ -31,6 +31,15 @@ func init() {
 	}
 }
 
+// PieceToFen 把内部棋子字节转换为 FEN 字符（大写红、小写黑）；非棋子返回 0。
+// 用于把被吃子等信息以标准 FEN 字符下发给前端（前端按 FEN 字符解析颜色/类型）。
+func PieceToFen(pc byte) byte {
+	if pc == Empty {
+		return 0
+	}
+	return pieceToFen[pc]
+}
+
 // ParseFEN 解析标准 Xiangqi FEN。
 func ParseFEN(fen string) (*Position, error) {
 	p := &Position{}

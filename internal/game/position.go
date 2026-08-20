@@ -145,6 +145,15 @@ func (p *Position) LastMove() (Move, bool) {
 	return p.hist[len(p.hist)-1].move, true
 }
 
+// LastCaptured 返回最近一步的被吃子（Empty 表示无吃子）。需在 Unmake 前调用，
+// 因为 Make 时已把真实被吃子压入历史栈（而非走完后的落点棋子——那才是走子方自己）。
+func (p *Position) LastCaptured() byte {
+	if len(p.hist) == 0 {
+		return Empty
+	}
+	return p.hist[len(p.hist)-1].captured
+}
+
 // MoveCount 已走着数（半回合）。
 func (p *Position) MoveCount() int { return len(p.hist) }
 

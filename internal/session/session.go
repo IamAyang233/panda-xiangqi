@@ -559,10 +559,14 @@ func (s *Session) Undo() error {
 				From: game.SquareName(mv.From), To: game.SquareName(mv.To),
 				CN: last.CN,
 			}
-			// Unmake 前读被吃子身份（该步落点原棋子；若为吃子则存在）
-			// mv.To 为 256 mailbox 下标，与 Position.Board 直接索引一致。
-			if capPiece := s.pos.Board[mv.To]; capPiece != game.Empty {
-				um.Captured = string(capPiece)
+			// 真正的被吃子：从位置历史栈栈顶读取（game.Make 走子时压入的
+			// histEntry.captured），而非 s.pos.Board[mv.To]——后者在该步走完后
+			// 站的是“走子方自己”，会误把走子棋当作被吃子，导致前端在落点凭空
+			// 复原一颗棋子（如红兵闪现后随 setFEN 重建而消失）。
+			// 引擎内部用编码字节存棋子，需经 PieceToFen 转为标准 FEN 字符再下发，
+			// 否则前端按 FEN 字符解析会落空、默认成红兵。
+			if capPiece := s.pos.LastCaptured(); capPiece != game.Empty {
+				um.Captured = string(game.PieceToFen(capPiece))
 			}
 		} else {
 			um = undoMove{From: last.UCI[:4], To: last.UCI[:4], CN: last.CN}
