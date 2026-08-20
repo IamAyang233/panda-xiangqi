@@ -1,0 +1,32 @@
+[
+  {
+    "id": "cj-武震-高级实用残局-0047",
+    "name": "武震-高级实用残局 #0047",
+    "source": "武震-高级实用残局",
+    "difficulty": "中级",
+    "playerSide": "red",
+    "goal": "win",
+    "fen": "9/3k5/3n5/9/3r5/2B1R4/9/1C2B4/4A4/4KA3 w - - 0 1",
+    "parMoves": 7,
+    "solution": [
+      "b2d2",
+      "d5d3",
+      "e2c0",
+      "d8d9",
+      "d2d0",
+      "d3d1",
+      "e1f2",
+      "d9d8",
+      "e4e7",
+      "d1d0",
+      "e0d0",
+      "d8d9",
+      "e7e8"
+    ],
+    "tags": [
+      "canju12",
+      "武震-高级实用残局"
+    ],
+    "verified": true
+  }
+]

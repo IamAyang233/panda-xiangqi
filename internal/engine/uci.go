@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -232,6 +233,108 @@ func (e *UCIEngine) bestOnce(ctx context.Context, pos *game.Position, level int)
 		return game.Move{}, ctx.Err()
 	}
 	return r.m, r.err
+}
+
+// BestLine 通过 UCI 协议求最佳路线（PV）。以最高棋力（Skill Level 20）搜索
+// movetimeMs 毫秒，返回从当前局面出发的主变着法序列、分数（cp）与将杀步数
+// （mate，正 = 行棋方胜）。用于残局导入时生成"完整正解线"。
+func (e *UCIEngine) BestLine(ctx context.Context, pos *game.Position, movetimeMs int) (pv []game.Move, scoreCp int, mateIn int, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.send("setoption name Skill Level value 20")
+	e.send("isready")
+	if err = e.expect("readyok", 5*time.Second); err != nil {
+		return
+	}
+	if moves := uciMoves(pos); moves != "" {
+		e.send("position fen " + pos.FEN() + " moves " + moves)
+	} else {
+		e.send("position fen " + pos.FEN())
+	}
+	e.send(fmt.Sprintf("go movetime %d", movetimeMs))
+
+	type res struct {
+		pv      []game.Move
+		scoreCp int
+		mateIn  int
+		err     error
+	}
+	done := make(chan res, 1)
+	go func() {
+		var lastPV []game.Move
+		var lastCp, lastMate int
+		seen := false
+		for {
+			select {
+			case line, ok := <-e.lines:
+				if !ok {
+					if seen {
+						done <- res{lastPV, lastCp, lastMate, nil}
+					} else {
+						done <- res{nil, 0, 0, fmt.Errorf("引擎输出流关闭")}
+					}
+					return
+				}
+				fields := strings.Fields(strings.TrimSpace(line))
+				if len(fields) >= 2 && fields[0] == "bestmove" {
+					if seen {
+						done <- res{lastPV, lastCp, lastMate, nil}
+					} else {
+						done <- res{nil, 0, 0, fmt.Errorf("未收到 PV")}
+					}
+					return
+				}
+				if len(fields) >= 2 && fields[0] == "info" {
+					for i := 0; i+2 < len(fields); i++ {
+						if fields[i] == "score" {
+							switch fields[i+1] {
+							case "cp":
+								lastCp, _ = strconv.Atoi(fields[i+2])
+							case "mate":
+								lastMate, _ = strconv.Atoi(fields[i+2])
+							}
+							break
+						}
+					}
+					for i := 0; i < len(fields); i++ {
+						if fields[i] == "pv" {
+							seq := fields[i+1:]
+							line2 := make([]game.Move, 0, len(seq))
+							for _, s := range seq {
+								if m, ok := game.MoveFromUCI(s); ok {
+									line2 = append(line2, m)
+								} else {
+									break
+								}
+							}
+							if len(line2) > 0 {
+								lastPV = line2
+								seen = true
+							}
+							break
+						}
+					}
+				}
+			case <-e.dead:
+				done <- res{nil, 0, 0, fmt.Errorf("引擎已终止")}
+				return
+			}
+		}
+	}()
+	timeout := time.Duration(movetimeMs)*3/2 + 3*time.Second
+	select {
+	case r := <-done:
+		return r.pv, r.scoreCp, r.mateIn, r.err
+	case <-ctx.Done():
+		e.send("stop")
+		_ = e.expect("bestmove", 2*time.Second)
+		return nil, 0, 0, ctx.Err()
+	case <-time.After(timeout):
+		e.send("stop")
+		_ = e.expect("bestmove", 2*time.Second)
+		return nil, 0, 0, fmt.Errorf("等待 bestmove 超时")
+	}
 }
 
 func uciLevelParams(level int) (skill int, movetime time.Duration) {

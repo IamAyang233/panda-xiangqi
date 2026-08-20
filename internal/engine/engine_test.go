@@ -118,3 +118,24 @@ func TestLevelConfigs(t *testing.T) {
 		}
 	}
 }
+
+// 引擎不得用"长将逼和"逃避败局：红车可 e2↔d2 长将黑王 e9↔d9（重复判红负），
+// 但红方整体劣势（黑有双车）。引擎应拒绝长将线，选择其它着法。
+func TestEngineAvoidsLongCheck(t *testing.T) {
+	// 黑双车 g1/h1 即将成杀，红只有一车可 e2↔d2 循环将军黑王。
+	p, err := game.ParseFEN("4k4/9/9/9/9/9/9/4R4/9/2r1K2r1 w - - 0 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewSimpleEngine()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	mv, err := e.BestMove(ctx, p, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	longCheck := (mv.String() == "e2d2" || mv.String() == "d2e2")
+	if longCheck {
+		t.Errorf("引擎选择了长将着法 %s（会被判负），应避开", mv)
+	}
+}

@@ -88,6 +88,31 @@ export class BoardRenderer {
     this.dirty = true;
   }
 
+  // animateUndo 悔棋反向动画：棋子从 to 移回 from；若该步吃了子，被吃子恢复在 to。
+  // capturedChar 为被吃子的 FEN 字符（如 'r'/'n'），从 renderer 主题映射出真实棋子。
+  animateUndo(fromName, toName, capturedChar) {
+    if (this.anim) this.finishAnim();
+    const from = parseSq(fromName), to = parseSq(toName);
+    if (!from || !to) return;
+    const toKey = `${to.f},${to.r}`;
+    const piece = this.board.get(toKey);
+    if (!piece) { this.dirty = true; return; }
+    this.board.delete(toKey);
+    // 恢复被吃子：按 FEN 字符解析颜色/类型
+    let restored = null;
+    if (capturedChar) {
+      const isRed = capturedChar === capturedChar.toUpperCase();
+      const ch = capturedChar.toLowerCase();
+      const typeMap = { r: 'rook', n: 'knight', c: 'cannon', b: 'bishop', a: 'advisor', k: 'king', p: 'pawn' };
+      const type = typeMap[ch] || 'pawn';
+      restored = { color: isRed ? 'red' : 'black', type };
+      this.board.set(toKey, restored);
+    }
+    // 反向：piece 当前在 to，动画移到 from；被吃子已恢复在 to（若 capturedChar）
+    this.anim = { piece, from: to, to: from, victim: null, undo: true, t: 0, dur: 0.26 };
+    this.dirty = true;
+  }
+
   finishAnim() {
     if (!this.anim) return;
     const { to, piece, victim } = this.anim;

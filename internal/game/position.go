@@ -48,6 +48,8 @@ type histEntry struct {
 	key       uint64
 	halfmove  int
 	fullmove  int
+	color     int  // 走子方 Red/Black
+	check     bool // 走完后对方被将军（长将判定用）
 }
 
 // Position 一局局面。非并发安全；上层需自行加锁。
@@ -92,7 +94,7 @@ func (p *Position) InCheck(color int) bool {
 func (p *Position) Make(m Move) byte {
 	captured := p.Board[m.To]
 	mover := p.Board[m.From]
-	hi := histEntry{move: m, captured: captured, key: p.Key, halfmove: p.Halfmove, fullmove: p.Fullmove}
+	hi := histEntry{move: m, captured: captured, key: p.Key, halfmove: p.Halfmove, fullmove: p.Fullmove, color: ColorOf(mover)}
 
 	p.Key ^= pieceKeys[mover][m.From] ^ pieceKeys[mover][m.To] ^ sideKey
 	if captured != Empty {
@@ -112,6 +114,7 @@ func (p *Position) Make(m Move) byte {
 		p.Fullmove++
 	}
 	p.Turn = Opponent(p.Turn)
+	hi.check = p.InCheck(p.Turn) // 走完后新轮走方被将军 → 刚走的这步是将军
 	p.hist = append(p.hist, hi)
 	return captured
 }

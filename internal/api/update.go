@@ -1,20 +1,85 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"time"
 )
 
-// 应用标识与版本（PanDa「推送更新」后台录入时使用同一 app_name）。
-const (
-	AppName    = "panda-xiangqi"
-	AppVersion = "1.1.3"
+// 应用标识（PanDa「推送更新」后台录入时使用同一 app_name）。
+const AppName = "panda-xiangqi"
+
+// AppVersion 版本号优先级：编译时由 -ldflags -X 注入的 buildVersion ＞ 随包 manifest 的 version= 行。
+// 单文件 exe / fnOS 部署若无 manifest 时，靠 buildVersion 兜底，避免「检查更新」误报 0.0.0。
+var (
+	AppVersion     = buildVersion // 初始 = 编译期注入值（未注入则为空，运行时再尝试 manifest）
+	appVersionOnce sync.Once
 )
+
+// buildVersion 由 Makefile 的 -ldflags "-X ...buildVersion=$(VERSION)" 注入；不注入则为空。
+var buildVersion string
+
+// InitAppVersion 从 manifest 读取真实版本号覆盖 AppVersion；读不到则保留 buildVersion。
+// 应在服务启动早期（构造 Server 前）调用一次；重复调用安全（仅首次生效）。
+func InitAppVersion() {
+	appVersionOnce.Do(func() {
+		if v, ok := readManifestVersion(); ok && v != "" {
+			AppVersion = v
+			return
+		}
+		if AppVersion == "" {
+			AppVersion = "0.0.0"
+		}
+	})
+}
+
+// readManifestVersion 在若干候选路径中寻找并解析 manifest 的 version= 行。
+// manifest 为 INI 风格（key=value）。候选顺序：当前工作目录（fnOS 启动 cwd=应用根）、
+// 本地开发仓库路径、以及相对可执行文件上层（<app>/app/server/<bin> → ../../manifest）。
+func readManifestVersion() (string, bool) {
+	candidates := []string{"manifest", filepath.Join("fnos", "panda-xiangqi", "manifest")}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "..", "manifest"))
+	}
+	for _, p := range candidates {
+		if v, ok := parseManifestVersion(p); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// parseManifestVersion 读取一个 INI 风格文件，返回 version= 的值（去引号/前后空白）。
+func parseManifestVersion(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(k), "version") {
+			if ver := strings.TrimSpace(strings.Trim(v, `"'`)); ver != "" {
+				return ver, true
+			}
+		}
+	}
+	return "", false
+}
 
 const updateHTTPTimeout = 8 * time.Second
 

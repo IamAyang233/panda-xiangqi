@@ -12,7 +12,8 @@ const (
 	ReasonCheckmate    = "checkmate"    // 将死
 	ReasonStalemate    = "stalemate"    // 困毙（无合法着法且未被将军，判无着方负）
 	ReasonResign       = "resign"       // 认输
-	ReasonRepetition   = "repetition"   // 三次重复局面（P0 按和棋处理）
+	ReasonRepetition   = "repetition"   // 三次重复局面（非长将，按和棋处理）
+	ReasonLongCheck    = "long_check"   // 长将：一方连续将军形成循环，长将方判负
 	ReasonSixtyMoves   = "60_moves"     // 连续 60 回合未吃子
 	ReasonInsufficient = "insufficient" // 双方均无进攻子力
 )
@@ -43,8 +44,13 @@ func (p *Position) CheckStatus() Status {
 		return st
 	}
 
-	// 三次重复局面 → 和（P0；长打判负为 P1，见 A15）
+	// 三次重复局面：构成长将则长将方判负（P1），否则和
 	if p.RepetitionCount() >= 3 {
+		if winner, ok := p.LongCheckWinner(); ok {
+			st.Result, st.Reason = winner, ReasonLongCheck
+			st.Winner = winner
+			return st
+		}
 		st.Result, st.Reason, st.IsDraw = ResultDraw, ReasonRepetition, true
 		return st
 	}
@@ -91,4 +97,39 @@ func (p *Position) RepetitionCount() int {
 		}
 	}
 	return n
+}
+
+// LongCheckWinner 检测三次重复的循环是否构成长将（一方在循环内每步都将军，
+// 另一方至少一步不将军）。返回胜方（长将方的对手）与 true；双方长将或
+// 非长将（一将一闲等）返回 false，由调用方按和棋处理。
+func (p *Position) LongCheckWinner() (string, bool) {
+	// 从后往前找当前局面键的上一次出现位置：该步之后的着法构成最近一圈循环
+	i1 := -1
+	for i := len(p.hist) - 1; i >= 0; i-- {
+		if p.hist[i].key == p.Key {
+			i1 = i
+			break
+		}
+	}
+	if i1 < 0 {
+		return "", false
+	}
+	redAll, blackAll := true, true
+	for _, h := range p.hist[i1:] {
+		if h.color == Red {
+			if !h.check {
+				redAll = false
+			}
+		} else if !h.check {
+			blackAll = false
+		}
+	}
+	switch {
+	case redAll && !blackAll:
+		return ResultBlackWin, true // 红连续将军 → 红长将判负
+	case blackAll && !redAll:
+		return ResultRedWin, true // 黑连续将军 → 黑长将判负
+	default:
+		return "", false // 双方长将 / 非长将 → 和
+	}
 }

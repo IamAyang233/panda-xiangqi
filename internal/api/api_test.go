@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -295,4 +297,49 @@ func ioReadFull(br *bufio.Reader, buf []byte) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+func TestParseManifestVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+		ok   bool
+	}{
+		{"plain", "appname=panda-xiangqi\nversion=1.2.0\n", "1.2.0", true},
+		{"quoted", "version=\"1.2.0\"\n", "1.2.0", true},
+		{"whitespace", "  version = 1.2.0  \n", "1.2.0", true},
+		{"comment-before", "# header\nversion=1.2.0\n", "1.2.0", true},
+		{"UPPER", "VERSION=1.2.0\n", "1.2.0", true},
+		{"no-version", "appname=panda-xiangqi\n", "", false},
+		{"empty", "", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "manifest")
+			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := parseManifestVersion(p)
+			if ok != c.ok || got != c.want {
+				t.Fatalf("parseManifestVersion(%q) = (%q,%v), want (%q,%v)", c.body, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+func TestReadManifestVersionFromCandidates(t *testing.T) {
+	// 在 cwd 放置 manifest 后应能被 readManifestVersion 命中。
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, "manifest"), []byte("version=9.9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := readManifestVersion(); !ok || v != "9.9.9" {
+		t.Fatalf("readManifestVersion = (%q,%v), want (9.9.9,true)", v, ok)
+	}
 }

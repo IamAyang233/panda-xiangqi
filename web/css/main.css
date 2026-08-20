@@ -286,6 +286,10 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .puzzle-goal-tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; }
 .puzzle-goal-tag.win { background: rgba(212,169,65,0.15); color: var(--gold); border: 1px solid var(--gold-soft); }
 .puzzle-goal-tag.draw { background: rgba(160,160,160,0.12); color: var(--text-dim); border: 1px solid var(--line); }
+/* 黑先关用冷色描边，与红先（暖金）区分 */
+.puzzle-goal-tag.black { border-style: dashed; border-color: #5b8dd6; }
+.puzzle-goal-tag.black.win { color: #6fa0e6; background: rgba(91,141,214,0.12); border-color: #5b8dd6; }
+.puzzle-goal-tag.black.draw { color: #6fa0e6; border-color: #5b8dd6; }
 .puzzle-stars { color: var(--gold); font-size: 15px; letter-spacing: 3px; }
 
 /* ---------- 自定义滚动条（替代浏览器原生样式） ---------- */

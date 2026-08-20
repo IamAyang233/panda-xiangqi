@@ -154,7 +154,11 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "残局不存在")
 			return
 		}
-		humanSide = game.Red // 残局玩家恒执红
+		// 残局玩家执子方由关卡定义（playerSide；默认红先）。
+		humanSide = game.Red
+		if pz.PlayerSide == "black" {
+			humanSide = game.Black
+		}
 	default:
 		writeErr(w, http.StatusBadRequest, "未知模式 "+req.Mode)
 		return
@@ -229,7 +233,7 @@ func (s *Server) handlePuzzleDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, puzzle.Public{
 		ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
-		Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
+		PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
 	})
 }
 

@@ -30,3 +30,23 @@ dist-engines/
 icon-drafts/
 _logo_*.py
 icon_*_512.png
+
+# 诊断/临时脚本与一次性产物（开发调试用，勿入库）
+.diag/
+_tmp_*.js
+_check_palace.py
+test_shot_*.png
+panda-xiangqi~
+matecheck.exe
+/bin/
+
+# 带版本号发布包与一次性诊断产物（勿入库）
+panda-xiangqi_*.exe
+panda-xiangqi_*.exe~
+*.zip
+.audit_*.mjs
+.diag_check_palace.mjs
+TEST_REPORT_*.md
+
+# 旧题库备份（已被 canju12 3577 题替换，勿入库）
+internal/_old_puzzles_backup/

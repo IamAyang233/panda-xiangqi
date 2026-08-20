@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
 
 const reasonText = {
   checkmate: '将死', stalemate: '困毙', resign: '认输',
-  repetition: '三次重复局面', '60_moves': '六十回合未吃子', insufficient: '双方无进攻子力',
+  repetition: '三次重复局面', long_check: '长将判负', '60_moves': '六十回合未吃子', insufficient: '双方无进攻子力',
 };
 
 export class GameScreen {
@@ -96,8 +96,13 @@ export class GameScreen {
     }
     this.humanSide = created.youSide || 'red';
     this.renderer.setFlipped(this.humanSide === 'black');
-    this.renderer.setFEN('rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w');
     showScreen('game');
+    // 屏幕由 hidden(display:none) 切回可见后，父容器 .board-wrap 才有真实尺寸。
+    // 构造函数里的 resize() 在屏幕隐藏时尺寸为 0 会提前返回（cell/mx/my 未初始化），
+    // 若只依赖 ResizeObserver 在部分嵌入式 WebView 中可能不触发或延迟触发，
+    // 导致棋子以 NaN/错误坐标绘制（表现为“棋子位置不对 / 不显示”）。显式重算一次几何。
+    this.renderer.resize();
+    this.renderer.setFEN('rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w');
     this._setupUI(mode, opts);
 
     this.conn?.close();
@@ -173,8 +178,26 @@ export class GameScreen {
   }
 
   _onState(m) {
+    // 悔棋动画播放中：延迟应用 state，避免 setFEN 立即覆盖动画
+    if (this.renderer.anim) {
+      this._pendingState = m;
+      setTimeout(() => {
+        if (this._pendingState === m) {
+          this._pendingState = null;
+          this._applyState(m);
+        }
+      }, 320);
+      return;
+    }
+    this._applyState(m);
+  }
+
+  _applyState(m) {
     this.renderer.setFEN(m.fen);
     this.renderer.setLastMove(m.lastMove?.from, m.lastMove?.to);
+    // 全量同步时同步将军高亮：避免悔棋/重开后“文字提示将军、棋盘却不标红”的不一致。
+    this.renderer.checkSide = m.check ? m.turn : null;
+    this.renderer.dirty = true;
     this.moves = m.moves || [];
     this.gameOver = m.status === 'over';
     this._renderMoves();
@@ -214,15 +237,33 @@ export class GameScreen {
   }
 
   _onMove(m) {
+    // 先探明落点是否已有子（即是否吃子）：animateMove 会立即从 board 中移除，
+    // 故必须在调用前读取，否则无法据此播放“吃子”音效。
+    const to = parseSq(m.to);
+    const captured = !!to && this.renderer.board.has(`${to.f},${to.r}`);
     this.renderer.animateMove(m.from, m.to);
     this.renderer.setLastMove(m.from, m.to);
     this.renderer.setHint(null);
-    // move 消息后轮走方切换（state 仅在加入/悔棋时全量下发）
-    this.renderer.turn = this.renderer.turn === 'red' ? 'black' : 'red';
+    // 双人同屏：move 消息后轮走方切换（其他模式以 state 全量同步为准，
+    // 且选子判定走 humanSide，此 toggle 仅对 local_2p 有意义）。
+    if (this.mode === 'local_2p') {
+      this.renderer.turn = this.renderer.turn === 'red' ? 'black' : 'red';
+    }
     this.moves.push({ uci: m.from + m.to, cn: m.cn });
     this._renderMoves();
-    sfx.play('capture');
-    setTimeout(() => sfx.play('move'), 60);
+    // AI 走子后轮到人类：恢复悔棋按钮与状态栏（_onThinking 曾禁用/置思考中）。
+    if (this.mode !== 'local_2p' && m.byHuman === false) {
+      $('btn-undo').disabled = false;
+      const oppState = $('opp-state');
+      oppState.className = 'player-state';
+      oppState.textContent = '';
+    }
+    sfx.play(captured ? 'capture' : 'move');
+    // 残局目标栏：走子消息自带 step，无需等 state 全量同步即可刷新"已走 N 步"。
+    if (this.puzzle && m.step !== undefined) {
+      this.puzzle.step = m.step;
+      this._renderPuzzleGoal();
+    }
   }
 
   _onThinking() {
@@ -246,7 +287,17 @@ export class GameScreen {
     sfx.play('star');
   }
 
-  _onUndo() { sfx.play('button'); }
+  _onUndo(m) {
+    sfx.play('button');
+    // 反向动画：moves 为被撤着法（顺序=回退顺序，最后一个=最近一手）。
+    // 只对最近一手播动画，其余由 state 全量同步直接覆盖。
+    if (m?.moves?.length) {
+      const last = m.moves[m.moves.length - 1];
+      if (last?.from && last?.to) {
+        this.renderer.animateUndo(last.from, last.to, last.captured);
+      }
+    }
+  }
 
   _onComment(m) {
     const bubble = $('llm-bubble');
@@ -278,8 +329,9 @@ export class GameScreen {
       title = m.result === 'red_win' ? '红方胜' : m.result === 'black_win' ? '黑方胜' : '和棋';
       cls = m.result === 'draw' ? 'draw' : 'win';
     } else if (isPuzzle) {
-      title = m.result === 'red_win' ? '通关成功' : '挑战失败';
-      cls = m.result === 'red_win' ? 'win' : 'lose';
+      // 通关与否由后端 m.stars 判定（覆盖红胜/黑胜/和棋三种达成方式）。
+      if (m.stars) { title = '通关成功'; cls = 'win'; }
+      else { title = '挑战失败'; cls = 'lose'; }
     } else if (m.result === 'draw') {
       title = '和棋'; cls = 'draw';
     } else {
@@ -302,7 +354,7 @@ export class GameScreen {
         }
         stars.appendChild(s);
       }
-      if (m.result === 'red_win') store.setStars(this.puzzle?.id, m.stars);
+      if (m.stars) store.setStars(this.puzzle?.id, m.stars);
     } else {
       stars.hidden = true;
     }
@@ -392,7 +444,9 @@ export class GameScreen {
   _renderPuzzleGoal() {
     const el = $('puzzle-goal');
     if (!this.puzzle) { el.hidden = true; return; }
-    const goal = this.puzzle.goal === 'win' ? '红先胜' : '红先和';
+    const side = this.puzzle.playerSide === 'black' ? '黑先' : '红先';
+    const aim = this.puzzle.goal === 'win' ? '胜' : '和';
+    const goal = `${side}${aim}`;
     const failed = this.puzzle.failed ? '<b style="color:#e05a3a">（已偏离正解，可悔棋或重开）</b>' : '';
     el.hidden = false;
     el.innerHTML = `目标：<b>${goal}</b> · 最少 <b>${this.puzzle.parMoves}</b> 步 · 已走 <b>${this.puzzle.step}</b> 步${failed}

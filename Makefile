@@ -1,7 +1,8 @@
 # 熊猫象棋 Makefile：测试 / 构建 / 交叉编译 / 运行 / 大模型联调 / 飞牛 fpk 打包
 BINARY := panda-xiangqi
-VERSION := 1.1.7
-LDFLAGS := -s -w
+VERSION := 1.2.4
+# 编译期注入版本号：单文件 exe / 无 manifest 场景兜底，避免“检查更新”误报 0.0.0
+LDFLAGS := -s -w -X github.com/IamAyang233/panda-xiangqi/internal/api.buildVersion=$(VERSION)
 
 # 飞牛 fnOS 原生应用包目录与包内二进制路径（与 manifest appname 对应）。
 FNK_PKG := fnos/panda-xiangqi

@@ -184,11 +184,24 @@ func (s *Session) buildStateLocked() map[string]any {
 	}
 	if s.Mode == ModePuzzle && s.pz != nil {
 		msg["puzzle"] = map[string]any{
-			"id": s.pz.ID, "goal": s.pz.Goal, "step": (s.pzStep + 1) / 2,
+			"id": s.pz.ID, "goal": s.pz.Goal, "playerSide": s.pz.PlayerSide,
+			"step": s.playerMoveCountLocked(),
 			"failed": s.pzFail, "hintUsed": s.hintUsed, "parMoves": s.pz.ParMoves,
 		}
 	}
 	return msg
+}
+
+// playerMoveCountLocked 玩家（HumanSide）已落子步数，无论正解与否都计数。
+// 残局目标栏"已走 N 步"应反映玩家实际着数，而非正解消费进度。
+func (s *Session) playerMoveCountLocked() int {
+	n := 0
+	for _, mv := range s.moves {
+		if mv.Red == (s.HumanSide == game.Red) {
+			n++
+		}
+	}
+	return n
 }
 
 func sideName(c int) string {
@@ -317,12 +330,16 @@ func (s *Session) applyMoveLocked(m game.Move) []any {
 	}
 	byHuman := red == (s.HumanSide == game.Red)
 	switch s.Mode {
-	case ModeEngine:
+	case ModeEngine, ModePuzzle:
 		base["type"], base["byHuman"] = "engine_move", byHuman
 	case ModeLLM:
 		base["type"], base["byHuman"] = "llm_move", byHuman
 	default:
 		base["type"] = "move"
+	}
+	if s.Mode == ModePuzzle && s.pz != nil {
+		// 走子消息直接携带玩家已走步数（无论正解与否），前端目标栏无需等 state 全量同步即可刷新。
+		base["step"] = s.playerMoveCountLocked()
 	}
 	msgs := []any{base}
 	if inCheck {
@@ -339,16 +356,33 @@ func (s *Session) finishLocked(result, reason string) []any {
 	s.result = result
 	s.reason = reason
 	msg := map[string]any{"type": "game_over", "result": result, "reason": reason}
-	if s.Mode == ModePuzzle && s.pz != nil &&
-		result == game.ResultRedWin && reason == game.ReasonCheckmate && !s.pzFail {
-		redMoves := (len(s.moves) + 1) / 2
-		switch {
-		case !s.hintUsed && redMoves <= s.pz.ParMoves:
-			msg["stars"] = 3
-		case !s.hintUsed:
-			msg["stars"] = 2
-		default:
-			msg["stars"] = 1
+	if s.Mode == ModePuzzle && s.pz != nil {
+		cleared := false
+		if s.pz.Goal == "draw" {
+			// 和棋关：终局为和棋即算通过（含三次重复 / 60 回合 / 子力不足）。
+			cleared = result == game.ResultDraw
+		} else {
+			// 胜负关：玩家（执子方）将死或困毙对方即算通过。
+			playerWon := (result == game.ResultRedWin && s.HumanSide == game.Red) ||
+				(result == game.ResultBlackWin && s.HumanSide == game.Black)
+			cleared = playerWon && (reason == game.ReasonCheckmate || reason == game.ReasonStalemate)
+		}
+		if cleared {
+			playerMoves := 0
+			for _, mv := range s.moves {
+				if mv.Red == (s.HumanSide == game.Red) {
+					playerMoves++
+				}
+			}
+			switch {
+			// 偏离正解或用过提示：封顶 1 星；否则按步数给 2/3 星。
+			case s.pzFail || s.hintUsed:
+				msg["stars"] = 1
+			case playerMoves <= s.pz.ParMoves:
+				msg["stars"] = 3
+			default:
+				msg["stars"] = 2
+			}
 		}
 	}
 	return []any{msg}
@@ -508,7 +542,32 @@ func (s *Session) Undo() error {
 	if s.Mode != ModeLocal && s.pos.Turn == s.HumanSide && len(s.moves) >= 2 {
 		n = 2
 	}
+	// 收集被撤着法（含 from/to/吃子），供前端播反向动画。
+	type undoMove struct {
+		From     string `json:"from"`
+		To       string `json:"to"`
+		CN       string `json:"cn"`
+		Captured string `json:"captured,omitempty"` // 被吃子 FEN 字符（空=无吃子）
+	}
+	var undone []undoMove
 	for i := 0; i < n && len(s.moves) > 0; i++ {
+		last := s.moves[len(s.moves)-1]
+		mv, ok := game.MoveFromUCI(last.UCI)
+		var um undoMove
+		if ok {
+			um = undoMove{
+				From: game.SquareName(mv.From), To: game.SquareName(mv.To),
+				CN: last.CN,
+			}
+			// Unmake 前读被吃子身份（该步落点原棋子；若为吃子则存在）
+			// mv.To 为 256 mailbox 下标，与 Position.Board 直接索引一致。
+			if capPiece := s.pos.Board[mv.To]; capPiece != game.Empty {
+				um.Captured = string(capPiece)
+			}
+		} else {
+			um = undoMove{From: last.UCI[:4], To: last.UCI[:4], CN: last.CN}
+		}
+		undone = append(undone, um)
 		s.pos.Unmake()
 		s.moves = s.moves[:len(s.moves)-1]
 	}
@@ -525,7 +584,7 @@ func (s *Session) Undo() error {
 		s.reason = ""
 	}
 	msgs := []any{
-		map[string]any{"type": "undo_result", "ok": true},
+		map[string]any{"type": "undo_result", "ok": true, "moves": undone},
 		s.buildStateLocked(),
 	}
 	s.mu.Unlock()

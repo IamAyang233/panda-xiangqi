@@ -1,19 +1,19 @@
 // Command matesolve: exhaustive forced-mate prover for panda-xiangqi puzzles.
 //
-// It proves that, from a given red-to-move position, Red can force a genuine
-// 将死 (checkmate) within a bounded number of RED moves, against EVERY legal
-// Black defense. By default it requires genuine checkmate so that its verdict
-// matches the authoritative self-play puzzle-check gate (which only accepts
-// 将死). Pass -allow-stalemate to also accept 困毙 (stalemate), which is a legal
-// Red win under Xiangqi rules but is REJECTED by puzzle-check.
-//
-// Unlike the self-play puzzle-check, this does NOT rely on an engine choosing
-// the toughest defense — it enumerates all defender replies, so a PASS here is a
-// genuine proof of a forced win.
+// It proves that, from a given position, the side to move (the "attacker",
+// Red by default, or Black with -side black) can force a genuine 将死
+// (checkmate) within a bounded number of its own moves, against EVERY legal
+// defense by the opponent. By default it requires genuine checkmate so that its
+// verdict matches the authoritative self-play puzzle-check gate (which only
+// accepts 将死). Pass -allow-stalemate to also accept 困毙 (stalemate).
 //
 // Usage:
 //   go run ./cmd/matesolve -in internal/puzzle/data/killers.json -depth 3
-//   go run ./cmd/matesolve -fen "..." -depth 3
+//   go run ./cmd/matesolve -fen "..." -depth 3                # red to move (default)
+//   go run ./cmd/matesolve -fen "..." -side black -depth 3    # black to move
+//
+// When -in is used, each puzzle's "playerSide" field selects the attacker
+// (default red). The -side flag only applies to the single -fen form.
 package main
 
 import (
@@ -26,8 +26,8 @@ import (
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 )
 
-// Puzzle mirrors the JSON schema we store puzzles in. Only FEN/id/name are used
-// by the prover, but we decode the whole record so the file round-trips.
+// Puzzle mirrors the JSON schema we store puzzles in. Only FEN/id/name/playerSide
+// are used by the prover, but we decode the whole record so the file round-trips.
 type Puzzle struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -42,16 +42,41 @@ type Puzzle struct {
 	Verified   bool     `json:"verified"`
 }
 
+// parseSide maps "red"/"black" (default red) to a game color.
+func parseSide(s string) int {
+	if s == "black" {
+		return game.Black
+	}
+	return game.Red
+}
+
+// sideName is the human-readable label for a color.
+func sideName(c int) string {
+	if c == game.Black {
+		return "black"
+	}
+	return "red"
+}
+
+// winResult is the Result* constant for a win by color c.
+func winResult(c int) string {
+	if c == game.Black {
+		return game.ResultBlackWin
+	}
+	return game.ResultRedWin
+}
+
 func main() {
 	in := flag.String("in", "", "path to a puzzle JSON array file")
 	fen := flag.String("fen", "", "a single FEN to prove (alternative to -in)")
-	depth := flag.Int("depth", 3, "max red moves allowed to force mate")
+	depth := flag.Int("depth", 3, "max attacker moves allowed to force mate")
+	side := flag.String("side", "red", "attacker side for the -fen form: red | black")
 	allowStalemate := flag.Bool("allow-stalemate", false,
 		"also accept 困毙 (stalemate) forced wins, not just 将死 (checkmate)")
 	flag.Parse()
 
 	if *fen != "" {
-		runOne(Puzzle{Name: "(fen)", FEN: *fen}, *depth, *allowStalemate)
+		runOne(Puzzle{Name: "(fen)", FEN: *fen}, *depth, parseSide(*side), *allowStalemate)
 		return
 	}
 	if *in == "" {
@@ -70,7 +95,8 @@ func main() {
 	}
 	allPass := true
 	for _, p := range puzzles {
-		if !runOne(p, *depth, *allowStalemate) {
+		// Per-puzzle attacker is driven by playerSide; fall back to red.
+		if !runOne(p, *depth, parseSide(p.PlayerSide), *allowStalemate) {
 			allPass = false
 		}
 	}
@@ -79,19 +105,21 @@ func main() {
 	}
 }
 
-func runOne(p Puzzle, depth int, allowStalemate bool) bool {
+func runOne(p Puzzle, depth, attacker int, allowStalemate bool) bool {
 	pos, err := game.ParseFEN(p.FEN)
 	if err != nil {
 		fmt.Printf("[%s] %s  PARSE ERROR: %v\n", p.ID, p.Name, err)
 		return false
 	}
-	if pos.Turn != game.Red {
-		fmt.Printf("[%s] %s  WARN: not red to move (turn=%d)\n", p.ID, p.Name, pos.Turn)
+	defender := game.Opponent(attacker)
+	if pos.Turn != attacker {
+		fmt.Printf("[%s] %s  WARN: not %s to move (turn=%d)\n", p.ID, p.Name, sideName(attacker), pos.Turn)
 	}
-	// Root legality: with Red to move, Black must not already be in check.
-	rootIllegal := pos.InCheck(game.Black)
+	// Root legality: with the attacker to move, the defender must NOT already
+	// be in check (that would be an illegal "facing check" root position).
+	rootIllegal := pos.InCheck(defender)
 
-	k, pv, reason := redForce(pos, depth, allowStalemate)
+	k, pv, reason := forceWin(pos, depth, attacker, defender, allowStalemate)
 	label := p.ID
 	if label == "" {
 		label = p.Name
@@ -103,39 +131,40 @@ func runOne(p Puzzle, depth int, allowStalemate bool) bool {
 	fmt.Printf("[%s] %s\n", label, name)
 	fmt.Printf("  FEN: %s\n", p.FEN)
 	if rootIllegal {
-		fmt.Println("  WARN: root illegal — Black is in check with Red to move")
+		fmt.Printf("  WARN: root illegal — %s is in check with %s to move\n",
+			sideName(defender), sideName(attacker))
 	}
 	if k < 0 {
-		fmt.Printf("  FAIL: no forced mate within %d red move(s)\n", depth)
+		fmt.Printf("  FAIL: no forced mate within %d %s move(s)\n", depth, sideName(attacker))
 		return false
 	}
 	var uci []string
 	for _, m := range pv {
 		uci = append(uci, m.String())
 	}
-	fmt.Printf("  PASS: forced mate in %d red move(s)  (%s)\n", k, reasonLabel(reason))
+	fmt.Printf("  PASS: forced mate in %d %s move(s)  (%s)\n", k, sideName(attacker), reasonLabel(reason))
 	fmt.Printf("  PV:   %s\n", strings.Join(uci, " "))
 	return true
 }
 
-// redForce: Red is to move. Returns the shortest number of RED moves (>=1) to
-// force a win, a principal variation, and the terminal win reason, or
-// (-1, nil, "") if no forced win exists within `limit` red moves.
+// forceWin: the attacker is to move. Returns the shortest number of ATTACKER
+// moves (>=1) to force a win, a principal variation, and the terminal win
+// reason, or (-1, nil, "") if no forced win exists within `limit` attacker moves.
 //
 // The terminal win must be a genuine 将死 (checkmate) when allowStalemate is
 // false. This keeps the prover's verdict consistent with the authoritative
 // puzzle-check gate, which rejects 困毙 (stalemate) wins.
-func redForce(pos *game.Position, limit int, allowStalemate bool) (int, []game.Move, string) {
+func forceWin(pos *game.Position, limit, attacker, defender int, allowStalemate bool) (int, []game.Move, string) {
 	if limit <= 0 {
 		return -1, nil, ""
 	}
 	best := -1
 	var bestPV []game.Move
 	bestReason := ""
-	for _, m := range pos.LegalMoves(game.Red) {
+	for _, m := range pos.LegalMoves(attacker) {
 		pos.Make(m)
 		st := pos.CheckStatus()
-		if st.Result == game.ResultRedWin && mateReasonOK(st, allowStalemate) {
+		if st.Result == winResult(attacker) && mateReasonOK(st, attacker, allowStalemate) {
 			pos.Unmake()
 			if best == -1 || 1 < best {
 				best = 1
@@ -144,8 +173,8 @@ func redForce(pos *game.Position, limit int, allowStalemate bool) (int, []game.M
 			}
 			continue
 		}
-		// Black to move now; every reply must lead to a forced win.
-		k, bpv, r := blackDefend(pos, limit-1, m, allowStalemate)
+		// Defender to move now; every reply must lead to a forced win.
+		k, bpv, r := defendWin(pos, limit-1, attacker, defender, m, allowStalemate)
 		pos.Unmake()
 		if k >= 0 {
 			total := 1 + k
@@ -159,21 +188,20 @@ func redForce(pos *game.Position, limit int, allowStalemate bool) (int, []game.M
 	return best, bestPV, bestReason
 }
 
-// blackDefend: Black is to move. Returns the worst-case additional red moves
-// needed to force the win across ALL black replies (or -1 if any reply escapes),
-// the principal variation, and the worst-case terminal win reason.
-// `redMove` is the red move that produced this position (used only for clarity).
-func blackDefend(pos *game.Position, limit int, _ game.Move, allowStalemate bool) (int, []game.Move, string) {
-	moves := pos.LegalMoves(game.Black)
+// defendWin: the defender is to move. Returns the worst-case additional attacker
+// moves needed to force the win across ALL defender replies (or -1 if any reply
+// escapes), the principal variation, and the worst-case terminal win reason.
+// `atkMove` is the attacker move that produced this position (used only for clarity).
+func defendWin(pos *game.Position, limit, attacker, defender int, _ game.Move, allowStalemate bool) (int, []game.Move, string) {
+	moves := pos.LegalMoves(defender)
 	if len(moves) == 0 {
-		// Red just moved and Black has no legal reply. The position is a win
-		// for Red, but we must confirm it is the kind of win the prover
-		// accepts: genuine 将死 (checkmate) by default, 困毙 (stalemate) only
-		// when allowStalemate is set. This branch previously returned success
-		// unconditionally, which let forced stalemate wins (rejected by the
-		// authoritative puzzle-check) slip through as a false PASS.
+		// Attacker just moved and the defender has no legal reply. The position
+		// is a win for the attacker, but we must confirm it is the kind of win
+		// the prover accepts: genuine 将死 (checkmate) by default, 困毙
+		// (stalemate) only when allowStalemate is set. Otherwise it is a false
+		// PASS (a stalemate win rejected by the authoritative puzzle-check).
 		st := pos.CheckStatus()
-		if !mateReasonOK(st, allowStalemate) {
+		if !mateReasonOK(st, attacker, allowStalemate) {
 			return -1, nil, ""
 		}
 		return 0, nil, st.Reason
@@ -184,11 +212,11 @@ func blackDefend(pos *game.Position, limit int, _ game.Move, allowStalemate bool
 	for _, b := range moves {
 		pos.Make(b)
 		st := pos.CheckStatus()
-		if st.IsDraw || st.Result == game.ResultBlackWin {
+		if st.IsDraw || st.Result == winResult(defender) {
 			pos.Unmake()
-			return -1, nil, "" // this defense escapes (draw or black win)
+			return -1, nil, "" // this defense escapes (draw or defender win)
 		}
-		k, pv, r := redForce(pos, limit, allowStalemate)
+		k, pv, r := forceWin(pos, limit, attacker, defender, allowStalemate)
 		pos.Unmake()
 		if k < 0 {
 			return -1, nil, ""
@@ -202,13 +230,13 @@ func blackDefend(pos *game.Position, limit int, _ game.Move, allowStalemate bool
 	return worst, worstPV, worstReason
 }
 
-// mateReasonOK reports whether a Red-win status counts as a forced mate for the
-// prover. By default (allowStalemate=false) we require genuine 将死 (checkmate),
-// matching the authoritative puzzle-check gate. When allowStalemate is true we
-// also accept 困毙 (stalemate), which is a legal Red win under Xiangqi rules but
-// is REJECTED by puzzle-check.
-func mateReasonOK(st game.Status, allowStalemate bool) bool {
-	if st.Result != game.ResultRedWin {
+// mateReasonOK reports whether a win status for the given attacker counts as a
+// forced mate for the prover. By default (allowStalemate=false) we require
+// genuine 将死 (checkmate), matching the authoritative puzzle-check gate. When
+// allowStalemate is true we also accept 困毙 (stalemate), which is a legal win
+// under Xiangqi rules but is REJECTED by puzzle-check.
+func mateReasonOK(st game.Status, attacker int, allowStalemate bool) bool {
+	if st.Result != winResult(attacker) {
 		return false
 	}
 	if st.Reason == game.ReasonCheckmate {

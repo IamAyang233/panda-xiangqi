@@ -31,6 +31,7 @@ type Public struct {
 	Name       string   `json:"name"`
 	Source     string   `json:"source,omitempty"`
 	Difficulty string   `json:"difficulty"`
+	PlayerSide string   `json:"playerSide"` // red | black（玩家执子方，用于黑先关）
 	Goal       string   `json:"goal"`
 	ParMoves   int      `json:"parMoves"`
 	Tags       []string `json:"tags,omitempty"`
@@ -107,7 +108,7 @@ func (s *Store) List(difficulty string) []Public {
 		}
 		out = append(out, Public{
 			ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
-			Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
+			PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
 		})
 	}
 	return out

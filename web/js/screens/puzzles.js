@@ -36,6 +36,12 @@ function starsHTML(n) {
   return `<span class="puzzle-stars">${'★'.repeat(n)}${'☆'.repeat(3 - n)}</span>`;
 }
 
+function goalLabel(p) {
+  const side = p.playerSide === 'black' ? '黑先' : '红先';
+  const aim = p.goal === 'win' ? '胜' : '和';
+  return `${side}${aim}`;
+}
+
 function render(diff) {
   const grid = $('puzzle-grid');
   grid.innerHTML = '';
@@ -46,7 +52,7 @@ function render(diff) {
     card.innerHTML = `
       <div class="puzzle-name">${p.name}</div>
       <div class="puzzle-meta">
-        <span class="puzzle-goal-tag ${p.goal}">${p.goal === 'win' ? '红先胜' : '红先和'}</span>
+        <span class="puzzle-goal-tag ${p.goal} ${p.playerSide}">${goalLabel(p)}</span>
         ${p.difficulty} · 最少 ${p.parMoves} 步
       </div>
       ${starsHTML(store.stars(p.id))}

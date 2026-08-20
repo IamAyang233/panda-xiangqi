@@ -231,3 +231,122 @@ func TestCannonCheckDetection(t *testing.T) {
 		t.Error("隔山炮应将军黑将")
 	}
 }
+
+func TestLongCheckRedLoses(t *testing.T) {
+	// 红长将：红车 e1（开局已将军 e9）→ e2 → d2 交替将军，黑王 e9↔d9 应将。
+	// 循环 4 步（红将、黑应、红将、黑应），重复 3 次后红长将判负（黑胜）。
+	p, err := ParseFEN("4k4/9/9/9/9/9/9/9/4R4/4K4 w - - 0 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := []struct{ from, to string }{
+		{"e1", "e2"}, // 红车将军 e9
+		{"e9", "d9"}, // 黑王应将
+		{"e2", "d2"}, // 红车将军 d9
+		{"d9", "e9"}, // 黑王应将
+		{"d2", "e2"},
+		{"e9", "d9"},
+		{"e2", "d2"},
+		{"d9", "e9"},
+		{"d2", "e2"},
+		{"e9", "d9"},
+		{"e2", "d2"},
+		{"d9", "e9"},
+	}
+	for i, s := range seq {
+		f, ok1 := SquareFromName(s.from)
+		t2, ok2 := SquareFromName(s.to)
+		if !ok1 || !ok2 {
+			t.Fatalf("bad square %s-%s", s.from, s.to)
+		}
+		p.Make(Move{From: f, To: t2})
+		if i == 7 && p.RepetitionCount() != 2 {
+			t.Fatalf("第 8 步后期望重复计数 2, 实际 %d", p.RepetitionCount())
+		}
+	}
+	if got := p.RepetitionCount(); got != 3 {
+		t.Fatalf("期望三次重复, 实际 %d", got)
+	}
+	if w, ok := p.LongCheckWinner(); !ok || w != ResultBlackWin {
+		t.Fatalf("红长将应判黑胜, 实际 winner=%q ok=%v", w, ok)
+	}
+	st := p.CheckStatus()
+	if st.Result != ResultBlackWin || st.Reason != ReasonLongCheck {
+		t.Fatalf("CheckStatus 应判 black_win/long_check, 实际 result=%q reason=%q", st.Result, st.Reason)
+	}
+}
+
+func TestLongCheckBlackLoses(t *testing.T) {
+	// 黑长将：黑车 e2（开局已将军 e0）→ e3 → f3 交替将军，红帅 e0↔f0 应将。
+	// 重复 3 次后黑长将判负（红胜）。
+	p, err := ParseFEN("4k4/9/4r4/9/9/9/9/9/9/4K4 b - - 0 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := []struct{ from, to string }{
+		{"e2", "e3"}, // 黑车将军 e0
+		{"e0", "f0"}, // 红帅应将
+		{"e3", "f3"}, // 黑车将军 f0
+		{"f0", "e0"}, // 红帅应将
+		{"f3", "e3"},
+		{"e0", "f0"},
+		{"e3", "f3"},
+		{"f0", "e0"},
+		{"f3", "e3"},
+		{"e0", "f0"},
+		{"e3", "f3"},
+		{"f0", "e0"},
+	}
+	for _, s := range seq {
+		f, ok1 := SquareFromName(s.from)
+		t2, ok2 := SquareFromName(s.to)
+		if !ok1 || !ok2 {
+			t.Fatalf("bad square %s-%s", s.from, s.to)
+		}
+		p.Make(Move{From: f, To: t2})
+	}
+	if w, ok := p.LongCheckWinner(); !ok || w != ResultRedWin {
+		t.Fatalf("黑长将应判红胜, 实际 winner=%q ok=%v", w, ok)
+	}
+	st := p.CheckStatus()
+	if st.Result != ResultRedWin || st.Reason != ReasonLongCheck {
+		t.Fatalf("CheckStatus 应判 red_win/long_check, 实际 result=%q reason=%q", st.Result, st.Reason)
+	}
+}
+
+func TestRepetitionNonCheckDraw(t *testing.T) {
+	// 非长将的三次重复（双方走马闲步循环）不受影响，仍判和。
+	p, err := ParseFEN("n3k4/9/9/9/9/9/9/9/9/N3K4 w - - 0 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := []struct{ from, to string }{
+		{"b0", "c2"}, // 红马闲步
+		{"b9", "c7"}, // 黑马闲步
+		{"c2", "b0"},
+		{"c7", "b9"},
+		{"b0", "c2"},
+		{"b9", "c7"},
+		{"c2", "b0"},
+		{"c7", "b9"},
+		{"b0", "c2"},
+		{"b9", "c7"},
+		{"c2", "b0"},
+		{"c7", "b9"},
+	}
+	for _, s := range seq {
+		f, ok1 := SquareFromName(s.from)
+		t2, ok2 := SquareFromName(s.to)
+		if !ok1 || !ok2 {
+			t.Fatalf("bad square %s-%s", s.from, s.to)
+		}
+		p.Make(Move{From: f, To: t2})
+	}
+	if _, ok := p.LongCheckWinner(); ok {
+		t.Fatal("非长将重复不应判定单方胜负")
+	}
+	st := p.CheckStatus()
+	if !st.IsDraw || st.Result != ResultDraw || st.Reason != ReasonRepetition {
+		t.Fatalf("非长将重复应和, 实际 result=%q reason=%q draw=%v", st.Result, st.Reason, st.IsDraw)
+	}
+}

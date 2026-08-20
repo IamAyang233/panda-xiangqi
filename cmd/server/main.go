@@ -21,7 +21,20 @@ import (
 )
 
 func main() {
+	// 单实例互斥：已在跑则只开浏览器并退出，防止端口残留。
+	if !acquireSingleInstance() {
+		if cfg0 := config.Load(findConfigFile()); cfg0.Port > 0 {
+			go openBrowser(fmt.Sprintf("http://localhost:%d", cfg0.Port))
+		}
+		log.Println("检测到已在运行，仅打开浏览器后退出。")
+		return
+	}
+	defer releaseSingleInstance()
 	cfg := config.Load(findConfigFile())
+
+	// 版本号单一来源 = 随包 manifest；启动时读取一次，避免与 manifest 脱节。
+	api.InitAppVersion()
+	log.Printf("熊猫象棋版本: %s", api.AppVersion)
 
 	// 静态资源：优先磁盘 web/dist（未来 Vite 产物），否则磁盘 web/（开发），否则内嵌
 	var static fs.FS
@@ -77,12 +90,29 @@ func main() {
 		}
 		log.Printf("熊猫象棋已启动（%s），Socket: %s（残局 %d 关）", mode, cfg.SocketPath, puzzles.Count())
 	} else {
-		addr := fmt.Sprintf(":%d", cfg.Port)
-		ln, err = net.Listen("tcp", addr)
-		if err != nil {
-			log.Fatalf("监听 %s 失败: %v", addr, err)
+		// 端口被占用时自动顺延，避免「一启动就崩」。最多尝试 21 个端口（cfg.Port ~ +20）。
+		var tried []string
+		for off := 0; off <= 20; off++ {
+			port := cfg.Port + off
+			if port > 65535 {
+				break
+			}
+			addr := fmt.Sprintf(":%d", port)
+			l, e := net.Listen("tcp", addr)
+			if e == nil {
+				ln = l
+				break
+			}
+			tried = append(tried, addr)
 		}
+		if ln == nil {
+			log.Fatalf("监听端口失败（已尝试 %v）：请改用其他端口，例如设置环境变量 QIJING_PORT=9090", tried)
+		}
+		cfg.Port = ln.Addr().(*net.TCPAddr).Port
 		url = fmt.Sprintf("http://localhost:%d", cfg.Port)
+		if len(tried) > 0 {
+			log.Printf("端口 %v 被占用，已改用 %d", tried, cfg.Port)
+		}
 		log.Printf("熊猫象棋已启动: %s （残局 %d 关）", url, puzzles.Count())
 	}
 

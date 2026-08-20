@@ -280,6 +280,23 @@ func (s *searcher) AlphaBeta(depth, ply int, alpha, beta int16) int16 {
 	if s.pos.InCheck(s.pos.Turn) {
 		depth++ // 将军延伸
 	}
+
+	// 局面重复：长将判负（当前走方是长将方对手 → 胜），普通重复按和棋分，
+	// 防止 AI 在劣势下用"长将逼和"逃避败局。
+	if ply >= 2 && s.pos.RepetitionCount() >= 3 {
+		if w, ok := s.pos.LongCheckWinner(); ok {
+			winColor := game.Red
+			if w == game.ResultBlackWin {
+				winColor = game.Black
+			}
+			if winColor == s.pos.Turn {
+				return mateScore - int16(ply)
+			}
+			return -mateScore + int16(ply)
+		}
+		return 0 // 普通重复 → 和棋分
+	}
+
 	if depth <= 0 {
 		return s.Quiescence(alpha, beta)
 	}
