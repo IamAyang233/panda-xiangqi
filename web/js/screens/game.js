@@ -31,6 +31,7 @@ export class GameScreen {
     this.moves = [];
     this.puzzle = null;
     this.lastPuzzleInfo = null;
+    this._turn = 'red';          // 当前轮走方（用于提示按钮按你方禁用/恢复）
 
     this._bindControls();
     // 调试钩子：自动化测试与控制台排查用
@@ -39,7 +40,12 @@ export class GameScreen {
 
   _bindControls() {
     $('btn-undo').onclick = () => { sfx.play('button'); this.conn?.undo(); };
-    $('btn-hint').onclick = () => { sfx.play('button'); this.conn?.hint(); };
+    $('btn-hint').onclick = () => {
+      if ($('btn-hint').disabled || !this.conn) return;
+      sfx.play('button');
+      $('btn-hint').disabled = true; // 防止连点：提示请求在途期间禁用，结果/报错到达再恢复
+      this.conn.hint();
+    };
     $('btn-resign').onclick = async () => {
       sfx.play('button');
       if (await confirmDialog('确定认输吗？本局将判负。', { danger: true, okText: '认输' })) {
@@ -69,6 +75,7 @@ export class GameScreen {
   exit() {
     this.conn?.close();
     this.conn = null;
+    store.clearCurrentGame();
     showScreen('lobby');
   }
 
@@ -96,6 +103,15 @@ export class GameScreen {
     }
     this.humanSide = created.youSide || 'red';
     this.renderer.setFlipped(this.humanSide === 'black');
+    // 持久化当前对局：断网/刷新后可凭 gameId 重连恢复（返回大厅即清档）。
+    store.saveCurrentGame({
+      gameId: created.gameId,
+      mode,
+      youSide: this.humanSide,
+      side: opts.side || 'red',
+      level: opts.level || 4,
+      opts,
+    });
     showScreen('game');
     // 屏幕由 hidden(display:none) 切回可见后，父容器 .board-wrap 才有真实尺寸。
     // 构造函数里的 resize() 在屏幕隐藏时尺寸为 0 会提前返回（cell/mx/my 未初始化），
@@ -113,6 +129,50 @@ export class GameScreen {
     } catch {
       toast('连接对局服务失败', true);
     }
+  }
+
+  // restore() 凭 localStorage 中存档的 gameId 重连恢复「进行中」的对局。
+  // 服务端 Join 会回送完整 state，前端据此全量重建棋盘与着法列表。
+  // 返回 true=已恢复（停在 game 屏）；false=无存档或恢复失败（调用方应显示大厅）。
+  async restore() {
+    const saved = store.currentGame;
+    if (!saved || !saved.gameId) return false;
+
+    this.mode = saved.mode;
+    this.startOpts = saved.opts || {};
+    this.gameOver = false;
+    this.selected = null;
+    this.legal = [];
+    this.moves = [];
+    this.puzzle = null;
+    this.lastPuzzleInfo = null;
+    this.humanSide = saved.youSide || 'red';
+    this.renderer.setFlipped(this.humanSide === 'black');
+    showScreen('game');
+    this.renderer.resize();
+    this.renderer.setFEN('rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w');
+    this._setupUI(this.mode, this.startOpts);
+
+    this.conn?.close();
+    this.conn = new GameConn(saved.gameId);
+    this.conn.onAny((m) => this._dispatch(m));
+    this.conn.onReconnecting = (n) => toast(`连接中断，正在重连…（第 ${n} 次）`, false, 2200);
+    this.conn.onReconnected = () => {
+      // 重连成功后清空残留选中态（棋盘已随 state 全量重建）。
+      this.selected = null;
+      this.legal = [];
+      this.renderer.setSelected(null, []);
+      toast('已重新连接', false, 1500);
+    };
+    try {
+      await this.conn.connect();
+    } catch {
+      // 棋局会话可能已过期（服务端保留 2 小时），视为无存档返回大厅。
+      store.clearCurrentGame();
+      showScreen('lobby');
+      return false;
+    }
+    return true;
   }
 
   _setupUI(mode, opts) {
@@ -193,6 +253,8 @@ export class GameScreen {
   }
 
   _applyState(m) {
+    if (m.status === 'over') store.clearCurrentGame(); // 重连到已结束的对局：不再恢复
+    this._turn = m.turn;
     this.renderer.setFEN(m.fen);
     this.renderer.setLastMove(m.lastMove?.from, m.lastMove?.to);
     // 全量同步时同步将军高亮：避免悔棋/重开后“文字提示将军、棋盘却不标红”的不一致。
@@ -234,6 +296,12 @@ export class GameScreen {
     $('btn-undo').disabled = !!m.thinking || this.gameOver;
     $('btn-hint').disabled = this.gameOver || (this.mode !== 'local_2p' && m.turn !== this.humanSide);
     $('btn-resign').disabled = this.gameOver;
+  }
+
+  // 统一计算提示按钮可用性：进行中且轮到你时可用；引擎思考/对手回合禁用。
+  _updateHintButton() {
+    const turn = this._turn || this.humanSide;
+    $('btn-hint').disabled = this.gameOver || (this.mode !== 'local_2p' && turn !== this.humanSide);
   }
 
   _onMove(m) {
@@ -285,6 +353,7 @@ export class GameScreen {
     this.renderer.setHint(m.from, m.to);
     toast(`提示：${m.cn}`, false, 5000);
     sfx.play('star');
+    this._updateHintButton(); // 提示不影响轮走方，按当前你方状态恢复按钮
   }
 
   _onUndo(m) {
@@ -318,10 +387,12 @@ export class GameScreen {
       sfx.play('illegal');
     }
     toast(m.message || '操作失败', true);
+    this._updateHintButton(); // 提示请求若被拒，恢复按钮可再点
   }
 
   _onGameOver(m) {
     this.gameOver = true;
+    store.clearCurrentGame();
     const isPuzzle = this.mode === 'puzzle';
     let title, cls;
     const humanWin = m.result === (this.humanSide === 'black' ? 'black_win' : 'red_win');

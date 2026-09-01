@@ -1,5 +1,7 @@
 // localStorage 偏好存储：大模型配置、残局进度、主题、音效。
 const KEY = 'qijing.v1';
+// 当前进行中对局（断网/刷新恢复用）。仅「在局中」时存在，返回大厅即清除。
+const CURRENT_KEY = 'qijing.game.v1';
 
 const defaults = {
   llm: {
@@ -41,5 +43,17 @@ export const store = {
     if ((data.puzzleStars[id] || 0) >= n) return;
     data.puzzleStars[id] = n;
     save();
+  },
+
+  // 当前对局存档：断网/刷新后凭 gameId 重连恢复。
+  // 结构 { gameId, mode, youSide, side, level, opts }；仅比赛进行中写入。
+  get currentGame() {
+    try { return JSON.parse(localStorage.getItem(CURRENT_KEY) || 'null'); } catch { return null; }
+  },
+  saveCurrentGame(g) {
+    try { localStorage.setItem(CURRENT_KEY, JSON.stringify(g)); } catch { /* 忽略配额 */ }
+  },
+  clearCurrentGame() {
+    try { localStorage.removeItem(CURRENT_KEY); } catch { /* 忽略 */ }
   },
 };

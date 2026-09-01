@@ -45,5 +45,10 @@ document.getElementById('btn-home').onclick = async () => {
 // 首次交互解锁音频上下文
 window.addEventListener('pointerdown', () => sfx.play('button'), { once: true });
 
-showScreen('lobby');
-toast('欢迎来到熊猫象棋 · 选择一种模式开始对弈', false, 3200);
+// 启动时优先尝试恢复「进行中」的对局（断网/刷新后凭存档 gameId 重连）；
+// 无存档或恢复失败则落入大厅。
+const restored = await game.restore();
+if (!restored) {
+  showScreen('lobby');
+  toast('欢迎来到熊猫象棋 · 选择一种模式开始对弈', false, 3200);
+}
