@@ -26,6 +26,11 @@ export function initLobby(onStart) {
         onStart('local_2p', {});
         return;
       }
+      if (mode === 'pony') {
+        // 小马冲冲：独立单页小游戏（共享主题/音效设置，顶部可返回大厅）
+        location.href = 'pony-rush.html';
+        return;
+      }
       openSetup(mode, onStart);
     };
   });
