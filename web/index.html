@@ -50,6 +50,14 @@
     <symbol id="i-piece" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="8.5" r="5.2"/><path d="M9.4 8.4h5.2M12 5.8v5.2"/><path d="M6.5 21h11M8.7 21c.4-2.6 1.6-4.4 3.3-4.4s2.9 1.8 3.3 4.4"/>
     </symbol>
+    <!-- 小马冲冲：马头 + 走日轨迹 -->
+    <symbol id="i-horse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 20c1.6-1 2.4-2.6 2.6-4.6C10 14 12.4 12.6 13.4 10.6c.7-1.4.6-2.6-.3-3.5-.7-.7-1.2-1.6-1.1-2.6.1-1 .9-1.7 1.9-1.8"/>
+      <path d="M13.9 2.7c1.5-.4 3 .2 3.8 1.5.8 1.3.6 2.9-.4 4"/>
+      <circle cx="16.6" cy="8.4" r=".95" fill="currentColor" stroke="none"/>
+      <path d="M4 21h6"/>
+      <path d="M3.5 6.5l3.5 2M2.5 10.5l4 .5" stroke-width="1.4" opacity=".75"/>
+    </symbol>
     <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-4"/>
     </symbol>
@@ -116,6 +124,11 @@
         <div class="mode-icon"><svg class="icon"><use href="#i-piece"/></svg></div>
         <div class="mode-name">残局挑战</div>
         <div class="mode-desc">经典杀型排局<br>三星评价 · 引擎验证</div>
+      </button>
+      <button class="mode-card" data-mode="pony">
+        <div class="mode-icon"><svg class="icon"><use href="#i-horse"/></svg></div>
+        <div class="mode-name">小马冲冲</div>
+        <div class="mode-desc">操控红马走日向上冲<br>吃子得分 · 无尽挑战</div>
       </button>
     </div>
     <footer class="lobby-footer">

@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>小马冲冲 · 象棋冲冲冲</title>
+<style>
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;color:#3a2614;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    overflow:hidden; user-select:none; -webkit-user-select:none;
+    background:radial-gradient(120% 80% at 50% 0%, #34221633, transparent),
+               linear-gradient(180deg,var(--felt),var(--felt2));}
+  /* ---- 顶栏：与主体 #topbar 完全对齐（含 CSS 变量、icon-btn、brand 结构） ---- */
+  :root{
+    --bg:#17130e; --bg-2:#201a13; --panel:#2a231a; --panel-2:#342b1f;
+    --line:#4a3d2c; --gold:#d4a941; --gold-soft:#b08f3e;
+    --gold-glow:rgba(212,169,65,.35);
+    --text:#f0e6d2; --text-dim:#a89a80;
+    --red:#e05a3a; --red-deep:#b03a22; --ink:#2c2620;
+    --shadow:0 10px 30px rgba(0,0,0,.45); --radius:14px;
+    --felt:#241710; --felt2:#160e08;
+  }
+  #app{position:fixed;inset:0;display:flex;flex-direction:column;
+    padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);}
+  #topbar{
+    display:flex; align-items:center; gap:12px;
+    padding:calc(10px + env(safe-area-inset-top)) 18px 10px;
+    background:linear-gradient(180deg, rgba(42,35,26,.95), rgba(42,35,26,.75));
+    border-bottom:1px solid var(--line);
+    z-index:10;
+  }
+  .icon{width:1.15em;height:1.15em;vertical-align:-.2em;flex-shrink:0;}
+  .icon-btn{
+    background:transparent;border:1px solid var(--line);color:var(--text-dim);
+    border-radius:10px;padding:7px;font-size:17px;transition:all .15s;
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:38px;min-height:38px;cursor:pointer;text-decoration:none;
+  }
+  .icon-btn:hover{border-color:var(--gold-soft);color:var(--gold);}
+  .icon-btn .icon{width:20px;height:20px;vertical-align:0;}
+  /* brand：与主体同结构（logo + 中文 + 英文） */
+  .brand{display:flex;align-items:center;gap:8px;min-width:0;}
+  .brand-logo{width:26px;height:26px;color:var(--gold);filter:drop-shadow(0 0 8px var(--gold-glow));}
+  .brand-cn{
+    font-family:"STKaiti","KaiTi","Noto Serif SC",serif;
+    font-size:21px;letter-spacing:4px;color:var(--gold);white-space:nowrap;
+    text-shadow:0 0 18px var(--gold-glow);
+  }
+  .brand-en{font-size:10px;letter-spacing:3px;color:var(--text-dim);white-space:nowrap;}
+  /* 分数区：占右侧，与主体 top-actions 同位置 */
+  .top-actions{margin-left:auto;display:flex;gap:6px;align-items:center;}
+  .scores{text-align:right;font-variant-numeric:tabular-nums;}
+  .scores .now{font-size:24px;font-weight:800;color:var(--gold);line-height:1;
+    text-shadow:0 1px 0 #2c2620;}
+  .scores .best{font-size:11px;color:var(--text-dim);}
+  @media (max-width:420px){
+    #topbar{padding-left:10px;padding-right:10px;gap:8px;}
+    .brand-cn{font-size:18px;letter-spacing:2px;}
+    .brand-en{display:none;}
+    .brand-logo{width:22px;height:22px;}
+    .scores .now{font-size:20px;}
+    .overlay{padding:16px;gap:12px;}
+    .overlay h1{font-size:24px;}
+    .overlay .rules{font-size:11px;padding:10px 12px;max-width:92vw;}
+    .btn{font-size:16px;padding:11px 34px;}
+  }
+  #stage{position:relative;flex:1;overflow:hidden;}
+  /* ---- 设置弹窗：样式对齐主体 main.css ---- */
+  .overlay{
+    position:fixed; inset:0; z-index:100;
+    background:rgba(10,8,5,.72); backdrop-filter:blur(4px);
+    display:grid; place-items:center;
+  }
+  .overlay[hidden]{display:none;}
+  .settings-card{
+    text-align:left; max-height:86vh; overflow-y:auto; width:min(520px,92vw);
+    background:linear-gradient(160deg,var(--panel-2),var(--panel));
+    border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:16px 18px; color:var(--text);
+  }
+  .settings-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+  .settings-head h2{font-size:18px;letter-spacing:4px;color:var(--gold);margin:0;}
+  .settings-section{border-top:1px solid var(--line);padding:14px 0;}
+  .settings-section h3{font-size:14px;color:var(--gold);letter-spacing:2px;margin:0 0 10px;}
+  .settings-section label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim);margin-bottom:10px;}
+  .settings-section label.inline{flex-direction:row;align-items:center;gap:10px;}
+  .settings-section label.check{flex-direction:row;align-items:center;gap:8px;}
+  .settings-section input:not([type=checkbox]), .settings-section select{
+    background:var(--bg-2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:8px 10px; font-size:14px; outline:none; flex:1;
+  }
+  .settings-section input[type=checkbox]{width:16px;height:16px;accent-color:var(--gold);flex:0 0 auto;}
+  .ctl-btn{
+    background:linear-gradient(160deg,var(--panel-2),var(--panel));
+    border:1px solid var(--line); color:var(--text);
+    border-radius:10px; padding:8px 14px; font-size:13px; letter-spacing:1px;
+    transition:all .15s; display:inline-flex; align-items:center; gap:6px; justify-content:center;
+  }
+  .ctl-btn:hover{border-color:var(--gold-soft);color:var(--gold);}
+  .settings-row{display:flex;align-items:center;gap:12px;}
+  .test-result{font-size:13px;}
+  .test-result.ok{color:#7ec97e;}
+  .test-result.bad{color:var(--red);}
+  .about p{font-size:12px;color:var(--text-dim);line-height:1.9;margin:0 0 10px;}
+  /* ---- 确认弹窗：复刻主体 ui.js confirmDialog + main.css ---- */
+  @keyframes overlay-in { from { opacity: 0; } }
+  .overlay{animation:overlay-in .2s;}
+  @keyframes card-in { from { transform: scale(.88); opacity: 0; } }
+  .confirm-card{
+    background:linear-gradient(170deg,var(--panel-2),var(--panel));
+    border:1px solid var(--gold-soft); border-radius:16px;
+    padding:26px 30px 22px; min-width:280px; max-width:360px;
+    box-shadow:var(--shadow); text-align:center;
+    color:var(--text);   /* 小马 body 是深棕字，卡片必须显式转浅色，否则提示文字隐形 */
+    animation:card-in .28s cubic-bezier(.2,.9,.3,1.15);
+  }
+  .confirm-icon{
+    width:44px;height:44px;margin:0 auto 12px;border-radius:50%;
+    display:grid;place-items:center;
+    font-size:24px;font-weight:700;color:var(--gold);
+    border:2px solid var(--gold-soft);
+    background:radial-gradient(circle at 35% 30%, rgba(212,169,65,.22), rgba(212,169,65,.05));
+  }
+  .confirm-text{font-size:15px;line-height:1.7;margin-bottom:18px;letter-spacing:.5px;}
+  .confirm-actions{display:flex;gap:10px;justify-content:center;}
+  .confirm-ok.danger-strong{
+    border-color:var(--red); color:#ffb3a3;
+    background:linear-gradient(160deg, rgba(224,90,58,.22), rgba(224,90,58,.08));
+  }
+  .confirm-ok.danger-strong:hover{color:#ffd0c4;}
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+  /* 底部提示条 */
+  .hint{position:absolute;left:0;right:0;bottom:0;padding:9px 14px;font-size:12px;
+    color:#f0d9a8;text-align:center;background:linear-gradient(transparent,#1c1208ee);
+    pointer-events:none;text-shadow:0 1px 2px #000;}
+  /* 遮罩层（木色卡片） */
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;padding:24px;
+    background:rgba(20,12,6,.82);backdrop-filter:blur(3px);text-align:center;}
+  .overlay.hidden{display:none;}
+  .overlay h1{margin:0;font-size:30px;letter-spacing:3px;color:#f4d9a0;
+    text-shadow:0 2px 4px #000;}
+  .overlay h1 small{display:block;font-size:13px;letter-spacing:4px;color:#d7b878;
+    font-weight:500;margin-top:6px;}
+  .overlay p{margin:0;font-size:13px;line-height:1.7;color:#f0dcc0;max-width:340px;}
+  .overlay .rules{font-size:12px;color:#e6cfa0;text-align:left;line-height:1.9;
+    background:#2c1d10;border:1px solid #6a4622;border-radius:12px;padding:12px 16px;max-width:360px;
+    box-shadow:inset 0 0 18px #00000055;}
+  .overlay .reason{font-size:15px;color:#ff9e6e;font-weight:700;}
+  .btn{appearance:none;border:none;cursor:pointer;font-family:inherit;
+    background:linear-gradient(#8a5a28,#6a431c);color:#f4d9a0;font-weight:800;
+    font-size:18px;letter-spacing:2px;padding:13px 40px;border-radius:999px;
+    box-shadow:0 6px 16px rgba(0,0,0,.45), inset 0 1px 0 #c9a86a88;
+    border:1px solid #4a3014;transition:transform .08s;}
+  .btn:active{transform:scale(.96);}
+  /* 技能条：消一行 / 消一列 / 消一片，每局限一次 */
+  .skills{position:absolute;bottom:34px;left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:4;pointer-events:none;}
+  .skill{pointer-events:auto;appearance:none;cursor:pointer;font-family:inherit;
+    background:linear-gradient(#4a3218,#3a2818);color:#f0d9a8;font-weight:700;
+    font-size:13px;padding:7px 14px;border-radius:999px;border:1px solid #6a4622;
+    box-shadow:0 3px 8px rgba(0,0,0,.4);transition:opacity .15s, transform .08s;}
+  .skill:active{transform:scale(.94);}
+  .skill.used{opacity:.35;pointer-events:none;text-decoration:line-through;}
+  /* 消除目标选择模式：可消除的行/列/片高亮提示 */
+  body.picking .skill{opacity:.5;}
+  .stat{display:flex;gap:26px;font-variant-numeric:tabular-nums;}
+  .stat div{display:flex;flex-direction:column;}
+  .stat .k{font-size:11px;color:#c9a86a;}
+  .stat .v{font-size:26px;font-weight:800;color:#f4c25a;}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 顶栏：与主体 #topbar 同结构（返回 icon-btn + brand + 右侧分数） -->
+  <header id="topbar">
+    <button id="btn-back" class="icon-btn" title="返回大厅" aria-label="返回大厅">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 11l9-8 9 8"/><path d="M5 10v11h14V10"/>
+      </svg>
+    </button>
+    <div class="brand">
+      <svg class="icon brand-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 20c1.6-1 2.4-2.6 2.6-4.6C10 14 12.4 12.6 13.4 10.6c.7-1.4.6-2.6-.3-3.5-.7-.7-1.2-1.6-1.1-2.6.1-1 .9-1.7 1.9-1.8"/>
+        <path d="M13.9 2.7c1.5-.4 3 .2 3.8 1.5.8 1.3.6 2.9-.4 4"/>
+        <circle cx="16.6" cy="8.4" r=".95" fill="currentColor" stroke="none"/>
+        <path d="M4 21h6"/>
+      </svg>
+      <span class="brand-cn">小马冲冲</span>
+      <span class="brand-en">PONY RUSH</span>
+    </div>
+    <div class="top-actions">
+      <div class="scores">
+        <div class="now" id="score">0</div>
+        <div class="best" id="best">最高 0</div>
+      </div>
+      <!-- 音效开关（与主体共享 qijing.v1.sound） -->
+      <button id="btn-sound" class="icon-btn" title="音效开关" aria-label="音效开关">
+        <svg class="icon" id="ic-sound" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9.5a3.5 3.5 0 0 1 0 5"/><path d="M18.5 7a7 7 0 0 1 0 10"/>
+        </svg>
+        <svg class="icon" id="ic-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+          <path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>
+        </svg>
+      </button>
+      <!-- 设置：就地弹窗（不离开游戏，与主体共享设置） -->
+      <button id="btn-settings" class="icon-btn" title="设置" aria-label="设置">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7h16M4 12h16M4 17h16"/>
+          <circle cx="9" cy="7" r="2" fill="var(--panel)"/>
+          <circle cx="15" cy="12" r="2" fill="var(--panel)"/>
+          <circle cx="8" cy="17" r="2" fill="var(--panel)"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <!-- 技能条：每局各一次 -->
+    <div class="skills" id="skills">
+      <button class="skill" id="skRow">消一行</button>
+      <button class="skill" id="skCol">消一列</button>
+      <button class="skill" id="skArea">消一片</button>
+      <button class="skill" id="skRestart">重新开始</button>
+    </div>
+    <div class="hint" id="hint">走「日」字，向上冲；吃子加分</div>
+
+    <!-- 设置弹窗（就地，样式对齐主体，与主体共享 qijing.v1 设置） -->
+    <div id="settings-overlay" class="overlay" hidden>
+      <div class="settings-card">
+        <div class="settings-head">
+          <h2>设置</h2>
+          <button id="btn-settings-close" class="icon-btn" title="关闭">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 6l12 12M18 6L6 18"/>
+            </svg>
+          </button>
+        </div>
+        <section class="settings-section">
+          <h3>大模型对弈（OpenAI 兼容）</h3>
+          <label>Base URL<input id="llm-baseurl" placeholder="https://api.deepseek.com/v1"></label>
+          <label>API Key<input id="llm-apikey" type="password" placeholder="sk-...（仅保存在本机浏览器）"></label>
+          <label>模型名称<input id="llm-model" placeholder="deepseek-chat / glm-4 / qwen-plus ..."></label>
+          <label class="inline">温度 <input id="llm-temp" type="number" step="0.1" min="0" max="2" value="0.3"></label>
+          <label class="inline">超时(ms) <input id="llm-timeout" type="number" step="1000" min="3000" value="30000"></label>
+          <label class="inline check"><input id="llm-assist" type="checkbox" checked> 引擎候选增强（本地引擎先筛强着，AI 从中选解——更快更强）</label>
+          <label class="inline check"><input id="llm-legal" type="checkbox" checked> 非增强模式下附带合法着法表（着法更稳）</label>
+          <div class="settings-row">
+            <button id="btn-llm-test" class="ctl-btn">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3v5M15 3v5"/><path d="M6 8h12v3.5a6 6 0 0 1-12 0V8z"/><path d="M12 17.5V22"/>
+              </svg><span>连通性测试</span>
+            </button>
+            <span id="llm-test-result" class="test-result"></span>
+          </div>
+        </section>
+        <section class="settings-section">
+          <h3>外观与音效</h3>
+          <label>棋子皮肤
+            <select id="theme-pieces">
+              <option value="wood">木质（经典）</option>
+              <option value="jade">玉石（青翠）</option>
+              <option value="porcelain">白瓷（雅致）</option>
+            </select>
+          </label>
+          <label>棋盘
+            <select id="theme-board">
+              <option value="maple">原木暖黄</option>
+              <option value="ebony">黑檀深沉</option>
+            </select>
+          </label>
+          <label class="inline check"><input id="theme-particles" type="checkbox" checked> 粒子特效（关闭可提升低端设备流畅度）</label>
+        </section>
+        <section class="settings-section about">
+          <h3>关于</h3>
+          <p>熊猫象棋 —— 集成皮卡鱼（Pikafish）UCI 引擎的人机 / 大模型 / 双人 / 残局中国象棋对战平台。fnOS 版随包内置引擎。</p>
+          <a id="btn-about" class="ctl-btn" href="index.html" style="text-decoration:none">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5.6" cy="5.6" r="2.4"/><circle cx="18.4" cy="5.6" r="2.4"/>
+              <circle cx="12" cy="13" r="8"/>
+              <ellipse cx="8.8" cy="12" rx="1.9" ry="2.5"/><ellipse cx="15.2" cy="12" rx="1.9" ry="2.5"/>
+              <circle cx="8.8" cy="12.4" r=".7" fill="currentColor" stroke="none"/>
+              <circle cx="15.2" cy="12.4" r=".7" fill="currentColor" stroke="none"/>
+            </svg><span>关于 · 检查更新 · 反馈</span>
+          </a>
+        </section>
+      </div>
+    </div>
+
+    <!-- 开始 -->
+    <div class="overlay" id="startScreen">
+      <h1>小马冲冲<small>象棋冲冲冲 · 走日无尽挑战</small></h1>
+      <div class="rules">
+        ◆ <b>只走日字</b>：红马走「日」字，马腿被憋住则此路不通<br>
+        ◆ <b>得分</b>：每向上前进一格 +10；吃黑子：卒 +10、马 +40、象 +50<br>
+        ◆ <b>送死</b>：落入黑卒正交4格＝被拱 · 落入黑马日字点＝被吃 · 落入黑象田字点＝被吃<br>
+        ◆ <b>死局</b>：没有任何可跳的安全点，游戏结束<br>
+        ◆ <b>技能</b>：消一行 / 消一列 / 消一片（5×5），每局各限一次
+      </div>
+      <button class="btn" id="startBtn">开始挑战</button>
+    </div>
+
+    <!-- 结束 -->
+    <div class="overlay hidden" id="overScreen">
+      <h1>游戏结束</h1>
+      <div class="reason" id="overReason"></div>
+      <div class="stat">
+        <div><span class="k">本局得分</span><span class="v" id="finalScore">0</span></div>
+        <div><span class="k">历史最高</span><span class="v" id="finalBest">0</span></div>
+      </div>
+      <button class="btn" id="retryBtn">再来一局</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- 配置 ----------
+const BOARD_COLS = 6;        // 一行 6 个格子（两侧木框留边做棋盘边缘）
+const VIEW_ROWS = 16;        // 一次只显示 16 行
+const COL_MIN = 0, COL_MAX = BOARD_COLS - 1;  // 0..5，红马不可越界
+const HORSE_Y_RATIO = 0.70;  // 红马在屏幕高度的比例位置（靠下，上方留更多视野）
+const GEN_BAND = 3;          // 黑子生成时相对红马列的横向散布（贴合 6 列）
+const GEN_AHEAD = 40;        // 红马上方预生成的行数
+const PRUNE_BEHIND = 30;     // 落后红马多少行后移除黑子
+const PIECE_SCORE = { zu: 10, ma: 40, xiang: 50 };
+const GLYPH = { zu: '卒', ma: '马', xiang: '象' };
+const BEST_KEY = 'ponyRushBest';
+// 当前局存档：刷新/意外关闭后可续玩（对齐主体 store.js 的 CURRENT_KEY 语义）
+const GAME_KEY = 'ponyRush.game.v1';
+
+// ---------- 局内存档（等式于主体的断线重连：单机版靠本地存档续玩） ----------
+function saveGame() {
+  if (!running || over) return;
+  try {
+    localStorage.setItem(GAME_KEY, JSON.stringify({
+      horse, score, maxRow, genUpto, skills, rescues, moveCount,
+      pieces: [...pieces.entries()],
+    }));
+  } catch { /* 忽略配额 */ }
+}
+function clearGame() {
+  try { localStorage.removeItem(GAME_KEY); } catch { /* 忽略 */ }
+}
+function loadGame() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem(GAME_KEY) || 'null'); } catch { return false; }
+  if (!s || !s.horse || !Array.isArray(s.pieces)) return false;
+  horse = s.horse;
+  score = s.score || 0;
+  maxRow = s.maxRow || 0;
+  genUpto = s.genUpto || 0;
+  rescues = s.rescues || 0;
+  moveCount = s.moveCount || 0;
+  skills = Object.assign({ row: true, col: true, area: true }, s.skills);
+  pieces = new Map(s.pieces);
+  death = computeDeath();
+  ensureGenerated();
+  prune();
+  running = true; over = false;
+  // 技能按钮状态回填
+  for (const [id, k] of [['skRow', 'row'], ['skCol', 'col'], ['skArea', 'area']]) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('used', !skills[k]);
+  }
+  return true;
+}
+
+const KNIGHT = [[1,2],[-1,2],[2,1],[2,-1],[-1,-2],[1,-2],[-2,1],[-2,-1]];
+
+// ---------- 粒子系统（对齐主体 particles.js：对象池 + 重力 + 旋转矩形/圆） ----------
+const MAX_P = 500;
+const pool = [], activeP = [];
+for (let i = 0; i < MAX_P; i++)
+  pool.push({ x:0, y:0, vx:0, vy:0, life:0, maxLife:1, size:3, color:'#fff', rot:0, vr:0, shape:'rect' });
+function spawnParticles(x, y, opts = {}) {
+  if (!particlesOn) return;                    // 跟随主体「粒子特效」开关
+  const count = Math.round(opts.count || 28);
+  const colors = opts.colors || ['#8a5a28', '#a9793f', '#5d3c14', '#d8ae70'];   // 主体吃子木色
+  for (let i = 0; i < count; i++) {
+    const p = pool.pop();
+    if (!p) return;
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 80 + Math.random() * (opts.speed || 160);
+    p.x = x; p.y = y;
+    p.vx = Math.cos(angle) * speed;
+    p.vy = Math.sin(angle) * speed - (opts.lift || 60);
+    p.maxLife = 0.4 + Math.random() * 0.4;
+    p.life = p.maxLife;
+    p.size = 2 + Math.random() * (opts.size || 3.5);
+    p.color = colors[(Math.random() * colors.length) | 0];
+    p.rot = Math.random() * Math.PI * 2;
+    p.vr = (Math.random() - 0.5) * 10;
+    p.shape = Math.random() < 0.6 ? 'rect' : 'circle';
+    activeP.push(p);
+  }
+}
+function updateParticles(dt) {
+  for (let i = activeP.length - 1; i >= 0; i--) {
+    const p = activeP[i];
+    p.life -= dt;
+    if (p.life <= 0) { activeP.splice(i, 1); pool.push(p); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 600 * dt;      // 重力，同主体
+    p.rot += p.vr * dt;
+  }
+}
+function drawParticles() {
+  for (const p of activeP) {
+    const alpha = Math.min(1, p.life / p.maxLife * 1.6);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    if (p.shape === 'rect') ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+    else { ctx.beginPath(); ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+}
+
+// ---------- Web Audio 合成音效（对齐主体 audio.js：木质敲击 + 碎裂噪声） ----------
+let actx = null;
+function ac() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume();
+  return actx;
+}
+function env(gain, t0, attack, peak, decay) {
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(peak, t0 + attack);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + attack + decay);
+}
+function tone({ type = 'sine', freq = 440, dur = 0.2, peak = 0.25, delay = 0, sweep = 0 }) {
+  const c = ac();
+  const t0 = c.currentTime + delay;
+  const osc = c.createOscillator();
+  const g = c.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t0);
+  if (sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq + sweep), t0 + dur);
+  env(g, t0, 0.008, peak, dur);
+  osc.connect(g).connect(c.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.05);
+}
+function knock(freq = 720, dur = 0.07, peak = 0.5) {
+  tone({ type: 'square', freq, dur, peak, sweep: -freq * 0.4 });
+  tone({ type: 'sine', freq: freq / 2, dur: dur * 1.4, peak: peak * 0.7 });
+}
+function noiseBurst(dur = 0.25, peak = 0.3) {
+  try {
+    const c = ac();
+    const len = Math.floor(c.sampleRate * dur);
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2;
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    const g = c.createGain();
+    g.gain.value = peak;
+    const filter = c.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400;
+    src.connect(filter).connect(g).connect(c.destination);
+    src.start();
+  } catch { /* 音频不可用时静默 */ }
+}
+const SOUND_KEY = 'qijing.v1';   // 与主体共享音效开关
+function soundOn() {
+  try { const d = JSON.parse(localStorage.getItem(SOUND_KEY) || '{}'); return d.sound !== false; }
+  catch { return true; }
+}
+// 顶栏音效开关：写回同一份设置，主体与小游戏即时同步
+function setSoundPref(on) {
+  try {
+    const d = JSON.parse(localStorage.getItem(SOUND_KEY) || '{}');
+    d.sound = !!on;
+    localStorage.setItem(SOUND_KEY, JSON.stringify(d));
+  } catch { /* 忽略配额 */ }
+  syncSoundIcon();
+}
+function syncSoundIcon() {
+  const icOn = document.getElementById('ic-sound');
+  const icOff = document.getElementById('ic-mute');
+  if (!icOn || !icOff) return;
+  const on = soundOn();
+  icOn.style.display = on ? '' : 'none';
+  icOff.style.display = on ? 'none' : '';
+}
+
+// ---------- 就地设置弹窗（与主体共享 qijing.v1，结构与主体设置页一致） ----------
+const THEME_DEFAULT = { pieces: 'wood', board: 'maple', particles: true };
+function readTheme() {
+  try {
+    const d = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    return Object.assign({}, THEME_DEFAULT, d.theme || {});
+  } catch { return { ...THEME_DEFAULT }; }
+}
+function writeTheme(patch) {
+  try {
+    const d = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    d.theme = Object.assign(readTheme(), patch);
+    localStorage.setItem(PREF_KEY, JSON.stringify(d));
+  } catch { /* 忽略配额 */ }
+}
+const LLM_DEFAULT = {
+  baseURL: 'https://api.deepseek.com/v1', apiKey: '', model: '',
+  temperature: 0.3, timeoutMs: 30000,
+  engineAssist: true, includeLegalMoves: true,
+};
+function readLLM() {
+  try {
+    const d = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    return Object.assign({}, LLM_DEFAULT, d.llm || {});
+  } catch { return { ...LLM_DEFAULT }; }
+}
+function writeLLM(patch) {
+  try {
+    const d = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    d.llm = Object.assign(readLLM(), patch);
+    localStorage.setItem(PREF_KEY, JSON.stringify(d));
+  } catch { /* 忽略配额 */ }
+}
+const $ = (id) => document.getElementById(id);
+function openSettings() {
+  const t = readTheme();
+  const llm = readLLM();
+  $('theme-pieces').value = t.pieces || 'wood';
+  $('theme-board').value = t.board || 'maple';
+  $('theme-particles').checked = t.particles !== false;
+  $('llm-baseurl').value = llm.baseURL || '';
+  $('llm-apikey').value = llm.apiKey || '';
+  $('llm-model').value = llm.model || '';
+  $('llm-temp').value = llm.temperature ?? 0.3;
+  $('llm-timeout').value = llm.timeoutMs || 30000;
+  $('llm-assist').checked = llm.engineAssist !== false;
+  $('llm-legal').checked = llm.includeLegalMoves !== false;
+  $('llm-test-result').textContent = '';
+  $('llm-test-result').className = 'test-result';
+  $('settings-overlay').hidden = false;
+  sfx('button');
+}
+function closeSettings() {
+  $('settings-overlay').hidden = true;
+  sfx('button');
+}
+// 与主体 net.js 的 api() 等价：POST /api/llm/validate
+async function validateLLM(cfg) {
+  const resp = await fetch('/api/llm/validate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg),
+  });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try { msg = (await resp.json()).error || msg; } catch { /* 保留默认 */ }
+    throw new Error(msg);
+  }
+  return resp.json();
+}
+// ---------- 返回大厅：逻辑对齐主体 main.js 的 btn-home ----------
+// 主体：对局进行中（有连接 && 未结束 && 有走子）才弹确认框，否则直接返回。
+// 小马：本局进行中（running && !over && 已走过子）才弹确认框，否则直接返回。
+function confirmDialog(text, { danger = false, okText = '确定', cancelText = '取消' } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay confirm-overlay';
+    overlay.innerHTML = `
+      <div class="confirm-card">
+        <div class="confirm-icon">${danger ? '!' : '?'}</div>
+        <div class="confirm-text"></div>
+        <div class="confirm-actions">
+          <button class="ctl-btn confirm-cancel"></button>
+          <button class="ctl-btn confirm-ok"></button>
+        </div>
+      </div>`;
+    overlay.querySelector('.confirm-text').textContent = text;
+    overlay.querySelector('.confirm-cancel').textContent = cancelText;
+    const okBtn = overlay.querySelector('.confirm-ok');
+    okBtn.textContent = okText;
+    if (danger) okBtn.classList.add('danger-strong');
+    document.body.appendChild(overlay);
+
+    const done = (val) => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) done(false); });
+    overlay.querySelector('.confirm-cancel').onclick = () => done(false);
+    okBtn.onclick = () => done(true);
+    okBtn.focus();
+  });
+}
+async function onBackHome() {
+  sfx('button');
+  if (running && !over && moveCount > 0) {
+    const ok = await confirmDialog('游戏进行中，确定返回大厅？', { okText: '返回大厅' });
+    if (!ok) return;                    // 取消：留在本局（主体的 showScreen('game') 等价）
+  }
+  clearGame();                          // 对齐主体 exit()：主动返回=放弃本局=清档，下次全新开始
+  location.href = 'index.html';
+}
+function initSettings() {
+  const ov = $('settings-overlay');
+  $('btn-settings').onclick = openSettings;
+  $('btn-settings-close').onclick = closeSettings;
+  ov.addEventListener('pointerdown', (e) => { if (e.target.id === 'settings-overlay') closeSettings(); });
+
+  // 外观：改动即写回共享设置 + 立即重绘（棋盘缓存随主题重建）
+  $('theme-pieces').onchange = (e) => { writeTheme({ pieces: e.target.value }); applyPref(); buildBoardCache(); };
+  $('theme-board').onchange  = (e) => { writeTheme({ board:  e.target.value }); applyPref(); buildBoardCache(); };
+  $('theme-particles').onchange = (e) => { writeTheme({ particles: e.target.checked }); applyPref(); };
+
+  // 大模型配置：与主体 settings.js 一致的字段与保存时机（change 即存）
+  const saveLLM = () => writeLLM({
+    baseURL: $('llm-baseurl').value.trim(),
+    apiKey: $('llm-apikey').value.trim(),
+    model: $('llm-model').value.trim(),
+    temperature: parseFloat($('llm-temp').value) || 0.3,
+    timeoutMs: +$('llm-timeout').value || 30000,
+    engineAssist: $('llm-assist').checked,
+    includeLegalMoves: $('llm-legal').checked,
+  });
+  for (const id of ['llm-baseurl', 'llm-apikey', 'llm-model', 'llm-temp', 'llm-timeout', 'llm-assist', 'llm-legal']) {
+    $(id).addEventListener('change', saveLLM);
+  }
+
+  // 连通性测试（与主体 settings.js 同逻辑）
+  $('btn-llm-test').onclick = async () => {
+    saveLLM();
+    const out = $('llm-test-result');
+    out.textContent = '测试中…';
+    out.className = 'test-result';
+    try {
+      const r = await validateLLM(readLLM());
+      if (r.ok) {
+        out.textContent = `✓ ${r.message}（${r.latencyMs}ms）`;
+        out.className = 'test-result ok';
+        sfx('star');
+      } else {
+        out.textContent = `✗ ${r.message}`;
+        out.className = 'test-result bad';
+        sfx('illegal');
+      }
+    } catch (e) {
+      out.textContent = `✗ ${e.message}`;
+      out.className = 'test-result bad';
+    }
+  };
+}
+function sfx(name) {
+  if (!soundOn()) return;
+  try {
+    if (name === 'move') knock(760, 0.06, 0.45);
+    else if (name === 'capture') { knock(420, 0.1, 0.6); noiseBurst(0.22, 0.25); }
+    else if (name === 'lose') [392, 330, 262, 196].forEach((f, i) =>
+      tone({ type: 'sine', freq: f, dur: 0.4, peak: 0.2, delay: i * 0.16 }));
+    else if (name === 'button') tone({ type: 'square', freq: 980, dur: 0.03, peak: 0.12 });
+    // 与主体一致：连通性测试成功/失败（settings.js 用到）
+    else if (name === 'star') [880, 1174, 1568].forEach((f, i) =>
+      tone({ type: 'sine', freq: f, dur: 0.3, peak: 0.2, delay: i * 0.14 }));
+    else if (name === 'illegal') tone({ type: 'square', freq: 160, dur: 0.12, peak: 0.25 });
+  } catch { /* 静默 */ }
+}
+
+// ---------- 皮肤（读取主体设置，与熊猫象棋完全共享主题/音效偏好） ----------
+// 主体 store.js 的 KEY='qijing.v1'，结构 { theme:{pieces,board,particles}, sound }
+const PREF_KEY = 'qijing.v1';
+function readPref() { try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); } catch { return {}; } }
+const BOARD_SKINS = {
+  maple: { name:'原木暖黄', base1:'#e8c58a', base2:'#d8ae70', border:'#9c6b32', line:'#5d3c14' },
+  ebony: { name:'黑檀深沉', base1:'#4a3b2c', base2:'#3a2d20', border:'#241a10', line:'#c9a86a' },
+};
+const PIECE_SKINS = {
+  wood: {
+    red:   { face1:'#f7e7c8', face2:'#e2c390', rim:'#a9793f', ring:'#8a5a28', text:'#c93a20' },
+    black: { face1:'#f2e4c8', face2:'#d6bd8e', rim:'#7c6236', ring:'#5d4826', text:'#2f2318' },
+    shadow:'rgba(60,35,10,.45)',
+  },
+  jade: {
+    red:   { face1:'#eaf7ee', face2:'#b8e0c6', rim:'#6faf8a', ring:'#3f8a63', text:'#1f7a4d' },
+    black: { face1:'#f0f7f2', face2:'#c2d8cc', rim:'#5f8a74', ring:'#375c4a', text:'#173026' },
+    shadow:'rgba(20,60,40,.4)',
+  },
+  porcelain: {
+    red:   { face1:'#ffffff', face2:'#e8ecf2', rim:'#b8c2d0', ring:'#8a94a8', text:'#c0392b' },
+    black: { face1:'#ffffff', face2:'#e4e8ef', rim:'#a8b0c0', ring:'#767e92', text:'#232833' },
+    shadow:'rgba(30,40,60,.4)',
+  },
+};
+let particlesOn = true;
+function applyPref() {
+  const p = readPref();
+  const t = p.theme || {};
+  BOARD.base1 = (BOARD_SKINS[t.board] || BOARD_SKINS.maple).base1;
+  BOARD.base2 = (BOARD_SKINS[t.board] || BOARD_SKINS.maple).base2;
+  BOARD.border = (BOARD_SKINS[t.board] || BOARD_SKINS.maple).border;
+  BOARD.line   = (BOARD_SKINS[t.board] || BOARD_SKINS.maple).line;
+  const ps = PIECE_SKINS[t.pieces] || PIECE_SKINS.wood;
+  PIECE.red   = Object.assign({}, ps.red,   { shadow: ps.shadow });
+  PIECE.black = Object.assign({}, ps.black, { shadow: ps.shadow });
+  particlesOn = t.particles !== false;
+  // 黑檀（深色棋盘）时同步改背景毡布，避免大片亮色割裂
+  document.body.style.setProperty('--felt', t.board === 'ebony' ? '#1a1510' : '#241710');
+  document.body.style.setProperty('--felt2', t.board === 'ebony' ? '#0d0a07' : '#160e08');
+}
+const BOARD = { base1:'#e8c58a', base2:'#d8ae70', border:'#9c6b32', line:'#5d3c14',
+                deep:'#b98a4e' };
+const PIECE = { red: {}, black: {} };   // 由 applyPref() 填充
+
+// ---------- 状态 ----------
+let canvas, ctx, dpr = 1, cssW = 0, cssH = 0, cell = 44;
+let pieces = new Map();      // "c,r" -> 'zu'|'ma'|'xiang'
+let horse = { c: 0, r: 0 };
+let maxRow = 0, score = 0, best = 0;
+let moveCount = 0;           // 本局已走步数（等价主体 game.moves.length，用于返回确认判定）
+let death = new Set();       // 死亡格集合（黑子攻击圈 + 互相保护）
+let genUpto = 0;             // 已生成到的最高行
+let running = false, over = false, reasonText = '';
+let anim = null;             // 走子动画
+let pops = [];               // 飘分动画
+let shake = 0;               // 死亡震屏强度
+// 技能：每局各一次。picking = null | 'row' | 'col' | 'area'（等待玩家点选目标）
+let skills = { row: true, col: true, area: true };
+let picking = null;
+// 棋盘几何
+let rail = 24, leftX = 0, boardX = 0, boardTop = 0;
+// 棋盘静态层缓存（外框+内板+木纹+纵向网格），resize 时重建
+let boardCache = null;
+
+const key = (c, r) => c + ',' + r;
+const has = (c, r) => pieces.has(key(c, r));
+const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+
+// ---------- 世界生成：从简单到复杂，且保证永远有活路 ----------
+// 难度曲线（按红马已到达的行数 progress）：
+//   0~30 行    热身：每行最多 1 子，30% 空行
+//   30~100    渐进：空行率降至 10%，开始偶现 2 子行
+//   100~250   成型：2 子行常见，马/象占比升
+//   250+      高压：3 子行偶现（仍有安全通道，见 verifySolvable）
+const STAGE = (p) =>
+  p < 30   ? { empty: 0.30, two: 0.00, three: 0.00, zuP: 0.65, maP: 0.25 } :
+  p < 100  ? { empty: Math.max(0.10, 0.30 - (p - 30) * 0.003), two: Math.min(0.35, (p - 30) * 0.005), three: 0, zuP: 0.60, maP: 0.28 } :
+  p < 250  ? { empty: 0.10, two: Math.min(0.60, 0.35 + (p - 100) * 0.0017), three: 0, zuP: 0.52, maP: 0.32 } :
+             { empty: 0.08, two: 0.60, three: Math.min(0.15, (p - 250) * 0.001), zuP: 0.50, maP: 0.32 };
+
+function pickType(st) {
+  const x = Math.random();
+  if (x < st.zuP) return 'zu';
+  if (x < st.zuP + st.maP) return 'ma';
+  return 'xiang';
+}
+
+function genRow(r) {
+  const st = STAGE(r);
+  const roll = Math.random();
+  let n;
+  if (roll < st.empty) n = 0;
+  else if (roll < st.empty + st.two) n = 2;
+  else if (roll < st.empty + st.two + st.three) n = 3;
+  else n = 1;
+
+  const cols = [0, 1, 2, 3, 4, 5];
+  // 洗牌取前 n 列，天然不重复
+  for (let i = cols.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [cols[i], cols[j]] = [cols[j], cols[i]];
+  }
+  for (let i = 0; i < n && i < cols.length; i++) {
+    const c = cols[i];
+    if (c === horse.c && r <= 1) continue;      // 出生点上方留白
+    pieces.set(key(c, r), pickType(st));
+  }
+}
+function ensureGenerated() {
+  while (genUpto < horse.r + GEN_AHEAD) {
+    genUpto++;
+    genRow(genUpto);
+  }
+}
+function prune() {
+  // 双向回收：下方淘汰 + 上方远离视口的旧行也回收（否则后退时上方棋子无限堆积，
+  // computeDeath/ensureSolvable 随 N 平方膨胀 → 浏览器卡死）。空行安全，回收无死局风险。
+  const lo = horse.r - PRUNE_BEHIND, hi = horse.r + GEN_AHEAD + 20;
+  for (const k of [...pieces.keys()]) {
+    const r = +k.split(',')[1];
+    if (r < lo || r > hi) pieces.delete(k);
+  }
+}
+// 死局自救：每次走子/消除后，若红马无安全落点，
+// 就地删除威胁红马落点最近的黑子（每局最多救 2 次，超过则真死局）
+let rescues = 0;
+function ensureSolvable() {
+  let guard = 0;
+  while (safeTargets().length === 0 && guard++ < 8) {
+    if (rescues >= 2) return false;             // 救援次数用尽 → 认定死局
+    rescues++;
+    // 只在红马附近（±6 行）找"关键子"，避免全场 O(N²)：
+    // 远处的子不可能威胁红马的 8 个日字落点，删除它们对解围无贡献。
+    const near = [];
+    for (const k of pieces.keys()) {
+      const r = +k.split(',')[1];
+      if (r >= horse.r - 6 && r <= horse.r + 6) near.push(k);
+    }
+    let bestKey = null, bestGain = -1;
+    for (const k of near) {
+      const backup = pieces.get(k);
+      pieces.delete(k);
+      const deathBak = death;
+      death = computeDeath();
+      const gain = safeTargets().length;
+      death = deathBak;
+      pieces.set(k, backup);
+      if (gain > bestGain) { bestGain = gain; bestKey = k; }
+    }
+    if (!bestKey) return false;
+    const [c, r] = bestKey.split(',').map(Number);
+    spawnParticles(sx(c), sy(r), { count: 20, speed: 150,
+      colors: ['#8a5a28', '#a9793f', '#5d3c14', '#d8ae70'] });
+    pieces.delete(bestKey);
+    pops.push({ x: sx(c), y: sy(r), text: '救场', t: 0, color: '#7ec97e' });
+    death = computeDeath();
+  }
+  return safeTargets().length > 0;
+}
+
+// ---------- 规则（标准象棋：红马/黑马均受蹩马腿约束；象不塞象眼；卒=正交4格） ----------
+function legBlocked(c, r, dx, dy) {
+  // 马腿：|dx|==2 时腿在 (c+dx/2, r)，|dy|==2 时腿在 (c, r+dy/2)
+  const lc = Math.abs(dx) === 2 ? c + dx / 2 : c;
+  const lr = Math.abs(dy) === 2 ? r + dy / 2 : r;
+  return pieces.has(key(lc, lr));
+}
+function computeDeath() {
+  const d = new Set();
+  for (const [k, type] of pieces) {
+    const [c, r] = k.split(',').map(Number);
+    if (type === 'zu') {
+      // 黑卒只往前（向下，r 更小方向）和左右吃，不能回吃上方
+      for (const [dc, dr] of [[1,0],[-1,0],[0,-1]])
+        d.add(key(c + dc, r + dr));
+    } else if (type === 'ma') {
+      // 马：8 个日字点，被蹩马腿则够不到
+      for (const [dx, dy] of KNIGHT) {
+        if (legBlocked(c, r, dx, dy)) continue;
+        d.add(key(c + dx, r + dy));
+      }
+    } else if (type === 'xiang') {
+      // 象：4 个田字对角点（不塞象眼）
+      for (const [dx, dy] of [[2,2],[2,-2],[-2,2],[-2,-2]])
+        d.add(key(c + dx, r + dy));
+    }
+  }
+  return d;
+}
+function moves() {
+  const out = [];
+  for (const [dx, dy] of KNIGHT) {
+    if (legBlocked(horse.c, horse.r, dx, dy)) continue;   // 红马马腿被憋则此路不通
+    const c = horse.c + dx, r = horse.r + dy;
+    if (c < COL_MIN || c > COL_MAX) continue;     // 不可越出边界
+    const deadly = death.has(key(c, r));
+    const cap = has(c, r) ? pieces.get(key(c, r)) : null;
+    out.push({ c, r, deadly, cap });
+  }
+  return out;
+}
+function safeTargets() { return moves().filter(m => !m.deadly); }
+function killReason(c, r) {
+  for (const [k, type] of pieces) {
+    const [pc, pr] = k.split(',').map(Number);
+    if (type === 'zu') {
+      // 下方或左右正交相邻（卒不回吃上方）
+      if ((Math.abs(c - pc) === 1 && r === pr) || (c === pc && r === pr - 1)) return '卒';
+    } else if (type === 'ma') {
+      for (const [dx, dy] of KNIGHT) {
+        if (legBlocked(pc, pr, dx, dy)) continue;                   // 蹩马腿的黑马够不到
+        if (pc + dx === c && pr + dy === r) return '马';
+      }
+    } else if (type === 'xiang') {
+      for (const [dx, dy] of [[2,2],[2,-2],[-2,2],[-2,-2]])
+        if (pc + dx === c && pr + dy === r) return '象';              // 不塞象眼
+    }
+  }
+  return '';
+}
+
+// ---------- 走子 ----------
+function doMove(m) {
+  if (anim) return;
+  moveCount++;
+  const from = { ...horse };
+  if (m.cap) {
+    pieces.delete(key(m.c, m.r));
+    const gain = PIECE_SCORE[m.cap];
+    score += gain;
+    pops.push({ x: sx(m.c), y: sy(m.r), text: '+' + gain, t: 0, color: '#d4a941' });
+  }
+  anim = { from, to: { c: m.c, r: m.r }, t: 0, cap: m.cap, deadly: m.deadly, reason: m.deadly ? killReason(m.c, m.r) : '' };
+  if (m.cap) sfx('capture'); else sfx('move');
+  horse = { c: m.c, r: m.r };
+  if (m.r > maxRow) {
+    const gain = (m.r - maxRow) * 10;          // 每向上前进一格 +10
+    score += gain; maxRow = m.r;
+    pops.push({ x: sx(m.c), y: sy(m.r) - cell * 0.7, text: '+' + gain, t: 0, color: '#7ec97e' });
+  }
+  death = computeDeath();
+  ensureGenerated();
+  prune();
+  ensureSolvable();                              // 死局自救（若仍死局则结束）
+  updateHud();
+  saveGame();                                    // 落子即存档（刷新可续玩）
+
+  if (m.deadly) {
+    shake = 1;
+    reasonText = m.reason ? `被黑${m.reason}吃掉！` : '踩进攻击圈！';
+    anim.onEnd = () => gameOver();
+  } else if (safeTargets().length === 0) {
+    reasonText = '无路可走，死局！';
+    anim.onEnd = () => gameOver();
+  } else {
+    anim.onEnd = null;
+  }
+}
+
+// ---------- 技能：消一行 / 消一列 / 消一片（每局各一次） ----------
+function burstCells(cells) {
+  // 只消除列表内的黑子：逐格爆粒子 + 按类型计分
+  let gain = 0;
+  for (const k of cells) {
+    const type = pieces.get(k);
+    if (!type) continue;
+    const [c, r] = k.split(',').map(Number);
+    spawnParticles(sx(c), sy(r), { count: 14, speed: 130,
+      colors: ['#8a5a28', '#a9793f', '#5d3c14', '#d8ae70'] });
+    gain += PIECE_SCORE[type];
+    pieces.delete(k);          // 只删这一个，绝不清空全场
+  }
+  if (gain > 0) {
+    score += gain;
+    pops.push({ x: sx(horse.c), y: sy(horse.r) - cell * 1.2, text: '+' + gain, t: 0, color: '#d4a941' });
+  }
+}
+function useSkill(kind) {
+  if (!running || over || anim || !skills[kind]) return;
+  picking = picking === kind ? null : kind;      // 再点一次取消选择
+  document.body.classList.toggle('picking', !!picking);
+  document.getElementById('hint').textContent =
+    picking === 'row' ? '点击敌方任意一个棋子，消除它所在的那一行' :
+    picking === 'col' ? '点击敌方任意一个棋子，消除它所在的那一列' :
+    picking === 'area' ? '点击目标位置，消除周围 5×5 区域' :
+    '走「日」字，向上冲；吃子加分';
+  sfx('button');
+}
+function applyPicking(target) {
+  // 必须点中敌方棋子才生效，点空处不结算（防误触）
+  const hitKey = key(target.c, target.r);
+  if (!pieces.has(hitKey)) return;              // 点空处：保持选择模式，继续点
+  const kind = picking;
+  picking = null;
+  document.body.classList.remove('picking');
+  document.getElementById('hint').textContent = '走「日」字，向上冲；吃子加分';
+  const cells = [];
+  if (kind === 'row') {
+    // 点中的棋子所在的那一行（世界行号 target.r）
+    for (let c = COL_MIN; c <= COL_MAX; c++) cells.push(key(c, target.r));
+  } else if (kind === 'col') {
+    // 点中的棋子所在的那一列（上下各 20 行）
+    for (let r = target.r - 20; r <= target.r + 20; r++) cells.push(key(target.c, r));
+  } else if (kind === 'area') {
+    for (let dc = -2; dc <= 2; dc++)
+      for (let dr = -2; dr <= 2; dr++)
+        cells.push(key(target.c + dc, target.r + dr));
+  }
+  burstCells(cells);
+  skills[kind] = false;
+  document.getElementById('sk' + kind[0].toUpperCase() + kind.slice(1)).classList.add('used');
+  sfx('capture');
+  death = computeDeath();
+  ensureGenerated();
+  ensureSolvable();
+  updateHud();
+  saveGame();
+  // 消完后若仍死局则结束
+  if (safeTargets().length === 0) {
+    reasonText = '无路可走，死局！';
+    gameOver();
+  }
+}
+
+// ---------- 屏幕流程 ----------
+function startGame() {
+  sfx('button');
+  pieces = new Map();
+  horse = { c: 3, r: 0 };
+  maxRow = 0; score = 0; genUpto = 0; rescues = 0; moveCount = 0;
+  over = false; anim = null; pops = []; shake = 0;
+  skills = { row: true, col: true, area: true };
+  picking = null;
+  document.body.classList.remove('picking');
+  for (const id of ['skRow', 'skCol', 'skArea']) document.getElementById(id).classList.remove('used');
+  document.getElementById('hint').textContent = '走「日」字，向上冲；吃子加分';
+  ensureGenerated();
+  death = computeDeath();
+  let guard = 0;
+  while (safeTargets().length === 0 && pieces.size > 0 && guard++ < 50) {
+    let nearest = null, nd = 1e9;
+    for (const k of pieces.keys()) {
+      const [c, r] = k.split(',').map(Number);
+      const d = Math.abs(c - horse.c) + Math.abs(r - horse.r);
+      if (d < nd) { nd = d; nearest = k; }
+    }
+    if (!nearest) break;
+    pieces.delete(nearest);
+    death = computeDeath();
+  }
+  running = true;
+  document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('overScreen').classList.add('hidden');
+  updateHud();
+  resize();
+  saveGame();                        // 新局即存档（对齐主体 saveCurrentGame）
+}
+function gameOver() {
+  running = false; over = true;
+  clearGame();                       // 局已终结：清除续玩存档（对齐主体 clearCurrentGame）
+  if (score > best) { best = score; localStorage.setItem(BEST_KEY, String(best)); }
+  sfx('lose');
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('finalBest').textContent = best;
+  document.getElementById('overReason').textContent = reasonText;
+  document.getElementById('overScreen').classList.remove('hidden');
+  updateHud();
+}
+function updateHud() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('best').textContent = '最高 ' + best;
+}
+
+// ---------- 渲染 ----------
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const stage = document.getElementById('stage');
+  cssW = stage.clientWidth; cssH = stage.clientHeight;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  rail = Math.max(14, Math.min(28, cssW * 0.04));
+  // "格子"体系：7 条竖线围出 6 个格子，棋子站在格子中心。
+  // 总占用宽 = 6*cell（6 格）+ 2*rail（框）+ 2*棋子外凸（0.45*cell）。
+  // piecePad 依赖 cell，迭代 3 轮收敛（不动点）。
+  let est = Math.floor((cssW - 2 * rail) / BOARD_COLS);
+  for (let i = 0; i < 3; i++) {
+    const pad = Math.ceil(0.45 * est);
+    est = Math.floor((cssW - 2 * rail - 2 * pad) / BOARD_COLS);
+  }
+  const byH = (cssH * 0.95) / VIEW_ROWS;   // 纵向一次只显示约 VIEW_ROWS 行
+  cell = Math.min(est, byH);
+  if (cell < 24) cell = 24;
+  cell = Math.floor(cell);
+  // 整个棋盘（6 格 + 两侧框 + 棋子外凸余量）整体居中
+  const piecePad = Math.ceil(cell * 0.45);                 // 棋子半径外凸量
+  const frameW = BOARD_COLS * cell + 2 * (rail + piecePad);
+  leftX = Math.round((cssW - frameW) / 2);
+  boardX = leftX + rail + piecePad;    // 第 0 条竖线（棋盘最左刻线）x
+  boardTop = 0;
+  buildBoardCache();                   // 静态层重建（木纹只画这一次，不再闪烁）
+}
+const horseScreenY = () => cssH * HORSE_Y_RATIO;
+// 列 c 的十字交点 x —— 棋子压线（0..BOARD_COLS 共 7 条竖线，可站位 0..5）
+const sx = (c) => boardX + c * cell;
+const sy = (r) => horseScreenY() - (r - horse.r) * cell;
+
+function roundRectOn(c2, x, y, w, h, r) {
+  c2.beginPath();
+  c2.moveTo(x + r, y);
+  c2.arcTo(x + w, y, x + w, y + h, r);
+  c2.arcTo(x + w, y + h, x, y + h, r);
+  c2.arcTo(x, y + h, x, y, r);
+  c2.arcTo(x, y, x + w, y, r);
+  c2.closePath();
+}
+
+// 静态棋盘层：外框 + 内板 + 木纹 + 7 条纵向刻线，预渲染一次离屏缓存。
+// 木纹原先每帧 Math.random() 重画 60 条 => 老电视式闪烁；缓存后完全静止。
+function buildBoardCache() {
+  const piecePad = Math.ceil(cell * 0.45);                 // 棋子外凸余量，与 resize 一致
+  const rightX = leftX + BOARD_COLS * cell + 2 * (rail + piecePad);
+  const topY = 0, botY = cssH;
+  const w = rightX - leftX;
+  boardCache = document.createElement('canvas');
+  boardCache.width = Math.max(1, Math.ceil(cssW * dpr));
+  boardCache.height = Math.max(1, Math.ceil(cssH * dpr));
+  const c2 = boardCache.getContext('2d');
+  c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // 外框（深木）
+  c2.save();
+  c2.shadowColor = 'rgba(0,0,0,.5)';
+  c2.shadowBlur = 16;
+  c2.fillStyle = BOARD.border;
+  roundRectOn(c2, leftX, topY, w, botY - topY, 12);
+  c2.fill();
+  c2.restore();
+
+  // 内板（枫木渐变）
+  const grad = c2.createLinearGradient(leftX, topY, rightX, botY);
+  grad.addColorStop(0, BOARD.base1);
+  grad.addColorStop(0.5, BOARD.base2);
+  grad.addColorStop(1, BOARD.base1);
+  c2.fillStyle = grad;
+  roundRectOn(c2, leftX + 6, topY + 6, w - 12, botY - topY - 12, 8);
+  c2.fill();
+
+  // 木纹（固定纹理：线性同余伪随机，每次重建成同一张，不闪）
+  c2.save();
+  roundRectOn(c2, leftX + 6, topY + 6, w - 12, botY - topY - 12, 8);
+  c2.clip();
+  c2.globalAlpha = 0.08;
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 60; i++) {
+    const y = topY + rnd() * cssH;
+    c2.strokeStyle = rnd() < 0.5 ? '#3c2508' : '#fff6df';
+    c2.lineWidth = 0.6 + rnd() * 1.3;
+    c2.beginPath();
+    c2.moveTo(leftX, y);
+    for (let x = leftX; x <= rightX; x += 22)
+      c2.lineTo(x, y + Math.sin(x * 0.02 + i) * 2);
+    c2.stroke();
+  }
+  c2.restore();
+
+  // 纵向刻线：7 条边界线（0..BOARD_COLS），围出 6 个格子；格中心画小十字提示落点
+  c2.strokeStyle = BOARD.line;
+  c2.lineWidth = 1.3;
+  for (let i = 0; i <= BOARD_COLS; i++) {
+    const x = sx(i);
+    c2.beginPath(); c2.moveTo(x, topY + 6); c2.lineTo(x, botY - 6); c2.stroke();
+  }
+}
+
+// 棋盘：静态层 blit + 横向刻线（跟随相机，每帧画）
+function drawWoodBoard(rBot, rTop) {
+  ctx.drawImage(boardCache, 0, 0, cssW, cssH);
+  const L = boardX;                                             // 第 0 条竖线
+  const R = boardX + BOARD_COLS * cell;                         // 最后一条竖线
+  ctx.strokeStyle = BOARD.line;
+  ctx.lineWidth = 1.3;
+  for (let r = rBot; r <= rTop; r++) {
+    const y = sy(r);
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
+  }
+}
+
+// 落点标记：所有合法日字点统一标注（含会死的点，不区分颜色）
+function drawMark(c, r) {
+  const x = sx(c), y = sy(r), s = cell * 0.22;
+  ctx.strokeStyle = 'rgba(93,60,20,.75)';   // 木刻线同色，融合棋盘
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x - s, y); ctx.lineTo(x + s, y);
+  ctx.moveTo(x, y - s); ctx.lineTo(x, y + s);
+  ctx.stroke();
+}
+
+// 木棋子（对齐熊猫象棋贴图风格）
+function drawPiece(cx, cy, glyph, color) {
+  const sk = PIECE[color];
+  const r = cell * 0.40;
+  const pad = r * 0.55;
+  const size = r * 2 + pad * 2;
+  const x0 = cx - size / 2, y0 = cy - size / 2;
+
+  // 投影
+  ctx.fillStyle = sk.shadow;
+  ctx.beginPath();
+  ctx.ellipse(cx + r * 0.08, cy + r * 0.24, r * 0.98, r * 0.88, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 盘体
+  const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r);
+  g.addColorStop(0, sk.face1);
+  g.addColorStop(0.75, sk.face2);
+  g.addColorStop(1, sk.rim);
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = g; ctx.fill();
+
+  // 外缘
+  ctx.lineWidth = Math.max(1.5, r * 0.09);
+  ctx.strokeStyle = sk.rim; ctx.stroke();
+  // 内环
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1, r * 0.05);
+  ctx.strokeStyle = sk.ring; ctx.globalAlpha = 0.75; ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // 字
+  ctx.font = `700 ${Math.round(r * 1.04)}px "STKaiti","KaiTi","SimKai","Noto Serif SC",serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = sk.text;
+  ctx.shadowColor = 'rgba(255,255,255,.35)';
+  ctx.shadowOffsetY = -0.8; ctx.shadowBlur = 1.4;
+  ctx.fillText(glyph, cx, cy + r * 0.05);
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+}
+
+// 落点标记已按要求移除：不再显示绿色落点提示
+
+function draw() {
+  const t = performance.now();
+  ctx.clearRect(0, 0, cssW, cssH);
+  // 背景（毡布）
+  ctx.fillStyle = '#1d130a';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const c0 = COL_MIN, c1 = COL_MAX;
+  const rTop = horse.r + Math.ceil(horseScreenY() / cell) + 1;
+  const rBot = horse.r - Math.ceil((cssH - horseScreenY()) / cell) - 1;
+
+  // 震颤：整盘 sin/cos 偏移（同主体）
+  let ox = 0, oy = 0;
+  if (shake > 0) {
+    const s = shake * 5;
+    ox = Math.sin(t / 26) * s;
+    oy = Math.cos(t / 19) * s * 0.6;
+  }
+  ctx.save();
+  ctx.translate(ox, oy);
+  drawWoodBoard(rBot, rTop);
+  // 技能选择模式：当前行/列/附近区域高亮底色（跟随指针/触摸所在位置）
+  // 底色 .38 + 描边框，深木底上足够醒目，目视确认无歧义
+  if (picking && running && !over && !anim) {
+    const hz = {
+      row:  [boardX, sy(hover.r) - cell / 2, BOARD_COLS * cell, cell],   // 从第0条竖线起，盖满6格（勿用 leftX：那是木框外缘，会左伸右缺）
+      col:  [sx(hover.c) - cell / 2, 0, cell, cssH],
+      area: [sx(hover.c) - 2.5 * cell, sy(hover.r) - 2.5 * cell, 5 * cell, 5 * cell],
+    }[picking];
+    if (hz) {
+      ctx.fillStyle = 'rgba(244,194,90,.38)';
+      ctx.fillRect(...hz);
+      ctx.strokeStyle = 'rgba(244,194,90,.95)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(hz[0] + 1.5, hz[1] + 1.5, hz[2] - 3, hz[3] - 3);
+    }
+  }
+  // 落点标注：红马所有合法日字点（安全/危险同色，不区分）
+  if (running && !over) {
+    for (const m of moves()) {
+      if (m.c < c0 || m.c > c1 || m.r < rBot || m.r > rTop) continue;
+      drawMark(m.c, m.r);
+    }
+  }
+  // 黑子（被吃子在动画期间先隐去）
+  const capKey = anim && anim.cap ? key(anim.to.c, anim.to.r) : null;
+  // 技能选择模式：给可视范围内的敌方棋子描金边，示意"点我"
+  if (picking && running && !over && !anim) {
+    ctx.strokeStyle = 'rgba(244,194,90,.9)';
+    ctx.lineWidth = 2.5;
+    for (const [k] of pieces) {
+      if (k === capKey) continue;
+      const [c, r] = k.split(',').map(Number);
+      if (c < c0 || c > c1 || r < rBot || r > rTop) continue;
+      ctx.beginPath();
+      ctx.arc(sx(c), sy(r), cell * 0.48, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  for (const [k, type] of pieces) {
+    if (k === capKey) continue;
+    const [c, r] = k.split(',').map(Number);
+    if (c < c0 || c > c1 || r < rBot || r > rTop) continue;
+    drawPiece(sx(c), sy(r), GLYPH[type], 'black');
+  }
+  // 红马（主体风格：easeOutCubic + 抛物线抬升 + 缩放）
+  let hx = sx(horse.c), hy = sy(horse.r), scale = 1;
+  if (anim) {
+    const e = easeOutCubic(anim.t);
+    hx = sx(anim.from.c) + (sx(anim.to.c) - sx(anim.from.c)) * e;
+    hy = sy(anim.from.r) + (sy(anim.to.r) - sy(anim.from.r)) * e - Math.sin(Math.PI * anim.t) * cell * 0.5;
+    scale = 1 + 0.12 * Math.sin(Math.PI * anim.t);
+  }
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.scale(scale, scale);
+  drawPiece(0, 0, '马', 'red');
+  ctx.restore();
+  // 飘字（主体风格：楷体 + 黑阴影 + 上浮 60px，easeOutCubic）
+  for (const p of pops) {
+    ctx.save();
+    ctx.globalAlpha = 1 - p.t;
+    ctx.font = `700 ${Math.round(cell * 0.9)}px "STKaiti","KaiTi",serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 10;
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y - easeOutCubic(p.t) * 60);
+    ctx.restore();
+  }
+  ctx.restore();
+  // 特效层（不随震颤，同主体分层）
+  drawParticles();
+}
+
+function easeOutCubic(t) { return 1 - (1 - t) ** 3; }
+
+// ---------- 主循环 ----------
+let last = 0;
+function loop(ts) {
+  const dt = Math.min((ts - last) / 1000 || 0, 0.05); last = ts;
+  if (anim) {
+    anim.t += dt / 0.18;
+    if (anim.t >= 1) {
+      anim.t = 1;
+      // 落点爆裂：吃子时木色粒子（同主体 finishAnim）
+      if (anim.cap) spawnParticles(sx(anim.to.c), sy(anim.to.r), {
+        count: 30, speed: 170,
+        colors: ['#8a5a28', '#a9793f', '#5d3c14', '#d8ae70'],
+      });
+      const cb = anim.onEnd; anim = null;
+      if (cb) cb();
+    }
+  }
+  if (shake > 0) shake = Math.max(0, shake - dt * 1.6);   // 衰减速率同主体
+  updateParticles(dt);
+  for (const p of pops) p.t += dt / 0.9;
+  pops = pops.filter(p => p.t < 1);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ---------- 输入 ----------
+let hover = { c: 3, r: 0 };   // 技能选择时的高亮预览位置
+function worldFromEvent(ev) {
+  const rect = canvas.getBoundingClientRect();
+  const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+  const py = (ev.touches ? ev.touches[0].clientY : ev.clientY) - rect.top;
+  // 落点 = 十字交点：px 相对第 0 条竖线除以 cell 即列号
+  const c = Math.max(COL_MIN, Math.min(COL_MAX, Math.round((px - boardX) / cell)));
+  const r = Math.round(horse.r - (py - horseScreenY()) / cell);
+  return { c, r };
+}
+function onTap(ev) {
+  if (!running || over || anim) return;
+  ev.preventDefault();
+  const { c, r } = worldFromEvent(ev);
+  hover = { c, r };
+  if (picking) { applyPicking({ c, r }); return; }
+  const m = moves().find(x => x.c === c && x.r === r);
+  if (m) doMove(m);
+}
+// 指针移动时更新选择高亮（桌面 hover；触摸则按下即选）
+function onMove(ev) {
+  if (!picking) return;
+  const rect = canvas.getBoundingClientRect();
+  const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+  const py = (ev.touches ? ev.touches[0].clientY : ev.clientY) - rect.top;
+  hover = {
+    c: Math.max(COL_MIN, Math.min(COL_MAX, Math.round((px - boardX) / cell))),
+    r: Math.round(horse.r - (py - horseScreenY()) / cell),
+  };
+}
+const KEYDIR = {
+  up:    [[1,2],[-1,2]], down:  [[1,-2],[-1,-2]],
+  left:  [[-2,1],[-2,-1]], right:[ [2,1],[ 2,-1]],
+};
+function onKey(ev) {
+  if ((!running && (ev.key === ' ' || ev.key === 'Enter'))) {
+    ev.preventDefault();
+    startGame();
+    return;
+  }
+  if (!running || over || anim) return;
+  let dir = null;
+  if (ev.key === 'ArrowUp' || ev.key === 'w' || ev.key === 'W') dir = 'up';
+  else if (ev.key === 'ArrowDown' || ev.key === 's' || ev.key === 'S') dir = 'down';
+  else if (ev.key === 'ArrowLeft' || ev.key === 'a' || ev.key === 'A') dir = 'left';
+  else if (ev.key === 'ArrowRight' || ev.key === 'd' || ev.key === 'D') dir = 'right';
+  if (!dir) return;  ev.preventDefault();
+  for (const [dx, dy] of KEYDIR[dir]) {
+    const m = moves().find(x => x.c === horse.c + dx && x.r === horse.r + dy);
+    if (m) { doMove(m); return; }
+  }
+}
+
+// ---------- 启动 ----------
+function init() {
+  canvas = document.getElementById('game');
+  ctx = canvas.getContext('2d');
+  best = +(localStorage.getItem(BEST_KEY) || 0);
+  applyPref();                 // 读取主体主题/粒子设置后再建棋盘缓存
+  resize();
+  // 手机端：地址栏收起/旋转/字体加载都会改变 stage 宽高，
+  // ResizeObserver 保证 canvas 布局几何始终与舞台同步（修棋盘左右不对称）
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => resize()).observe(document.getElementById('stage'));
+  }
+  window.addEventListener('resize', () => { resize(); });
+  window.visualViewport?.addEventListener('resize', () => { resize(); });
+  canvas.addEventListener('click', onTap);
+  canvas.addEventListener('touchstart', onTap, { passive: false });
+  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('touchmove', onMove, { passive: true });
+  window.addEventListener('keydown', onKey);
+  document.getElementById('startBtn').onclick = startGame;
+  document.getElementById('retryBtn').onclick = startGame;
+  // 顶栏音效开关（与主体共享设置，改这里主体也生效）
+  document.getElementById('btn-sound').onclick = () => {
+    setSoundPref(!soundOn());
+    if (soundOn()) sfx('button');          // 打开时给个反馈音
+  };
+  syncSoundIcon();
+  initSettings();                          // 就地设置弹窗
+  document.getElementById('btn-back').onclick = onBackHome;   // 返回大厅（对齐主体：进行中弹确认）
+  document.getElementById('skRow').onclick = () => useSkill('row');
+  document.getElementById('skCol').onclick = () => useSkill('col');
+  document.getElementById('skArea').onclick = () => useSkill('area');
+  document.getElementById('skRestart').onclick = startGame;
+  // 续玩：有未结束的存档则直接恢复（对齐主体刷新/断网后自动恢复对局）
+  if (loadGame()) {
+    document.getElementById('startScreen').classList.add('hidden');
+    const hint = document.getElementById('hint');
+    hint.textContent = '已恢复上一局 · 继续冲';
+    setTimeout(() => { hint.textContent = '走「日」字，向上冲；吃子加分'; }, 2600);
+  }
+  updateHud();
+  requestAnimationFrame(loop);
+}
+init();
+})();
+</script>
+</body>
+</html>

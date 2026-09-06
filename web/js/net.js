@@ -38,30 +38,58 @@ export class GameConn {
     this.anyHandlers = [];
     this.pendingLegal = null;
     this.ws = null;
-    this.closed = false;
+    this.closed = false;        // 是否已终态关闭（手动或已放弃）
+    this.manualClose = false;   // 主动调用 close()：不再自动重连
+    this.reconnectAttempts = 0;
+    this.reconnectTimer = null;
+    this.onReconnecting = null; // (attempt:number) => void  正在重连（可提示 UI）
+    this.onReconnected = null;  // () => void  重连成功（可清理临时选中态）
   }
 
   connect() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    this.ws = new WebSocket(`${proto}://${location.host}${BASE}api/ws?gameId=${this.gameId}`);
-    this.ws.onmessage = (ev) => {
-      let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === 'legal_moves' && this.pendingLegal) {
-        const cb = this.pendingLegal;
-        this.pendingLegal = null;
-        cb(msg.targets || []);
-        return;
-      }
-      for (const fn of this.anyHandlers) fn(msg);
-      const list = this.handlers.get(msg.type);
-      if (list) for (const fn of list) fn(msg);
-    };
-    this.ws.onclose = () => { this.closed = true; };
     return new Promise((resolve, reject) => {
-      this.ws.onopen = resolve;
-      this.ws.onerror = reject;
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      this.ws = new WebSocket(`${proto}://${location.host}${BASE}api/ws?gameId=${this.gameId}`);
+      this.ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === 'legal_moves' && this.pendingLegal) {
+          const cb = this.pendingLegal;
+          this.pendingLegal = null;
+          cb(msg.targets || []);
+          return;
+        }
+        for (const fn of this.anyHandlers) fn(msg);
+        const list = this.handlers.get(msg.type);
+        if (list) for (const fn of list) fn(msg);
+      };
+      this.ws.onopen = () => {
+        this.reconnectAttempts = 0;
+        this.closed = false;
+        resolve();
+      };
+      this.ws.onerror = () => { /* 错误最终由 onclose 兜底处理 */ };
+      this.ws.onclose = () => {
+        this.closed = true;
+        if (this.manualClose) return; // 主动关闭：不重连
+        this._scheduleReconnect();
+      };
     });
+  }
+
+  // 意外断开后指数退避自动重连（1s→2s→4s→8s→16s，封顶 15s）。
+  // 重连无需新建局：服务端 Join 会回送完整 state，前端据此全量重建棋盘。
+  _scheduleReconnect() {
+    if (this.manualClose) return;
+    this.reconnectAttempts++;
+    const delay = Math.min(1000 * 2 ** Math.min(this.reconnectAttempts - 1, 4), 15000);
+    if (this.onReconnecting) this.onReconnecting(this.reconnectAttempts);
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.connect()
+        .then(() => { if (this.onReconnected) this.onReconnected(); })
+        .catch(() => { /* 连接失败：onclose 会再次触发重连 */ });
+    }, delay);
   }
 
   on(type, fn) {
@@ -94,7 +122,10 @@ export class GameConn {
   restart() { this.send({ type: 'restart' }); }
 
   close() {
+    this.manualClose = true;
     this.closed = true;
+    clearTimeout(this.reconnectTimer);
     if (this.ws) try { this.ws.close(); } catch { /* 已关闭 */ }
+    this.ws = null;
   }
 }
