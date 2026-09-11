@@ -50,3 +50,6 @@ TEST_REPORT_*.md
 
 # 旧题库备份（已被 canju12 3577 题替换，勿入库）
 internal/_old_puzzles_backup/
+
+# 本地开发用的引擎工作目录（含 53MB NNUE 权重，勿提交）
+/engines/
