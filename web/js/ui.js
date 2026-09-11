@@ -1,10 +1,17 @@
 // 屏幕路由与通用 UI 工具。
+const SCREENS = ['lobby', 'game', 'puzzles', 'about'];
+let current = 'lobby';   // 与 index.html 初始可见的 screen 一致
+
 export function showScreen(name) {
-  for (const s of ['lobby', 'game', 'puzzles', 'about']) {
+  current = name;
+  for (const s of SCREENS) {
     document.getElementById(`screen-${s}`).hidden = s !== name;
   }
   document.getElementById('btn-home').hidden = name === 'lobby';
 }
+
+// currentScreen 供返回导航判断"上一层"：残局对局 → 残局列表 → 大厅。
+export function currentScreen() { return current; }
 
 let toastTimer = null;
 export function toast(msg, isError = false, ms = 2600) {

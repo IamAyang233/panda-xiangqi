@@ -5,6 +5,7 @@ import { sfx } from '../audio.js';
 import { BoardRenderer } from '../renderer.js';
 import { parseSq } from '../board.js';
 import { toast, showScreen, confirmDialog } from '../ui.js';
+import { positionOf, nameOf } from './puzzles.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +32,9 @@ export class GameScreen {
     this.moves = [];
     this.puzzle = null;
     this.lastPuzzleInfo = null;
+    this.puzzleId = null;        // 残局模式当前关 id，供"上一关/下一关"定位相邻关
+    this.onPuzzleStep = null;    // (delta:±1) => void  由 main.js 接上残局列表
+    this.onExitToPuzzles = null; // 退出到残局列表后刷新列表（星级/进度）
     this._turn = 'red';          // 当前轮走方（用于提示按钮按你方禁用/恢复）
 
     this._bindControls();
@@ -58,11 +62,15 @@ export class GameScreen {
       this.renderer.setFlipped(!this.renderer.flipped);
     };
     $('btn-exit').onclick = async () => {
+      const back = this.mode === 'puzzle' ? '残局列表' : '大厅';
       if (this.conn && !this.gameOver && this.moves.length) {
-        if (!(await confirmDialog('对局进行中，确定返回大厅？', { okText: '返回大厅' }))) return;
+        if (!(await confirmDialog(`对局进行中，确定返回${back}？`, { okText: `返回${back}` }))) return;
       }
       this.exit();
     };
+    // 逐关切换：由外部（main.js）接上残局列表的相邻关
+    $('btn-prev-puzzle').onclick = () => { sfx.play('button'); this.onPuzzleStep?.(-1); };
+    $('btn-next-puzzle').onclick = () => { sfx.play('button'); this.onPuzzleStep?.(1); };
     $('btn-result-close').onclick = () => { $('result-overlay').hidden = true; };
     $('btn-result-exit').onclick = () => { $('result-overlay').hidden = true; this.exit(); };
     $('btn-result-restart').onclick = () => {
@@ -76,7 +84,10 @@ export class GameScreen {
     this.conn?.close();
     this.conn = null;
     store.clearCurrentGame();
-    showScreen('lobby');
+    // 逐层返回：残局对局回到残局列表（保留筛选与进度），其余模式回大厅
+    const back = this.mode === 'puzzle' ? 'puzzles' : 'lobby';
+    showScreen(back);
+    if (back === 'puzzles') this.onExitToPuzzles?.();
   }
 
   // start(mode, opts) 创建对局并连接。opts: {side, level, puzzleId, onExit}
@@ -92,6 +103,7 @@ export class GameScreen {
 
     const payload = { mode, side: opts.side || 'red', level: opts.level || 4 };
     if (mode === 'puzzle') payload.puzzleId = opts.puzzleId;
+    this.puzzleId = mode === 'puzzle' ? (opts.puzzleId || null) : null;
     if (mode === 'llm') payload.llm = store.llm;
 
     let created;
@@ -146,6 +158,8 @@ export class GameScreen {
     this.moves = [];
     this.puzzle = null;
     this.lastPuzzleInfo = null;
+    // 恢复的对局同样要能逐关切换：puzzleId 存在存档的 opts 里
+    this.puzzleId = this.mode === 'puzzle' ? (this.startOpts.puzzleId || null) : null;
     this.humanSide = saved.youSide || 'red';
     this.renderer.setFlipped(this.humanSide === 'black');
     showScreen('game');
@@ -182,6 +196,12 @@ export class GameScreen {
     $('btn-hint').hidden = false;
     $('btn-flip').hidden = false;
     $('puzzle-goal').hidden = !isPuzzle;
+    // 逐关切换只在残局模式出现；返回按钮的目标随模式变化（残局 → 残局列表）
+    $('btn-prev-puzzle').hidden = !isPuzzle;
+    $('btn-next-puzzle').hidden = !isPuzzle;
+    const exitLabel = isPuzzle ? '返回残局列表' : '返回大厅';
+    $('btn-exit-label').textContent = exitLabel;
+    $('btn-result-exit-label').textContent = exitLabel;
     // LLM 模式：解说条常驻（固定占位，不遮挡棋盘）；其他模式隐藏
     const bubble = $('llm-bubble');
     if (mode === 'llm') {
@@ -519,8 +539,14 @@ export class GameScreen {
     const aim = this.puzzle.goal === 'win' ? '胜' : '和';
     const goal = `${side}${aim}`;
     const failed = this.puzzle.failed ? '<b style="color:#e05a3a">（已偏离正解，可悔棋或重开）</b>' : '';
+    // 逐关浏览需要知道"我在第几关"：显示 第 N/M 关 + 关名
+    const pos = this.puzzleId ? positionOf(this.puzzleId) : null;
+    const title = this.puzzleId ? nameOf(this.puzzleId) : '';
+    const head = pos
+      ? `<div class="puzzle-pos">第 <b>${pos.index}</b>/<b>${pos.total}</b> 关${title ? ` · ${title}` : ''}</div>`
+      : '';
     el.hidden = false;
-    el.innerHTML = `目标：<b>${goal}</b> · 最少 <b>${this.puzzle.parMoves}</b> 步 · 已走 <b>${this.puzzle.step}</b> 步${failed}
+    el.innerHTML = `${head}目标：<b>${goal}</b> · 最少 <b>${this.puzzle.parMoves}</b> 步 · 已走 <b>${this.puzzle.step}</b> 步${failed}
       <br>不用提示且步数达标 = ★★★`;
   }
 }

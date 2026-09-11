@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>导航自检 · 熊猫象棋</title>
+<style>body{margin:0;padding:12px;background:#1a1e16;color:#e8dcc4;font:13px/1.7 Consolas,monospace}
+h1{font-size:14px;color:#ffd166;margin:0 0 6px}pre{margin:0;white-space:pre-wrap}
+iframe{width:900px;height:640px;border:1px solid #4a3d2c;border-radius:6px;margin-top:8px}</style>
+</head>
+<body>
+<h1>导航自检（逐层返回 + 上一关/下一关）</h1>
+<pre id="out">running…</pre>
+<iframe id="app" src="./"></iframe>
+<script type="module">
+// 同源 iframe 驱动真实应用：点真实按钮、读真实状态，验证
+//   1) 残局对局 → 返回 = 残局列表（不是大厅）
+//   2) 残局列表 → 返回 = 大厅
+//   3) 对局内 上一关/下一关 可切换，且到边界不越界
+//   4) 返回按钮文案随模式变化
+const log = [];
+const out = document.getElementById('out');
+const say = (s = '') => { log.push(s); out.textContent = log.join('\n'); };
+
+let pass = 0, fail = 0;
+const ok = (n, c, extra = '') => {
+  if (c) { pass++; say('  ✅ ' + n); } else { fail++; say('  ❌ ' + n + (extra ? ' —— ' + extra : '')); }
+};
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const frame = document.getElementById('app');
+await new Promise(r => { frame.onload = r; });
+const W = frame.contentWindow, D = frame.contentDocument;
+const q = (sel) => D.querySelector(sel);
+const vis = (id) => { const e = D.getElementById(id); return e && !e.hidden; };
+const txt = (id) => (D.getElementById(id)?.textContent || '').trim();
+const G = () => W.__qijing?.game;
+
+async function waitFor(fn, ms = 12000, label = '') {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try { if (fn()) return true; } catch { /* 继续等 */ }
+    await sleep(120);
+  }
+  say(`  （等待超时${label ? ': ' + label : ''}）`);
+  return false;
+}
+
+try {
+  // 等待应用启动完成（大厅模式卡渲染出来）
+  say('【0】应用启动');
+  ok('大厅可见', await waitFor(() => vis('screen-lobby') && q('.mode-card'), 15000, 'lobby'));
+  ok('初始返回按钮隐藏（大厅不需要返回）', D.getElementById('btn-home').hidden);
+
+  say('\n【1】大厅 → 残局列表');
+  q('.mode-card[data-mode="puzzle"]').click();
+  ok('进入残局列表', await waitFor(() => vis('screen-puzzles'), 5000, 'puzzles'));
+  ok('返回按钮出现', !D.getElementById('btn-home').hidden);
+  const cardsReady = await waitFor(() => q('.puzzle-card'), 12000, 'puzzle list');
+  ok('残局列表加载出卡片', cardsReady);
+
+  say('\n【2】残局列表 → 对局');
+  q('.puzzle-card').click();
+  ok('进入对局页', await waitFor(() => vis('screen-game'), 5000, 'game'));
+  await waitFor(() => G()?.puzzle, 15000, 'puzzle state');
+  const id0 = G()?.puzzleId;
+  ok('已记录当前关 id', !!id0, String(id0));
+  ok('「上一关」按钮可见', !D.getElementById('btn-prev-puzzle').hidden);
+  ok('「下一关」按钮可见', !D.getElementById('btn-next-puzzle').hidden);
+  ok('侧栏返回文案 = 返回残局列表', txt('btn-exit-label') === '返回残局列表', txt('btn-exit-label'));
+  ok('结算卡返回文案 = 返回残局列表', txt('btn-result-exit-label') === '返回残局列表', txt('btn-result-exit-label'));
+  const goalText = txt('puzzle-goal');
+  ok('目标栏显示「第 N/M 关」', /第\s*\d+\s*\/\s*\d+\s*关/.test(goalText), goalText.slice(0, 60));
+
+  say('\n【3】下一关 / 上一关');
+  D.getElementById('btn-next-puzzle').click();
+  const movedNext = await waitFor(() => G()?.puzzleId && G().puzzleId !== id0, 15000, 'next');
+  const id1 = G()?.puzzleId;
+  ok('切到下一关', movedNext, `id0=${id0} id1=${id1}`);
+  D.getElementById('btn-prev-puzzle').click();
+  const movedBack = await waitFor(() => G()?.puzzleId === id0, 15000, 'prev');
+  ok('切回上一关（回到原关）', movedBack, `now=${G()?.puzzleId}`);
+
+  say('\n【4】边界不越界');
+  ok('已回到第一关', G()?.puzzleId === id0);
+  D.getElementById('btn-prev-puzzle').click();
+  await sleep(1200);
+  ok('第一关再点「上一关」不切换', G()?.puzzleId === id0, `now=${G()?.puzzleId}`);
+  ok('给出边界提示', (D.getElementById('toast')?.textContent || '').includes('第一关'),
+    D.getElementById('toast')?.textContent || '(无 toast)');
+
+  say('\n【5】逐层返回：对局 → 残局列表');
+  D.getElementById('btn-home').click();
+  ok('返回到残局列表（不是大厅）', await waitFor(() => vis('screen-puzzles') && !vis('screen-lobby'), 6000, 'back to puzzles'));
+
+  say('\n【6】再返回一次：残局列表 → 大厅');
+  D.getElementById('btn-home').click();
+  ok('返回到大厅', await waitFor(() => vis('screen-lobby') && !vis('screen-puzzles'), 6000, 'back to lobby'));
+} catch (e) {
+  fail++;
+  say('ERROR: ' + e.message + '\n' + (e.stack || ''));
+}
+
+say(`\n结果：通过 ${pass}，失败 ${fail}`);
+say('RESULT: ' + (fail === 0 ? 'ALL_OK' : 'CHECK'));
+try {
+  await fetch('http://127.0.0.1:38111/report', { method: 'POST', body: log.join('\n') });
+} catch { /* 接收端未起则忽略 */ }
+</script>
+</body>
+</html>

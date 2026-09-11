@@ -202,6 +202,10 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   padding: 10px; font-size: 13px; line-height: 1.8; color: var(--text-dim);
 }
 .puzzle-goal b { color: var(--gold); }
+/* 残局进度行：第 N/M 关 · 关名（弱化处理，不抢"目标/步数"的注意力） */
+.puzzle-pos { font-size: 12px; color: var(--text-dim); padding-bottom: 4px; margin-bottom: 4px;
+  border-bottom: 1px dashed rgba(176, 143, 62, .35); }
+.puzzle-pos b { color: var(--text); }
 
 /* ---------- 弹层 ---------- */
 .overlay {

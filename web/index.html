@@ -79,6 +79,12 @@
     <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9 3v5M15 3v5"/><path d="M6 8h12v3.5a6 6 0 0 1-12 0V8z"/><path d="M12 17.5V22"/>
     </symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.5 6L8.5 12l6 6"/>
+    </symbol>
+    <symbol id="i-next" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9.5 6l6 6-6 6"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -160,6 +166,8 @@
           </div>
         </div>
         <div class="game-controls">
+          <button id="btn-prev-puzzle" class="ctl-btn" hidden><svg class="icon"><use href="#i-prev"/></svg><span>上一关</span></button>
+          <button id="btn-next-puzzle" class="ctl-btn" hidden><svg class="icon"><use href="#i-next"/></svg><span>下一关</span></button>
           <button id="btn-undo" class="ctl-btn"><svg class="icon"><use href="#i-undo"/></svg><span>悔棋</span></button>
           <button id="btn-hint" class="ctl-btn"><svg class="icon"><use href="#i-bulb"/></svg><span>提示</span></button>
           <button id="btn-resign" class="ctl-btn"><svg class="icon"><use href="#i-flag"/></svg><span>认输</span></button>
@@ -171,7 +179,7 @@
         <div class="panel-title" id="panel-title">对局</div>
         <div class="move-list" id="move-list"></div>
         <div class="puzzle-goal" id="puzzle-goal" hidden></div>
-        <button id="btn-exit" class="ctl-btn danger"><svg class="icon"><use href="#i-exit"/></svg><span>返回大厅</span></button>
+        <button id="btn-exit" class="ctl-btn danger"><svg class="icon"><use href="#i-exit"/></svg><span id="btn-exit-label">返回大厅</span></button>
       </aside>
     </div>
     <div id="result-overlay" class="overlay" hidden>
@@ -182,7 +190,7 @@
         <div class="result-actions">
           <button id="btn-result-restart" class="ctl-btn" hidden>再来一局</button>
           <button id="btn-result-close" class="ctl-btn">查看棋盘</button>
-          <button id="btn-result-exit" class="ctl-btn danger">返回大厅</button>
+          <button id="btn-result-exit" class="ctl-btn danger"><span id="btn-result-exit-label">返回大厅</span></button>
         </div>
       </div>
     </div>
