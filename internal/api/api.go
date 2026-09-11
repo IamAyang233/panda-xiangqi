@@ -288,6 +288,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
+		// 读超时兼作心跳监测：正常客户端每 25s 一次 ping，读到任何消息都会刷新期限。
+		// 超时返回错误 → defer 里 Leave+Close，死连接的 goroutine 得以回收。
+		_ = conn.conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		data, err := conn.ReadMessage()
 		if err != nil {
 			return

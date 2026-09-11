@@ -30,10 +30,31 @@ export async function validateLLM(cfg) {
   return api('/api/llm/validate', cfg);
 }
 
+// ---- 心跳与死连接检测 ----
+// 背景：应用经 fnOS 网关反代访问，网关对空闲连接有读超时（nginx 类默认约 60s）。
+// 下棋存在大量无消息时段（读讲解/思考/切后台），连接一旦空闲就被网关掐掉，
+// 用户看到的就是"莫名其妙断开"。对策：每 25s 发一次应用层 ping（<60s，留余量），
+// 让网关始终看到流量。
+const HB_INTERVAL = 25000;
+// 连续多个心跳周期收不到任何回包（pong 或其它消息）→ 判定 TCP 半开，主动断开走重连。
+// 比被动等 onclose 快得多：半开连接浏览器往往几分钟都察觉不到。
+const HB_STALE = 60000;
+
+// 心跳定时器必须放 Web Worker：后台标签页的主线程 setInterval 会被浏览器节流到
+// ≥1 分钟，页面切后台就发不出心跳——那正是"切到别的窗口回来就断线"的原因。
+// Worker 的定时器不受页面节流影响。用 Blob 内联，免得在网关前缀下多管一个文件路径。
+const hbWorkerSrc = (ms) =>
+  'let t=null;onmessage=e=>{' +
+  'if(e.data==="start"&&!t)t=setInterval(()=>postMessage(0),' + ms + ');' +
+  'if(e.data==="stop"&&t){clearInterval(t);t=null;}}';
+
 // GameConn 一局对局的 WS 封装：请求-回应式监听。
 export class GameConn {
-  constructor(gameId) {
+  // opts.heartbeatMs / opts.heartbeatStaleMs：测试时可调短；默认 25s / 60s
+  constructor(gameId, opts = {}) {
     this.gameId = gameId;
+    this.hbInterval = opts.heartbeatMs || HB_INTERVAL;
+    this.hbStale = opts.heartbeatStaleMs || HB_STALE;
     this.handlers = new Map(); // type -> [fn]
     this.anyHandlers = [];
     this.pendingLegal = null;
@@ -44,6 +65,10 @@ export class GameConn {
     this.reconnectTimer = null;
     this.onReconnecting = null; // (attempt:number) => void  正在重连（可提示 UI）
     this.onReconnected = null;  // () => void  重连成功（可清理临时选中态）
+    this.outbox = [];           // 断开窗口内待发操作，重连成功后按序重放
+    this.lastPongAt = 0;        // 最近一次收到任何回包的时间（心跳死连接判据）
+    this.hbWorker = null;       // 心跳 Worker；不可用时退回主线程定时器
+    this.hbTimer = null;
   }
 
   connect() {
@@ -51,6 +76,7 @@ export class GameConn {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       this.ws = new WebSocket(`${proto}://${location.host}${BASE}api/ws?gameId=${this.gameId}`);
       this.ws.onmessage = (ev) => {
+        this.lastPongAt = Date.now();   // 任何回包都证明连接活着（含 pong / state / error）
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.type === 'legal_moves' && this.pendingLegal) {
@@ -66,11 +92,14 @@ export class GameConn {
       this.ws.onopen = () => {
         this.reconnectAttempts = 0;
         this.closed = false;
+        this._startHeartbeat();
+        this._flushOutbox();
         resolve();
       };
       this.ws.onerror = () => { /* 错误最终由 onclose 兜底处理 */ };
       this.ws.onclose = () => {
         this.closed = true;
+        this._stopHeartbeat();
         if (this.manualClose) return; // 主动关闭：不重连
         this._scheduleReconnect();
       };
@@ -92,6 +121,41 @@ export class GameConn {
     }, delay);
   }
 
+  // ---- 心跳 ----
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    this.lastPongAt = Date.now();
+    const tick = () => this._ping();
+    if (typeof Worker !== 'undefined') {
+      try {
+        const url = URL.createObjectURL(new Blob([hbWorkerSrc(this.hbInterval)], { type: 'text/javascript' }));
+        this.hbWorker = new Worker(url);
+        this.hbWorker.onmessage = tick;
+        this.hbWorker.postMessage('start');
+        return;
+      } catch { /* Worker 不可用（极旧浏览器/受限环境）→ 主线程兜底 */ }
+    }
+    this.hbTimer = setInterval(tick, this.hbInterval);
+  }
+
+  _stopHeartbeat() {
+    if (this.hbWorker) {
+      try { this.hbWorker.postMessage('stop'); this.hbWorker.terminate(); } catch { /* 已终止 */ }
+      this.hbWorker = null;
+    }
+    if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
+  }
+
+  _ping() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    // 死连接检测：远超一个周期没有任何回包 → 半开连接，主动断开走重连
+    if (Date.now() - this.lastPongAt > this.hbStale) {
+      try { this.ws.close(); } catch { /* 已关闭 */ }
+      return;
+    }
+    this.send({ type: 'ping' });
+  }
+
   on(type, fn) {
     if (!this.handlers.has(type)) this.handlers.set(type, []);
     this.handlers.get(type).push(fn);
@@ -100,7 +164,21 @@ export class GameConn {
   onAny(fn) { this.anyHandlers.push(fn); }
 
   send(obj) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(obj));
+      return;
+    }
+    // 断开窗口内的操作不能静默丢弃（用户点了棋却毫无反应）：
+    // 入队，重连成功后按序重放。心跳不走这里（_ping 已先判 OPEN）。
+    if (this.manualClose) return;
+    if (this.outbox.length < 20) this.outbox.push(obj);
+  }
+
+  _flushOutbox() {
+    if (!this.outbox.length) return;
+    const q = this.outbox;
+    this.outbox = [];
+    for (const o of q) this.send(o);
   }
 
   sendMove(from, to) { this.send({ type: 'move', from, to }); }
@@ -124,6 +202,7 @@ export class GameConn {
   close() {
     this.manualClose = true;
     this.closed = true;
+    this._stopHeartbeat();
     clearTimeout(this.reconnectTimer);
     if (this.ws) try { this.ws.close(); } catch { /* 已关闭 */ }
     this.ws = null;

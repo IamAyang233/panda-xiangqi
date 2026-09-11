@@ -12,10 +12,19 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // wsGUID RFC 6455 握手魔串。
 const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+// wsReadTimeout 单次读超时。客户端心跳间隔 25s，此处留 3 倍余量；
+// 超时即视为死连接（断网未关闭 / TCP 半开），由读循环返回并回收 goroutine。
+// 用 var 而非 const：测试里可以临时调短。
+var wsReadTimeout = 90 * time.Second
+
+// wsWriteTimeout 单次写超时：对端消失时写会长时间阻塞，必须有上限。
+const wsWriteTimeout = 10 * time.Second
 
 // wsConn 单个 WebSocket 连接（服务端角色：发送不掩码，接收须解掩码）。
 type wsConn struct {
@@ -88,6 +97,8 @@ func (c *wsConn) Close() {
 
 // writeFrame 写一帧（服务端不掩码）。opcode: 0x1 文本, 0x8 关闭, 0xA 心跳回应。
 func (c *wsConn) writeFrame(opcode byte, payload []byte) error {
+	// 对端消失时 Write 可能长时间阻塞，必须限死单次写时长
+	_ = c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	header := []byte{0x80 | opcode}
 	n := len(payload)
 	switch {

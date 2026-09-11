@@ -328,9 +328,9 @@
 // ---------- 配置 ----------
 const BOARD_COLS = 6;        // 一行 6 个格子（两侧木框留边做棋盘边缘）
 const VIEW_ROWS = 16;        // 一次只显示 16 行
-const COL_MIN = 0, COL_MAX = BOARD_COLS - 1;  // 0..5，红马不可越界
+const COL_MIN = 0, COL_MAX = BOARD_COLS;  // 0..6：交点制，7 条竖线均可落子（含最右列）
 const HORSE_Y_RATIO = 0.70;  // 红马在屏幕高度的比例位置（靠下，上方留更多视野）
-const GEN_BAND = 3;          // 黑子生成时相对红马列的横向散布（贴合 6 列）
+const GEN_BAND = 3;          // 黑子生成时相对红马列的横向散布（贴合可落子列数）
 const GEN_AHEAD = 40;        // 红马上方预生成的行数
 const PRUNE_BEHIND = 30;     // 落后红马多少行后移除黑子
 const PIECE_SCORE = { zu: 10, ma: 40, xiang: 50 };
@@ -773,7 +773,9 @@ function genRow(r) {
   else if (roll < st.empty + st.two + st.three) n = 3;
   else n = 1;
 
-  const cols = [0, 1, 2, 3, 4, 5];
+  // 覆盖全部可落子列（交点制 0..BOARD_COLS），勿硬编码列数
+  const cols = [];
+  for (let c = COL_MIN; c <= COL_MAX; c++) cols.push(c);
   // 洗牌取前 n 列，天然不重复
   for (let i = cols.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
@@ -1081,7 +1083,8 @@ function resize() {
   buildBoardCache();                   // 静态层重建（木纹只画这一次，不再闪烁）
 }
 const horseScreenY = () => cssH * HORSE_Y_RATIO;
-// 列 c 的十字交点 x —— 棋子压线（0..BOARD_COLS 共 7 条竖线，可站位 0..5）
+// 列 c 的十字交点 x —— 交点制（象棋式）：纵向刻线共 BOARD_COLS+1 条（i=0..BOARD_COLS），
+// 棋子落在线与线的交点上，故合法列号同样是 0..BOARD_COLS（= COL_MAX），共 7 个落点。
 const sx = (c) => boardX + c * cell;
 const sy = (r) => horseScreenY() - (r - horse.r) * cell;
 
@@ -1145,7 +1148,8 @@ function buildBoardCache() {
   }
   c2.restore();
 
-  // 纵向刻线：7 条边界线（0..BOARD_COLS），围出 6 个格子；格中心画小十字提示落点
+  // 纵向刻线：交点制，共 BOARD_COLS+1 条（i=0..BOARD_COLS）＝ 7 条竖线，
+  // 棋子与落点标记都压在刻线交点 x = sx(c) 上（勿改成格子中心，否则最右列无落点）
   c2.strokeStyle = BOARD.line;
   c2.lineWidth = 1.3;
   for (let i = 0; i <= BOARD_COLS; i++) {

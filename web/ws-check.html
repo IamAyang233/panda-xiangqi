@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WS 心跳自检 · 熊猫象棋</title>
+<style>body{margin:0;padding:14px;background:#1a1e16;color:#e8dcc4;font:13px/1.7 Consolas,monospace}
+h1{font-size:14px;color:#ffd166;margin:0 0 8px}pre{margin:0;white-space:pre-wrap}</style>
+</head>
+<body>
+<h1>WS 心跳自检</h1>
+<pre id="out">running…</pre>
+<script type="module">
+// 验证目标：
+//  1) 心跳定时器确实跑在 Web Worker 里（后台标签页不被节流的关键）
+//  2) 应用层 ping 周期性发出，服务端按约定回 pong
+//  3) 连接长时间保持 OPEN（服务端读超时 90s 内有心跳续期，不会被误杀）
+const log = [];
+const out = document.getElementById('out');
+const say = (s = '') => { log.push(s); out.textContent = log.join('\n'); };
+
+try {
+  // 计数所有出站消息（含 ping）
+  let sentTotal = 0, sentPing = 0;
+  const pSend = WebSocket.prototype.send;
+  WebSocket.prototype.send = function (d) {
+    sentTotal++;
+    try { if (JSON.parse(d).type === 'ping') sentPing++; } catch { /* 非 JSON */ }
+    return pSend.call(this, d);
+  };
+
+  const { api, GameConn } = await import('./js/net.js');
+  const created = await api('/api/games', { mode: 'local_2p' });
+  say('对局创建   : gameId=' + created.gameId);
+
+  const conn = new GameConn(created.gameId, { heartbeatMs: 1000, heartbeatStaleMs: 8000 });
+  let pongs = 0, others = 0, closes = 0;
+  conn.on('pong', () => pongs++);
+  conn.onAny((m) => { if (m.type !== 'pong') others++; });
+  await conn.connect();
+  const ws = conn.ws;
+  const pOnClose = ws.onclose;
+  ws.onclose = (ev) => { closes++; pOnClose && pOnClose(ev); };
+
+  say('心跳定时器 : ' + (conn.hbWorker ? 'Web Worker ✅' : (conn.hbTimer ? '主线程兜底（本页不应出现）' : '未启动 ❌')));
+  say('心跳间隔   : 1000ms（测试用，线上 25000ms）');
+  say('等待 8 秒观察心跳…');
+
+  await new Promise(r => setTimeout(r, 8000));
+
+  say('');
+  say('出站消息   : ' + sentTotal + ' 条（其中 ping ' + sentPing + '）');
+  say('入站 pong  : ' + pongs);
+  say('入站其它   : ' + others);
+  say('连接状态   : ' + ws.readyState + '（1=OPEN）  意外关闭: ' + closes + ' 次');
+  say('Worker 存活: ' + (conn.hbWorker ? '是' : '否'));
+  say('');
+
+  const okAll = conn.hbWorker && sentPing >= 5 && pongs >= 5 && ws.readyState === 1 && closes === 0;
+  say('RESULT: ' + (okAll ? 'ALL_OK' : 'CHECK'));
+  try { conn.close(); } catch { /* 已关 */ }
+} catch (e) {
+  say('ERROR: ' + e.message);
+  say(e.stack || '');
+} finally {
+  try {
+    await fetch('http://127.0.0.1:38111/report', { method: 'POST', body: log.join('\n') });
+  } catch { /* 接收端未起则忽略 */ }
+}
+</script>
+</body>
+</html>
