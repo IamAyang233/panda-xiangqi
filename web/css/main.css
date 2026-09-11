@@ -166,7 +166,18 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 /* 等待中的按钮/卡片：禁用点击 + 右侧小环（右侧留出环的位置，别压住文字） */
 .busy { position: relative; pointer-events: none; }
 .busy > .ring { position: absolute; right: 11px; top: 50%; margin-top: -8px; }
-.ctl-btn.busy, .mode-card.busy { padding-right: 36px; }
+.ctl-btn.busy { padding-right: 36px; }
+
+/* 模式卡是内容左对齐的大卡片：环贴右边会显得没对齐，改成压暗内容、环居中盖在卡上。
+   （::after 已被 hover 光晕占用，遮罩用 ::before） */
+.mode-card.busy > .ring {
+  right: auto; left: 50%; top: 50%; width: 22px; height: 22px;
+  margin: -11px 0 0 -11px; z-index: 2; border-width: 2.5px;
+}
+.mode-card.busy::before {
+  content: ''; position: absolute; inset: 0; z-index: 1;
+  background: rgba(23, 19, 14, 0.58); border-radius: inherit;
+}
 
 /* 列表加载行 */
 .list-loading {

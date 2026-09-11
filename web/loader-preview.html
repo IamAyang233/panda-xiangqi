@@ -59,6 +59,46 @@
     </div>
     <p class="note">残局列表首次拉取时占位，已有卡片时不清空（退出对局返回会复用同一刷新）。</p>
   </div>
+
+  <div class="demo">
+    <h2>4 · 模式卡等待态（环居中）</h2>
+    <button class="mode-card busy" style="width:220px;text-align:left">
+      <div class="mode-icon">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9"/><path d="M9 12h6M12 9v6"/>
+        </svg>
+      </div>
+      <div class="mode-name">人机对战</div>
+      <div class="mode-desc">本地引擎 · 16 档棋力<br>从入门到特大级</div>
+      <span class="ring busy-ring"></span>
+    </button>
+    <p class="note">卡片内容压暗，小环盖在卡片正中央（内容左对齐的卡片，环贴右边会显得没对齐）；按钮类是横向的，小环仍走右侧。</p>
+  </div>
 </div>
+
+<pre id="probe" hidden style="color:#8fbf7f;margin-top:18px"></pre>
+<script>
+// 带 #probe 打开时输出各指示器的几何偏差，供自动化核对居中（正常访问不显示）。
+if (location.hash === '#probe') {
+  const mid = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  const lines = [];
+  for (const card of document.querySelectorAll('.mode-card')) {
+    const ring = card.querySelector('.ring');
+    if (!ring) continue;
+    const c = mid(card.getBoundingClientRect()), r = mid(ring.getBoundingClientRect());
+    lines.push(`card-ring dx=${(r.x - c.x).toFixed(1)} dy=${(r.y - c.y).toFixed(1)}`);
+  }
+  const bl = document.getElementById('board-loading');
+  const ld = bl.querySelector('.loader');
+  const b = mid(bl.getBoundingClientRect()), l = mid(ld.getBoundingClientRect());
+  lines.push(`board-loader dx=${(l.x - b.x).toFixed(1)} dy=${(l.y - b.y).toFixed(1)}`);
+  const btn = document.querySelector('.ctl-btn.busy');
+  const br = btn.getBoundingClientRect(), rr = btn.querySelector('.ring').getBoundingClientRect();
+  lines.push(`btn-ring right-gap=${(br.right - rr.right).toFixed(1)} dy=${(mid(rr).y - mid(br).y).toFixed(1)}`);
+  const p = document.getElementById('probe');
+  p.hidden = false;
+  p.textContent = 'PROBE ' + lines.join(' | ');
+}
+</script>
 </body>
 </html>

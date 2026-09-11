@@ -139,6 +139,29 @@ try {
   ok('弹窗已收起', !vis('setup-overlay'));
   ok('人机对战开局为满盘 32 子（正常初始局面）', await waitStable(() => boardSize() === 32), `size=${boardSize()}`);
   ok('满盘模式下遮罩已收起', !loadingShown());
+
+  say('\n【8】模式卡等待态：小环是否居中（真实大厅，实测几何）');
+  D.getElementById('btn-home').click();
+  ok('回到大厅', await waitFor(() => vis('screen-lobby'), 6000, 'lobby'));
+  const card = q('.mode-card[data-mode="engine"]');
+  card.classList.add('busy');                       // 手动置等待态，不真的开局
+  const ring = D.createElement('span');
+  ring.className = 'ring busy-ring';
+  card.appendChild(ring);
+  await sleep(80);
+  const cr = card.getBoundingClientRect(), rr = ring.getBoundingClientRect();
+  const dx = (rr.left + rr.width / 2) - (cr.left + cr.width / 2);
+  const dy = (rr.top + rr.height / 2) - (cr.top + cr.height / 2);
+  ok('小环中心与卡片中心重合（容差 1px）', Math.abs(dx) <= 1 && Math.abs(dy) <= 1,
+    `dx=${dx.toFixed(1)} dy=${dy.toFixed(1)} 卡片=${cr.width.toFixed(0)}x${cr.height.toFixed(0)}`);
+  const before = W.getComputedStyle(card, '::before');
+  ok('卡片内容遮罩 ::before 已生效',
+    before.content !== 'none' && before.backgroundColor !== 'rgba(0, 0, 0, 0)',
+    `content=${before.content} bg=${before.backgroundColor}`);
+  ok('卡片已禁止点击（pointer-events: none）',
+    W.getComputedStyle(card).pointerEvents === 'none', W.getComputedStyle(card).pointerEvents);
+  card.classList.remove('busy');
+  ring.remove();
 } catch (e) {
   fail++;
   say('ERROR: ' + e.message + '\n' + (e.stack || ''));
