@@ -15,22 +15,37 @@ type Manager struct {
 	mu     sync.RWMutex
 	uci    *UCIEngine
 	simple *SimpleEngine
-	path   string // 皮卡鱼路径；空 = 未配置
+	path   string   // 皮卡鱼路径；空 = 未配置
+	diag   []string // 探测诊断：每个候选引擎的尝试结果（失败原因），供日志输出
 }
 
 // NewManager 探测皮卡鱼：优先 enginePath 参数，其次 PATH 中的 pikafish 与
-// 可执行文件同目录 engines/ 下。
+// 可执行文件同目录 engines/ 下。每个候选的失败原因记录进 Diagnostics，
+// "启动不了"类问题凭启动日志即可定位（文件缺失/权限/架构不符/杀软拦截/权重缺失）。
 func NewManager(enginePath string) *Manager {
 	m := &Manager{simple: NewSimpleEngine(), path: enginePath}
+	seen := map[string]bool{}
 	for _, cand := range candidatePaths(enginePath) {
-		if cand == "" {
+		if cand == "" || seen[cand] {
 			continue
 		}
-		if u, err := NewUCIEngine(cand); err == nil {
-			m.uci = u
-			m.path = cand
-			break
+		seen[cand] = true
+		if !fileExists(cand) {
+			// 不存在的候选（LookPath 命中的除外）静默跳过，避免日志噪音
+			continue
 		}
+		u, err := NewUCIEngine(cand)
+		if err != nil {
+			m.diag = append(m.diag, cand+" → "+err.Error())
+			continue
+		}
+		m.uci = u
+		m.path = cand
+		m.diag = append(m.diag, cand+" → 启动成功")
+		break
+	}
+	if m.uci == nil && len(m.diag) == 0 {
+		m.diag = append(m.diag, "未找到皮卡鱼可执行文件（期望位于可执行文件同目录或 engines/ 子目录）")
 	}
 	return m
 }
@@ -48,13 +63,32 @@ func candidatePaths(cfgPath string) []string {
 	}
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath2(exe)
-		for _, name := range []string{"pikafish", "Pikafish", "pikafish.exe", "Pikafish.exe"} {
+		// 顺序即优先级：标准名 → 低指令集兜底名（pikafish-sse41 等，供老 CPU 设备；
+		// avx2 专用版在这些设备上会因 Illegal instruction 直接崩溃）。逐个尝试直到握手成功。
+		for _, name := range []string{
+			"pikafish", "Pikafish", "pikafish.exe", "Pikafish.exe",
+			"pikafish-sse41", "pikafish-sse41.exe",
+			"pikafish-noavx", "pikafish-noavx.exe",
+			"pikafish-legacy", "pikafish-legacy.exe",
+		} {
 			list = append(list, dir+"/"+name)
 			// 兼容随包内置：可执行文件同目录下的 engines/ 子目录（README 文档约定）
 			list = append(list, dir+"/engines/"+name)
 		}
 	}
 	return list
+}
+
+// Diagnostics 返回引擎探测/运行诊断（每行一条），供启动日志与 /api/status 输出。
+func (m *Manager) Diagnostics() []string {
+	out := append([]string{}, m.diag...)
+	m.mu.RLock()
+	u := m.uci
+	m.mu.RUnlock()
+	if u != nil {
+		out = append(out, u.Diagnostics()...)
+	}
+	return out
 }
 
 func filepath2(p string) string {

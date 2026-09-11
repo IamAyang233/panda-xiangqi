@@ -56,6 +56,11 @@ func main() {
 	engines := engine.NewManager(cfg.EnginePath)
 	defer engines.Close()
 	log.Printf("引擎: %s（皮卡鱼可用: %v）", engines.EngineName(), engines.HasUCI())
+	// 引擎探测诊断：皮卡鱼没启动起来时，日志里能看到每个候选路径的失败原因
+	// （文件缺失 / 权限被拒 / 架构不符 / 握手超时 / 权重缺失），用户反馈时按图索骥。
+	for _, d := range engines.Diagnostics() {
+		log.Printf("引擎诊断: %s", d)
+	}
 
 	srv := &api.Server{
 		Sessions:      session.NewManager(),

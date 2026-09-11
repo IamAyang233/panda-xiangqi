@@ -85,6 +85,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"version":        AppVersion,
 		"engine":         s.Engines.EngineName(),
 		"uciAvailable":   s.Engines.HasUCI(),
+		"engineDiag":     s.Engines.Diagnostics(),
 		"puzzles":        s.Puzzles.Count(),
 		"sessions":       s.Sessions.Count(),
 		"gatewayUser":    username,

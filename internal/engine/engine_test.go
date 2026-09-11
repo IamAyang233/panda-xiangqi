@@ -2,6 +2,9 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,5 +140,56 @@ func TestEngineAvoidsLongCheck(t *testing.T) {
 	longCheck := (mv.String() == "e2d2" || mv.String() == "d2e2")
 	if longCheck {
 		t.Errorf("引擎选择了长将着法 %s（会被判负），应避开", mv)
+	}
+}
+
+// 坏引擎（非 UCI 程序）必须进诊断而不是静默失败：这是排查"皮卡鱼启动不了"的关键信息。
+func TestManagerDiagnosticsOnBrokenEngine(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "pikafish")
+	if err := os.WriteFile(p, []byte("definitely not a UCI engine\n"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(p)
+	if m.HasUCI() {
+		t.Skip("测试文件意外可执行且通过握手，跳过")
+	}
+	diags := m.Diagnostics()
+	if len(diags) == 0 {
+		t.Fatal("坏引擎应产生诊断信息，实际为空")
+	}
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d, "pikafish") && strings.Contains(d, "→") {
+			found = true
+			t.Logf("diag: %s", d)
+		}
+	}
+	if !found {
+		t.Fatalf("诊断应含候选路径与失败原因，实际: %v", diags)
+	}
+}
+
+// 缺失路径不应进诊断（避免噪音），存在但启动失败的才进。
+func TestManagerSkipsMissingCandidates(t *testing.T) {
+	m := NewManager(filepath.Join(t.TempDir(), "no-such-engine-file"))
+	if m.HasUCI() {
+		t.Fatal("不存在路径不应启动引擎")
+	}
+	for _, d := range m.Diagnostics() {
+		if strings.Contains(d, "no-such-engine-file") && strings.Contains(d, "→") {
+			t.Fatalf("不存在路径不应产生诊断条目: %v", m.Diagnostics())
+		}
+	}
+}
+
+// candidatePaths 必须包含低指令集兜底名（老 CPU 设备的 avx2 版会 Illegal instruction 崩溃）。
+func TestCandidatePathsIncludeLegacyFallbacks(t *testing.T) {
+	list := candidatePaths("")
+	joined := strings.Join(list, "\n")
+	for _, want := range []string{"pikafish-sse41", "pikafish-noavx", "pikafish-legacy"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("候选列表缺少兜底名 %s", want)
+		}
 	}
 }

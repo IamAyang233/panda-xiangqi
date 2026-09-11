@@ -23,24 +23,34 @@ import (
 //	9~13 → Skill 8~12, movetime 1~1.8s
 //	14~16 → Skill 20,  movetime 1~3s
 type UCIEngine struct {
-	name   string
-	path   string
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	lines  chan string
-	dead   chan struct{}
-	lastID int
+	name     string
+	path     string
+	mu       sync.Mutex
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	lines    chan string
+	errLines chan string
+	dead     chan struct{}
+	lastID   int
+	diag     []string // 启动/运行期诊断（stderr 摘录）
 }
 
 // NewUCIEngine 启动子进程并完成 uci / isready 握手。
 func NewUCIEngine(path string) (*UCIEngine, error) {
-	e := &UCIEngine{name: filepathBase(path), path: path, lines: make(chan string, 256)}
+	e := &UCIEngine{
+		name:     filepathBase(path),
+		path:     path,
+		lines:    make(chan string, 256),
+		errLines: make(chan string, 32),
+	}
 	if err := e.start(); err != nil {
 		return nil, err
 	}
 	return e, nil
 }
+
+// Diagnostics 返回引擎启动/运行期诊断信息（stderr 摘录等），供上层日志输出。
+func (e *UCIEngine) Diagnostics() []string { return e.diag }
 
 func filepathBase(p string) string {
 	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
@@ -60,9 +70,15 @@ func fileExists(p string) bool {
 func (e *UCIEngine) start() error {
 	// fnpack 等打包器不会保留可执行位（打包为 0o666），必须在拉起子进程前补回 +x，
 	// 否则 os/exec 在 Start 时会因权限不足直接失败（握手逻辑根本走不到）。
-	_ = os.Chmod(e.path, 0o755)
+	if err := os.Chmod(e.path, 0o755); err != nil {
+		return fmt.Errorf("设置引擎可执行权限失败 %s: %w", e.path, err)
+	}
 
+	// 工作目录设为引擎所在目录：皮卡鱼默认在 cwd 找 pikafish.nnue（EvalFile 相对路径），
+	// fnOS 启动时 cwd=应用根而引擎在 app/server/engines/，不设 Dir 会导致引擎按相对路径
+	// 找不到权重（部分版本缺权重直接退出，uciok 等不到 → 启动失败）。
 	cmd := exec.Command(e.path)
+	cmd.Dir = filepath2(e.path)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -71,11 +87,28 @@ func (e *UCIEngine) start() error {
 	if err != nil {
 		return err
 	}
+	stderr, _ := cmd.StderrPipe()
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动引擎失败 %s: %w", e.path, err)
+		// 细分常见失败原因，便于用户自助排查（Windows 杀软拦截/架构不符/路径问题）
+		return fmt.Errorf("启动引擎失败 %s: %w（若反复出现：Windows 请检查杀毒软件是否拦截未签名 exe；"+
+			"Linux 请确认架构匹配、挂载点未含 noexec）", e.path, err)
 	}
 	e.cmd, e.stdin = cmd, stdin
 	e.dead = make(chan struct{})
+
+	// 引擎 stderr 单独收进诊断通道（皮卡鱼把加载失败原因写在 stderr）
+	if stderr != nil {
+		go func() {
+			sc := bufio.NewScanner(stderr)
+			for sc.Scan() {
+				select {
+				case e.errLines <- sc.Text():
+				case <-e.dead:
+					return
+				}
+			}
+		}()
+	}
 
 	// 单读 goroutine：把引擎全部输出泵入 lines 通道
 	go func() {
@@ -92,22 +125,52 @@ func (e *UCIEngine) start() error {
 	}()
 
 	e.send("uci")
-	if err := e.expect("uciok", 5*time.Second); err != nil {
+	// uciok：纯协议握手不加载权重，10s 覆盖最慢设备的进程冷启动
+	if err := e.expect("uciok", 10*time.Second); err != nil {
 		e.kill()
-		return err
+		return fmt.Errorf("%w（引擎 stderr: %s）", err, e.lastStderr())
 	}
 
 	// 指向随包内置的 NNUE 权重文件，避免引擎因找不到 pikafish.nnue 而退出。
 	// 该文件与引擎二进制同目录（engines/pikafish.nnue）。
 	if nnue := filepath2(e.path) + "/pikafish.nnue"; fileExists(nnue) {
 		e.send("setoption name EvalFile value " + nnue)
+	} else {
+		// cwd 已是引擎目录，皮卡鱼会按相对路径 pikafish.nnue 自动找到；都没有则告警
+		e.reportStderr()
 	}
 	e.send("isready")
-	if err := e.expect("readyok", 5*time.Second); err != nil {
+	// readyok：此刻引擎加载 53MB NNUE 权重，慢盘（机械/NFS/加密卷）可能明显超过 5s，
+	// 原 5s 超时会误杀健康引擎 —— 放宽到 60s。
+	if err := e.expect("readyok", 60*time.Second); err != nil {
 		e.kill()
-		return err
+		return fmt.Errorf("%w（引擎 stderr: %s）", err, e.lastStderr())
 	}
 	return nil
+}
+
+// reportStderr 把引擎 stderr 里的最近内容记入诊断（缺权重/指令集不兼容等线索）。
+func (e *UCIEngine) reportStderr() {
+	if s := e.lastStderr(); s != "" {
+		e.diag = append(e.diag, "引擎输出: "+s)
+	}
+}
+
+// lastStderr 返回 stderr 缓冲的最近一行（多行拼接，限长）。
+func (e *UCIEngine) lastStderr() string {
+	select {
+	case s := <-e.errLines:
+		e.diag = append(e.diag, s)
+		if len(e.diag) > 5 {
+			e.diag = e.diag[len(e.diag)-5:]
+		}
+		return s
+	default:
+		if len(e.diag) > 0 {
+			return e.diag[len(e.diag)-1]
+		}
+		return ""
+	}
 }
 
 func (e *UCIEngine) send(line string) {
