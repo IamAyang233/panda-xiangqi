@@ -9,6 +9,10 @@ import { positionOf, nameOf } from './puzzles.js';
 
 const $ = (id) => document.getElementById(id);
 
+// 象棋初始满盘局面。只用于「确实需要一块干净的空白棋盘」的场景：
+// 从大厅/残局列表首次进入对局时，棋盘上可能还留着上一局的残影。
+const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w';
+
 const reasonText = {
   checkmate: '将死', stalemate: '困毙', resign: '认输',
   repetition: '三次重复局面', long_check: '长将判负', '60_moves': '六十回合未吃子', insufficient: '双方无进攻子力',
@@ -83,6 +87,7 @@ export class GameScreen {
   exit() {
     this.conn?.close();
     this.conn = null;
+    this._setBoardLoading(false); // 切关等待中途退出时别把遮罩留在那儿
     store.clearCurrentGame();
     // 逐层返回：残局对局回到残局列表（保留筛选与进度），其余模式回大厅
     const back = this.mode === 'puzzle' ? 'puzzles' : 'lobby';
@@ -92,6 +97,12 @@ export class GameScreen {
 
   // start(mode, opts) 创建对局并连接。opts: {side, level, puzzleId, onExit}
   async start(mode, opts = {}) {
+    // 残局模式一律不画「初始满盘」：残局从来不是满盘局面，先画满盘再换成残局
+    // 就是用户看到的「先显示全部棋子，再显示残局棋子」那一闪。
+    // 改为保留当前棋盘（首次进入时是空画布）并盖载入遮罩，等服务器回送 state
+    // 时一次性替换；期间禁用切关按钮防连点。
+    const maskBoard = mode === 'puzzle';
+
     this.mode = mode;
     this.startOpts = opts;
     this.gameOver = false;
@@ -130,7 +141,16 @@ export class GameScreen {
     // 若只依赖 ResizeObserver 在部分嵌入式 WebView 中可能不触发或延迟触发，
     // 导致棋子以 NaN/错误坐标绘制（表现为“棋子位置不对 / 不显示”）。显式重算一次几何。
     this.renderer.resize();
-    this.renderer.setFEN('rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w');
+    if (maskBoard) {
+      // 顺手清掉上一关的选中/最后一步/将军高亮，免得旧标记残留
+      this.renderer.setSelected(null, []);
+      this.renderer.setLastMove(null, null);
+      this.renderer.checkSide = null;
+      this.renderer.dirty = true;
+      this._setBoardLoading(true);
+    } else {
+      this.renderer.setFEN(INITIAL_FEN);
+    }
     this._setupUI(mode, opts);
 
     this.conn?.close();
@@ -139,7 +159,23 @@ export class GameScreen {
     try {
       await this.conn.connect();
     } catch {
+      this._setBoardLoading(false); // 连不上就别把棋盘一直盖着
       toast('连接对局服务失败', true);
+    }
+  }
+
+  // 棋盘载入遮罩：切关/重连期间盖住旧局面，等新 state 一次性替换。
+  // 同时禁用「上一关/下一关」防止连点抢跑（旧连接会被反复关闭）。
+  _setBoardLoading(on) {
+    const el = $('board-loading');
+    if (el) {
+      el.hidden = !on;
+      // 重放淡入动画：重新显示时重计延迟，否则会直接沿用上次的动画终态（立即全黑）
+      if (on) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
+    }
+    for (const id of ['btn-prev-puzzle', 'btn-next-puzzle']) {
+      const b = $(id);
+      if (b) b.disabled = !!on;
     }
   }
 
@@ -164,7 +200,8 @@ export class GameScreen {
     this.renderer.setFlipped(this.humanSide === 'black');
     showScreen('game');
     this.renderer.resize();
-    this.renderer.setFEN('rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w');
+    // 恢复对局也不给「初始满盘」中间态（刷新后同样会一闪），直接盖遮罩等 state。
+    this._setBoardLoading(true);
     this._setupUI(this.mode, this.startOpts);
 
     this.conn?.close();
@@ -182,6 +219,7 @@ export class GameScreen {
       await this.conn.connect();
     } catch {
       // 棋局会话可能已过期（服务端保留 2 小时），视为无存档返回大厅。
+      this._setBoardLoading(false);
       store.clearCurrentGame();
       showScreen('lobby');
       return false;
@@ -274,6 +312,7 @@ export class GameScreen {
 
   _applyState(m) {
     if (m.status === 'over') store.clearCurrentGame(); // 重连到已结束的对局：不再恢复
+    this._setBoardLoading(false); // 新局面到达：撤掉载入遮罩（切关/恢复的等待到此结束）
     this._turn = m.turn;
     this.renderer.setFEN(m.fen);
     this.renderer.setLastMove(m.lastMove?.from, m.lastMove?.to);

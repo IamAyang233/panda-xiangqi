@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>载入动画自检 · 熊猫象棋</title>
+<style>body{margin:0;padding:12px;background:#1a1e16;color:#e8dcc4;font:13px/1.7 Consolas,monospace}
+h1{font-size:14px;color:#ffd166;margin:0 0 6px}pre{margin:0;white-space:pre-wrap}
+iframe{width:900px;height:640px;border:1px solid #4a3d2c;border-radius:6px;margin-top:8px}</style>
+</head>
+<body>
+<h1>载入动画自检（切关不闪满盘 + 载入指示器）</h1>
+<pre id="out">running…</pre>
+<iframe id="app" src="./"></iframe>
+<script type="module">
+// 同源 iframe 驱动真实应用，逐帧采样棋盘棋子数：
+// 初始满盘 32 子，残局远少于 32 —— 只要切换过程中任何一帧出现 32，
+// 就说明「先显示全部棋子再显示残局棋子」的闪烁还在。
+const log = [];
+const out = document.getElementById('out');
+const say = (s = '') => { log.push(s); out.textContent = log.join('\n'); };
+
+let pass = 0, fail = 0;
+const ok = (n, c, extra = '') => {
+  if (c) { pass++; say('  [OK] ' + n); } else { fail++; say('  [NG] ' + n + (extra ? ' —— ' + extra : '')); }
+};
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const frame = document.getElementById('app');
+await new Promise(r => { frame.onload = r; });
+const W = frame.contentWindow, D = frame.contentDocument;
+const q = (sel) => D.querySelector(sel);
+const vis = (id) => { const e = D.getElementById(id); return e && !e.hidden; };
+const txt = (id) => (D.getElementById(id)?.textContent || '').trim();
+const G = () => W.__qijing?.game;
+const boardSize = () => { const b = G()?.renderer?.board; return b && typeof b.size === 'number' ? b.size : -1; };
+const loadingShown = () => !D.getElementById('board-loading').hidden;
+
+async function waitFor(fn, ms = 12000, label = '') {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try { if (fn()) return true; } catch { /* 继续等 */ }
+    await sleep(80);
+  }
+  say(`  （等待超时${label ? ': ' + label : ''}）`);
+  return false;
+}
+
+// 逐帧采样（每帧记录棋子数 / 遮罩状态 / 当前关 id）
+let sampling = false, samples = [];
+function startSample() {
+  samples = [];
+  sampling = true;
+  const tick = () => {
+    if (!sampling) return;
+    samples.push({ n: boardSize(), load: loadingShown(), id: G()?.puzzleId });
+    W.requestAnimationFrame(tick);
+  };
+  W.requestAnimationFrame(tick);
+}
+function stopSample() { sampling = false; return samples; }
+const sizesSeen = () => [...new Set(samples.map(s => s.n))].join(',');
+
+async function waitStable(fn, ms = 12000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (fn()) { await sleep(220); if (fn()) return true; }
+    await sleep(80);
+  }
+  return false;
+}
+
+try {
+  say('【0】应用启动');
+  ok('大厅可见', await waitFor(() => vis('screen-lobby') && q('.mode-card'), 15000, 'lobby'));
+
+  say('\n【1】载入指示器已就位');
+  const bl = D.getElementById('board-loading');
+  ok('棋盘遮罩存在且在棋盘容器内', !!bl && !!bl.closest('.board-wrap'));
+  ok('遮罩含旋转金环', !!bl.querySelector('.loader-ring'));
+  ok('遮罩含中心棋子', (bl.querySelector('.loader-piece')?.textContent || '') === '象');
+  ok('遮罩初始隐藏', bl.hidden);
+  ok('按钮等待样式已定义（.ring 规则存在）',
+    [...D.styleSheets].some((ss) => { try { return [...ss.cssRules].some((r) => (r.selectorText || '').includes('.busy')); } catch { return false; } }));
+
+  say('\n【2】大厅 → 残局列表');
+  q('.mode-card[data-mode="puzzle"]').click();
+  ok('进入残局列表', await waitFor(() => vis('screen-puzzles'), 5000, 'puzzles'));
+  ok('残局卡片加载完成', await waitFor(() => q('.puzzle-card'), 15000, 'cards'));
+
+  say('\n【3】残局列表 → 对局（首次进入不应闪满盘）');
+  startSample();
+  q('.puzzle-card').click();
+  const gotPuzzle = await waitFor(() => G()?.puzzle, 15000, 'puzzle state');
+  await waitStable(() => !loadingShown());
+  const s1 = stopSample();
+  const id0 = G()?.puzzleId;
+  ok('进入对局并拿到残局局面', gotPuzzle && !!id0);
+  ok('棋盘为残局局面（棋子数 < 32）', boardSize() > 0 && boardSize() < 32, `size=${boardSize()}`);
+  ok('采样期间从未出现满盘 32 子', !s1.some((s) => s.n === 32), `出现过的棋子数: ${sizesSeen()}`);
+  ok('遮罩已收起', !loadingShown());
+
+  say('\n【4】点「下一关」：切换过程不应闪满盘');
+  startSample();
+  D.getElementById('btn-next-puzzle').click();
+  const moved = await waitFor(() => G()?.puzzleId && G().puzzleId !== id0, 15000, 'next');
+  await waitStable(() => !loadingShown());
+  const s2 = stopSample();
+  ok('已切到下一关', moved, `id0=${id0} now=${G()?.puzzleId}`);
+  ok('切换全程从未出现满盘 32 子', !s2.some((s) => s.n === 32), `出现过的棋子数: ${sizesSeen()}`);
+  ok('切换过程中保留了旧局面（不是空棋盘中间态）',
+    s2.length > 1 && s2[0].n > 0 && s2[0].n < 32, `首帧 size=${s2[0]?.n} 帧数=${s2.length}`);
+  ok('新关目标栏已更新', /第\s*\d+\s*\/\s*\d+\s*关/.test(txt('puzzle-goal')), txt('puzzle-goal').slice(0, 40));
+  ok('遮罩已收起', !loadingShown());
+
+  say('\n【5】点「上一关」：同样不闪满盘');
+  startSample();
+  D.getElementById('btn-prev-puzzle').click();
+  const back = await waitFor(() => G()?.puzzleId === id0, 15000, 'prev');
+  await waitStable(() => !loadingShown());
+  const s3 = stopSample();
+  ok('已切回原关', back, `now=${G()?.puzzleId}`);
+  ok('切换全程从未出现满盘 32 子', !s3.some((s) => s.n === 32), `出现过的棋子数: ${sizesSeen()}`);
+
+  say('\n【6】逐层返回：对局 → 残局列表 → 大厅');
+  D.getElementById('btn-home').click();
+  ok('对局 → 残局列表（逐层返回）', await waitFor(() => vis('screen-puzzles') && !vis('screen-lobby'), 6000, 'puzzles'));
+  D.getElementById('btn-home').click();
+  ok('残局列表 → 大厅', await waitFor(() => vis('screen-lobby') && !vis('screen-puzzles'), 6000, 'lobby'));
+
+  say('\n【7】人机对战：开始按钮的等待状态');
+  q('.mode-card[data-mode="engine"]').click();
+  ok('开局设置弹窗打开', await waitFor(() => vis('setup-overlay'), 4000, 'setup'));
+  D.getElementById('setup-ok').click();
+  const busySeen = await waitFor(() => D.getElementById('setup-ok')?.classList.contains('busy'), 3000, 'busy');
+  const ringSeen = !!D.querySelector('#setup-ok .ring');
+  ok('「开始对局」进入等待态（busy + 小环）', busySeen && ringSeen, `busy=${busySeen} ring=${ringSeen}`);
+  ok('进入对局页', await waitFor(() => vis('screen-game'), 12000, 'game'));
+  ok('进入后等待态已清除', await waitStable(() => !D.getElementById('setup-ok').classList.contains('busy')));
+  ok('弹窗已收起', !vis('setup-overlay'));
+  ok('人机对战开局为满盘 32 子（正常初始局面）', await waitStable(() => boardSize() === 32), `size=${boardSize()}`);
+  ok('满盘模式下遮罩已收起', !loadingShown());
+} catch (e) {
+  fail++;
+  say('ERROR: ' + e.message + '\n' + (e.stack || ''));
+}
+
+say(`\n结果：通过 ${pass}，失败 ${fail}`);
+say('RESULT: ' + (fail === 0 ? 'ALL_OK' : 'CHECK'));
+try {
+  await fetch('http://127.0.0.1:38111/report', { method: 'POST', body: log.join('\n') });
+} catch { /* 接收端未起则忽略 */ }
+</script>
+</body>
+</html>

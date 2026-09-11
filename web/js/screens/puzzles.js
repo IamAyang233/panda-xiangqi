@@ -22,7 +22,16 @@ export async function initPuzzles(handler) {
   await refresh();
 }
 
+// 首次打开列表（列表还是空的）时给个载入反馈；已有卡片就不清空，
+// 因为退出对局返回也会调 refresh()，那时清空会闪一下。
+function showListLoading() {
+  const grid = $('puzzle-grid');
+  if (grid.children.length) return;
+  grid.innerHTML = '<div class="list-loading"><span class="ring"></span>正在载入残局…</div>';
+}
+
 export async function refresh() {
+  showListLoading();
   try {
     all = await listPuzzles();
   } catch {

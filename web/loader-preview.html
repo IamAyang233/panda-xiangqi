@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>载入动画预览 · 熊猫象棋</title>
+<link rel="stylesheet" href="./css/main.css">
+<style>
+  body { display: block; padding: 26px; overflow: auto; }
+  h1 { font-size: 17px; color: var(--gold); }
+  .sub { color: var(--text-dim); font-size: 13px; margin: 6px 0 22px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .demo { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .demo h2 { font-size: 13px; color: var(--gold-soft); font-weight: 600; margin-bottom: 12px; }
+  .demo .note { color: var(--text-dim); font-size: 12px; margin-top: 10px; max-width: 260px; }
+  /* 一块棋盘木色，用于展示棋盘上的载入遮罩 */
+  .board-demo {
+    position: relative; width: 190px; height: 230px; border-radius: 12px; overflow: hidden;
+    background: linear-gradient(160deg, #e9d0a0, #d8b877); box-shadow: var(--shadow);
+  }
+  .board-demo .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(122, 84, 34, 0.26) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(122, 84, 34, 0.26) 1px, transparent 1px);
+    background-size: 23px 23px;
+  }
+  /* 预览用：让遮罩常亮，不套用「延迟 0.16s 才出现」的线上逻辑 */
+  .board-demo #board-loading { animation: none; opacity: 1; }
+</style>
+</head>
+<body>
+<h1>载入动画预览</h1>
+<p class="sub">统一使用「旋转金环 + 中心棋子」，深浅两处尺寸各一；全部为 CSS，无图片、无 emoji。</p>
+
+<div class="row">
+  <div class="demo">
+    <h2>1 · 棋盘载入遮罩（大号）</h2>
+    <div class="board-demo">
+      <div class="grid"></div>
+      <div id="board-loading">
+        <div class="loader"><div class="loader-ring"></div><div class="loader-piece">象</div></div>
+      </div>
+    </div>
+    <p class="note">切关 / 重连时盖住旧局面，等新局面到位一次性替换。线上会延迟 0.16 秒才淡入——本地切换够快就根本不出现。</p>
+  </div>
+
+  <div class="demo">
+    <h2>2 · 按钮等待态（小号环）</h2>
+    <button class="ctl-btn primary busy" style="border-color:var(--gold-soft);color:var(--gold)">
+      开始对局<span class="ring busy-ring"></span>
+    </button>
+    <p class="note">创建对局有网络往返，按钮进入等待态并禁用点击，避免以为没点上而反复点。</p>
+  </div>
+
+  <div class="demo">
+    <h2>3 · 列表加载行</h2>
+    <div class="puzzle-grid" style="display:grid;grid-template-columns:1fr;min-width:220px">
+      <div class="list-loading"><span class="ring"></span>正在载入残局…</div>
+    </div>
+    <p class="note">残局列表首次拉取时占位，已有卡片时不清空（退出对局返回会复用同一刷新）。</p>
+  </div>
+</div>
+</body>
+</html>

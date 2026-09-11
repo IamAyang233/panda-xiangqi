@@ -23,7 +23,7 @@ const say = (s = '') => { log.push(s); out.textContent = log.join('\n'); };
 
 let pass = 0, fail = 0;
 const ok = (n, c, extra = '') => {
-  if (c) { pass++; say('  ✅ ' + n); } else { fail++; say('  ❌ ' + n + (extra ? ' —— ' + extra : '')); }
+  if (c) { pass++; say('  [OK] ' + n); } else { fail++; say('  [NG] ' + n + (extra ? ' —— ' + extra : '')); }
 };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

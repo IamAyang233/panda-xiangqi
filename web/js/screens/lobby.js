@@ -6,6 +6,20 @@ import { api } from '../net.js';
 
 const $ = (id) => document.getElementById(id);
 
+// 等待中的元素：禁用点击并挂一个小转环（创建对局有网络往返，空等会让人以为没点上）
+function setBusy(el, on) {
+  if (!el) return;
+  el.classList.toggle('busy', on);
+  const old = el.querySelector('.busy-ring');
+  if (on && !old) {
+    const r = document.createElement('span');
+    r.className = 'ring busy-ring';
+    el.appendChild(r);
+  } else if (!on) {
+    old?.remove();
+  }
+}
+
 const levelNames = [
   [1, '入门'], [2, '初学'], [3, '业余初级'], [4, '业余三级'],
   [5, '业余五级'], [6, '业余七级'], [7, '业余九级'], [8, '县市级'],
@@ -15,20 +29,25 @@ const levelNames = [
 
 export function initLobby(onStart) {
   document.querySelectorAll('.mode-card').forEach((card) => {
-    card.onclick = () => {
+    card.onclick = async () => {
       sfx.play('button');
       const mode = card.dataset.mode;
       if (mode === 'puzzle') {
         showScreen('puzzles');
         return;
       }
-      if (mode === 'local_2p') {
-        onStart('local_2p', {});
-        return;
-      }
       if (mode === 'pony') {
         // 小马冲冲：独立单页小游戏（共享主题/音效设置，顶部可返回大厅）
         location.href = 'pony-rush.html';
+        return;
+      }
+      if (mode === 'local_2p') {
+        setBusy(card, true);
+        try {
+          await onStart('local_2p', {});
+        } finally {
+          setBusy(card, false);
+        }
         return;
       }
       openSetup(mode, onStart);
@@ -39,7 +58,7 @@ export function initLobby(onStart) {
 function openSetup(mode, onStart) {
   const isLLM = mode === 'llm';
   if (isLLM && !store.llm.model) {
-    toast('首次使用大模型对弈，请先在右上角 ⚙️ 设置中填写 API 配置', true, 4200);
+    toast('首次使用大模型对弈，请先在右上角设置中填写 API 配置', true, 4200);
     document.getElementById('settings-overlay').hidden = false;
     return;
   }
@@ -85,9 +104,16 @@ function openSetup(mode, onStart) {
     };
   });
   $('setup-cancel').onclick = () => { overlay.hidden = true; };
-  $('setup-ok').onclick = () => {
+  $('setup-ok').onclick = async () => {
     sfx.play('button');
-    overlay.hidden = true;
-    onStart(mode, { side, level });
+    const okBtn = $('setup-ok');
+    setBusy(okBtn, true);
+    try {
+      // 保持弹窗开着显示转环，直到真正进入对局（或失败）再收起
+      await onStart(mode, { side, level });
+    } finally {
+      setBusy(okBtn, false);
+      overlay.hidden = true;
+    }
   };
 }

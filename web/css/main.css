@@ -133,6 +133,56 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   background: radial-gradient(ellipse at center, transparent 40%, rgba(224,60,40,0.5) 100%);
 }
 #check-flash.on { animation: check-pulse 0.9s ease-out; }
+
+/* ---------- 载入指示器 ----------
+   .loader：旋转金环 + 中心棋子（大号，用于棋盘遮罩）
+   .ring ：同款细环（小号，用于按钮/列表行内） */
+.loader { position: relative; display: grid; place-items: center; width: 64px; height: 64px; }
+.loader-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid rgba(212, 169, 65, 0.14);
+  border-top-color: var(--gold);
+  border-right-color: rgba(212, 169, 65, 0.5);
+  animation: spin 0.9s linear infinite;
+}
+.loader-piece {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  font-family: KaiTi, STKaiti, SimSun, serif; font-size: 21px; font-weight: 700; line-height: 1;
+  color: #7a2b18;
+  background: radial-gradient(circle at 34% 28%, #f6ecd6, #ddc9a0 68%, #b79c6c);
+  box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.18), 0 3px 8px rgba(0, 0, 0, 0.4);
+  animation: loader-breathe 1.6s ease-in-out infinite;
+}
+.loader.sm { width: 36px; height: 36px; }
+.loader.sm .loader-piece { width: 24px; height: 24px; font-size: 13px; }
+.ring {
+  display: inline-block; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid rgba(212, 169, 65, 0.2); border-top-color: var(--gold);
+  animation: spin 0.8s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes loader-breathe { 0%, 100% { transform: scale(0.94); } 50% { transform: scale(1.05); } }
+
+/* 等待中的按钮/卡片：禁用点击 + 右侧小环（右侧留出环的位置，别压住文字） */
+.busy { position: relative; pointer-events: none; }
+.busy > .ring { position: absolute; right: 11px; top: 50%; margin-top: -8px; }
+.ctl-btn.busy, .mode-card.busy { padding-right: 36px; }
+
+/* 列表加载行 */
+.list-loading {
+  display: flex; align-items: center; gap: 10px; padding: 26px 4px;
+  color: var(--text-dim); grid-column: 1 / -1;
+}
+
+/* 棋盘载入遮罩：切关/重连时盖住旧局面，等新 state 到达一次性替换。
+   故意延迟 0.16s 才淡入——本地切换通常几十毫秒，快到根本不该看见遮罩，
+   否则遮罩本身就成了新的闪烁。 */
+#board-loading {
+  position: absolute; inset: 0; z-index: 3; display: grid; place-items: center;
+  background: rgba(23, 19, 14, 0.62); border-radius: 12px; pointer-events: none;
+  opacity: 0; animation: board-loading-in 0.18s ease 0.16s forwards;
+}
+@keyframes board-loading-in { to { opacity: 1; } }
 @keyframes check-pulse { 0% {opacity: 0;} 25% {opacity: 1;} 100% {opacity: 0;} }
 
 .player-bar {
