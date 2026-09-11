@@ -1,3 +1,13 @@
 #!/bin/bash
-# 熊猫象棋生命周期钩子（占位）：无需额外安装/升级/卸载/配置处理。
+# 熊猫象棋生命周期钩子：安装/升级后补回 fnpack 丢失的可执行位。
+#
+# fnpack 打包把所有文件写成 0666（无可执行位），fnOS 又把应用以专用用户
+# （config/privilege → panda_xiangqi）运行：应用自己 chmod 引擎文件时，
+# 若文件属主是 root 会 EPERM 失败 → 引擎 exec 失败 →「皮卡鱼可用: false」。
+# 启动脚本只补主程序，引擎没补正是该问题的主因；这里在安装/升级阶段
+# （root 上下文）一次性补齐。
+if [ -n "${TRIM_APPDEST:-}" ] && [ -d "${TRIM_APPDEST}/server" ]; then
+  chmod 0755 "${TRIM_APPDEST}/server/panda-xiangqi" 2>/dev/null || true
+  chmod 0755 "${TRIM_APPDEST}/server/engines/pikafish" 2>/dev/null || true
+fi
 exit 0

@@ -64,7 +64,9 @@ fpk:
 		cp $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)/app/server/engines/NNUE-License.md; \
 		echo "[fpk] 内置皮卡鱼(x86_64) 已嵌入"; \
 	else \
-		echo "[fpk] 未找到 dist-engines，跳过内置引擎"; \
+		echo "[fpk] 错误：未找到 dist-engines（$(ENGINE_X86) / $(ENGINE_NNUE)），拒绝打出无引擎的包。"; \
+		echo "[fpk]       dist-engines/ 已被 gitignore，换机器构建时需重新放置官方引擎文件后再试。"; \
+		exit 1; \
 	fi
 	./fnpack.exe build --directory $(FNK_PKG)
 	mv panda-xiangqi.fpk panda-xiangqi_$(VERSION)_x86.fpk
@@ -85,7 +87,8 @@ fpk-arm:
 		cp $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)-arm/app/server/engines/NNUE-License.md; \
 		echo "[fpk-arm] 内置皮卡鱼(aarch64) 已嵌入"; \
 	else \
-		echo "[fpk-arm] 未找到 dist-engines，跳过内置引擎"; \
+		echo "[fpk-arm] 错误：未找到 dist-engines（$(ENGINE_ARM) / $(ENGINE_NNUE)），拒绝打出无引擎的包。"; \
+		exit 1; \
 	fi
 	sed -i 's/^platform=x86$$/platform=arm/' $(FNK_PKG)-arm/manifest
 	@if [ -f panda-xiangqi_$(VERSION)_x86.fpk ]; then mv panda-xiangqi_$(VERSION)_x86.fpk panda-xiangqi_$(VERSION)_x86.fpk.bak; fi

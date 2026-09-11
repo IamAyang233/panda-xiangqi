@@ -44,7 +44,11 @@ start_app() {
   fi
 
   # fnpack 打包会丢失可执行位，补回 +x
+  # 引擎同样要补：应用以专用用户运行时，若文件属主是 root，应用自己 chmod 会
+  # EPERM 失败 → 引擎 exec 失败 →「皮卡鱼可用: false」。此处（root 上下文）
+  # 顺手把引擎一并补上，是大多数设备上引擎起不来的真正原因。
   chmod 0755 "$BINARY" 2>/dev/null || true
+  chmod 0755 "$APP_DIR"/engines/pikafish* 2>/dev/null || true
 
   if [ ! -x "$BINARY" ]; then
     echo "缺少可执行文件或权限不足: $BINARY" > "$TRIM_TEMP_LOGFILE"
