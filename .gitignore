@@ -48,6 +48,9 @@ panda-xiangqi_*.exe~
 .diag_check_palace.mjs
 TEST_REPORT_*.md
 
+# 本地测试环境指引（含内网 IP / 代理地址，勿入库）
+TEST_VM_GUIDE.md
+
 # 旧题库备份（已被 canju12 3577 题替换，勿入库）
 internal/_old_puzzles_backup/
 
