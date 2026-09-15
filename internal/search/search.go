@@ -9,11 +9,24 @@
 package search
 
 import (
+	"os"
 	"sync/atomic"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 	"github.com/IamAyang233/panda-xiangqi/internal/nnue"
 )
+
+// seeEnabled 由环境变量 QIJING_SEE=on 启用静态搜索里的坏吃子剪枝。
+//
+// **默认关闭。** 实现已完成、也有朴素对拍兜底（见 internal/game/see_ref_test.go），
+// 但棋力收益还没拿到数据支持：20 题残局战术的命中率在开/关下分别是
+// 13/19/14/16 与 18/18/16/15，均值 15.5 vs 16.75 —— 方差大、且开着反而略低，
+// 样本量不足以判定有益。稳妥起见默认不开，等有更大样本、或修掉对拍里
+// 剩余 0.46% 的分歧之后再决定。
+//
+// 它同时是运维开关：怀疑搜索有异常时可以关掉它看现象是否消失。
+// 关掉只会少剪（变慢），不会剪掉本该保留的吃子。
+var seeEnabled = os.Getenv("QIJING_SEE") == "on"
 
 // 分值常量。单位与 C++ 的 Value 一致。
 const (
@@ -100,6 +113,7 @@ type Searcher struct {
 	nullMoves int64
 	noNull    bool
 	noForward bool // 关闭前向剪枝（reverse futility / futility / LMP），供对照实验
+	noSEE     bool // 关闭静态搜索里的坏吃子剪枝，供对照实验
 
 	// 排序质量统计。走法排序的作用是让「最好的着法尽早被搜到」，
 	// 因为 alpha-beta 的第一个着法能定下 alpha，越早出现高分着法，
@@ -226,6 +240,9 @@ func (s *Searcher) DisableNullMove() { s.noNull = true }
 // 「这个分支不可能更好」并直接跳过，因此会改变搜索结果换取速度。
 // 对照实验需要这个开关来量出它们各自的收益。
 func (s *Searcher) DisableForwardPruning() { s.noForward = true }
+
+// DisableSEE 关闭静态搜索里的坏吃子剪枝，供对照实验使用。
+func (s *Searcher) DisableSEE() { s.noSEE = true }
 
 // ttProbe / ttStore 在置换表被禁用时退化为空操作。
 func (s *Searcher) ttProbe(key uint64) (ttEntry, bool) {
@@ -680,11 +697,21 @@ func (s *Searcher) quiesce(p *game.Position, alpha, beta, ply int) int {
 		captures := moves[:0]
 		maxVictim := 0
 		for _, m := range moves {
-			if v := p.PieceAt90(int(m.To)); v != game.Empty {
+			v := p.PieceAt90(int(m.To))
+			if v == game.Empty {
+				continue
+			}
+			// 坏吃子剪枝：静态交换评估为亏的吃子直接丢弃 —— 它只会白送子，
+			// 展开它等于把搜索预算花在确定的损失上。
+			//
+			// 判据用 SeeGE(...,0) 而不是精确的 SEE 值：只需知道亏不亏。
+			// 注意 maxVictim 仍统计全部吃子（含被剪掉的那些），delta pruning
+			// 的意图是「这一格最值钱能有多少」，与留不留它无关。
+			if !seeEnabled || s.noSEE || p.SeeGE(int(m.From), int(m.To), 0) {
 				captures = append(captures, m)
-				if val := pieceValue[game.TypeOf(v)]; val > maxVictim {
-					maxVictim = val
-				}
+			}
+			if val := pieceValue[game.TypeOf(v)]; val > maxVictim {
+				maxVictim = val
 			}
 		}
 		moves = captures
