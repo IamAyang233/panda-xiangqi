@@ -80,7 +80,7 @@ func TestActivationRangeSafe(t *testing.T) {
 
 	fens := []string{
 		game.InitialFEN,
-		"2bak1b2/4a4/4k4/p1p1p3p/6p2/2P6/P3P1P1P/1C2C4/9/RNBAKABNR w - - 0 1",
+		"2bak1b2/4a4/4b4/p1p1p3p/6p2/2P6/P3P1P1P/1C2C4/9/RNBAKABNR w - - 0 1",
 		"3ak4/4a4/4b4/9/9/9/4P4/9/4R4/4K4 w - - 0 1",
 	}
 	maxSeen := byte(0)

@@ -67,7 +67,7 @@ var matchFENs = []struct {
 }{
 	{"初始局面", game.InitialFEN},
 	{"开局（中炮对屏风马型）", "r1ba1a3/4kn3/2n1b4/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"},
-	{"中局（子力互缠）", "2bak1b2/4a4/4k4/p1p1p3p/6p2/2P6/P3P1P1P/1C2C4/9/RNBAKABNR w - - 0 1"},
+	{"中局（子力互缠）", "2bak1b2/4a4/4b4/p1p1p3p/6p2/2P6/P3P1P1P/1C2C4/9/RNBAKABNR w - - 0 1"},
 	{"中局（车炮对车马）", "3ak1b2/4a4/4b4/p1p1p3p/9/2P6/P3P1P1P/1C2C1R2/9/2BAKABN1 w - - 0 1"},
 	{"残局（车兵对士象全）", "3ak4/4a4/4b4/9/9/9/4P4/9/4R4/4K4 w - - 0 1"},
 	{"残局（双车对车士）", "4k4/4a4/9/9/9/9/9/9/2R1R4/3K5 w - - 0 1"},

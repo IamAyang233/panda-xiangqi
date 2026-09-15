@@ -38,6 +38,12 @@ func genMovesRef(p *Position, side int) []Move {
 				}
 			}
 		case Elephant:
+			// 象不可能站在对岸，这类非法摆放视为无着可走 —— 与预计算攻击表
+			// 一致（表要求起点与落点都在己方半场，才能正反查表互为逆，
+			// 见 buildElephant 的说明）。
+			if !ownSide(side, r) {
+				continue
+			}
 			for _, d := range [4][2]int{{2, 2}, {2, -2}, {-2, 2}, {-2, -2}} {
 				to := step(sq, d[0], d[1])
 				if to < 0 {

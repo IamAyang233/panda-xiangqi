@@ -1,6 +1,9 @@
 package game
 
-import "testing"
+import (
+	"math/rand"
+	"testing"
+)
 
 // TestSeeGEBasicExchanges 用能手算清的交换验证 SEE。
 //
@@ -111,5 +114,53 @@ func TestAttackersToBasic(t *testing.T) {
 	}
 	if got.Test(10) {
 		t.Errorf("黑兵 10 在另一列，不该出现在攻击者里")
+	}
+}
+
+// TestAttackersToElephantMatchesMovegen 用走法生成交叉验证 attackersTo 的象分支。
+//
+// attackersTo 是按「能攻击 sq 的子」**反向**查预计算表的，而几何表是按
+// 「起点 → 落点」**正向**构建的 —— 这个方向差正是 bug 的温床：buildElephant
+// 只判落点不过河，于是被摆到对岸的象也会在 elephantSteps 里带出己方半场的
+// 落点，反向查就得到「红象攻击黑方半场」的假攻击者（实测 8/1741 处与朴素
+// SEE 分歧）。
+//
+// 这里拿 GenMoves 当独立裁判：某方的象能走到 sq，才允许被判为该格攻击者。
+// 注意跨版本对拍（TestGenMovesMatchesReference）发现不了这个 bug —— 走法生成
+// 只从象的真实位置正向查表，那条路径一直是对的，只有反向消费才出错。
+func TestAttackersToElephantMatchesMovegen(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x51DE))
+	positions := []*Position{NewPosition()}
+	for i := 0; i < 400; i++ {
+		positions = append(positions, scatter(rng, 1+rng.Intn(32)))
+	}
+	for i := 0; i < 300; i++ {
+		positions = append(positions, randomWalk(rng, 1+rng.Intn(60)))
+	}
+
+	for _, p := range positions {
+		for _, side := range []int{Red, Black} {
+			// want[t] = 能走到 t 的己方象。GenMoves 不允许落在己方子占据的格上，
+			// 所以这类 t 不参与比较（attackersTo 只回答「谁能攻击该格」，
+			// 不区分该格上站的是谁）。
+			var want [bbSquares]Bitboard
+			for _, m := range p.GenMoves(side) {
+				if TypeOf(p.Board[m.From]) == Elephant {
+					want[m.To].Set(int(m.From))
+				}
+			}
+			for sq := 0; sq < bbSquares; sq++ {
+				if p.bb.byColor[side>>3].Test(sq) {
+					continue
+				}
+				got := p.bb.attackersTo(sq, p.bb.occ).
+					And(p.bb.byType[Elephant]).
+					And(p.bb.byColor[side>>3])
+				if got != want[sq] {
+					t.Fatalf("局面 %s\n  side=%d sq=%d 象攻击者不符：attackersTo=%v，走法生成=%v",
+						p.FEN(), side, sq, got, want[sq])
+				}
+			}
+		}
 	}
 }

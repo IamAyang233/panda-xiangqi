@@ -143,6 +143,15 @@ func buildElephant() {
 				elephantSteps[color][sq][i].to = -1
 				elephantSteps[color][sq][i].eye = -1
 			}
+			// 本表只收录「象站在合法位置时的着法」，所以起点与落点都要求
+			// 在己方半场。少判起点的后果不只是脏数据：本表会被 see.go 的
+			// attackersTo **反向**当「能攻击该格的象位」查，而只判落点会让
+			// 正反两次查表不互为逆 —— 对岸的象带出己方半场落点，反向就查成
+			// 「红象攻击黑方半场」的假攻击者（实测 8/1741 处与朴素 SEE 分歧）；
+			// 同时又被摆到对岸的象仍会生成着法，两边都说不清。
+			if !ownSide(c, r) {
+				continue
+			}
 			for i, d := range [4][2]int{{2, 2}, {2, -2}, {-2, 2}, {-2, -2}} {
 				to := bbSquare(f+d[0], r+d[1])
 				if to < 0 || !ownSide(c, bbRank(to)) { // 象不过河

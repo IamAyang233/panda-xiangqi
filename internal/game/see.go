@@ -37,10 +37,21 @@ func (b *BB) attackersTo(sq int, occ Bitboard) Bitboard {
 	// 炮：攻击同样对称（两侧看同一个炮架），越炮架后第一个子上的炮即攻击者。
 	_, cannonCap := cannonAttacks(sq, occ, Bitboard{})
 	out = out.Or(cannonCap.And(b.byType[Cannon]))
-	// 象：以 sq 为象位反查，象眼须为空。
+	// 象：以 sq 为落点反查象位，象眼须为空。
+	//
+	// 这张表是按「起点 → 落点」正向构建的，这里靠关系的对称性反向使用
+	// （象走两格对角，正反互为象步，象眼也同一个格）。因此有两条前提：
+	// sq 必须在 c 方半场（象不过河，不可能攻击对岸的格），且攻击者必须是
+	// c 方自己的象。两条都不是多余的 —— buildElephant 曾漏掉起点侧的
+	// 半场判断，导致大象根本站不上的格也带出过河落点，反向查到就成了
+	// 「红象攻击黑方半场」的假攻击者，SEE 会据此把亏损吃子判成不亏。
 	for c := 0; c < 2; c++ {
+		if !ownSide(c, bbRank(sq)) {
+			continue
+		}
+		ownElephants := b.byType[Elephant].And(b.byColor[c])
 		for _, es := range elephantSteps[c][sq] {
-			if es.to >= 0 && !occ.Test(es.eye) && b.byType[Elephant].Test(es.to) {
+			if es.to >= 0 && !occ.Test(es.eye) && ownElephants.Test(es.to) {
 				out.Set(es.to)
 			}
 		}

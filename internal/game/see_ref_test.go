@@ -12,17 +12,25 @@ import (
 // 剪掉盈利的吃子。
 //
 // 这个对拍不是可选的。SeeGE 的增量更新依赖好几处「表语义假设」，都可以静默
-// 出错；初版一口气踩了三个：
+// 出错；两轮排查一共踩了四个：
 //  1. 马分支漏了 byType[Horse] 检查 —— knightAttackers 给的是「位置」，
 //     不确认那位置上确实是马，兵也会被当成马攻击者；
 //  2. kingMoves/advisorMoves 构建时只看目标格在宫殿内，没看起点 ——
 //     于是「将/仕从宫里走出来吃子」被当成合法攻击者；
 //  3. pawnAttackers 是分色表，只查类型不查颜色 —— 「红兵能攻击 sq 的位置上
-//     站着黑卒」被当成红兵攻击者。
+//     站着黑卒」被当成红兵攻击者；
+//  4. elephantSteps 反向查表时，红象被当成黑方半场的攻击者 —— 根因是
+//     buildElephant 只检查落点不过河、没检查起点也在己方半场，于是
+//     「象根本站不上的格」也带出过河落点，而 attackersTo 是按「起点 → 落点」
+//     的表反向查的。前三个修完仍有 8/1741 分歧，正是这一条。
 //
 // 表现是 321 个吃子着法里 61 处分歧，在搜索里则表现为「节点反而变多 + 漏杀」
 // （中局同一局面 3459 → 5957 节点，且 depth 6 的将杀被判成分值 4283）。
 // 没有朴素版对拍，这些只会以「棋力莫名下降」的形式暴露。
+//
+// 另外，基座局面必须先校验合法性：曾有两处 FEN 在 rank7 误写成 "4k4"（本意
+// 是象），一盘棋两个将，kingSq 只记得住后扫到的那个，合法性过滤随之全线错乱，
+// 对拍出来的分歧全是假的。
 
 // seeNaive 是「显然正确」的朴素 SEE：递归枚举 to 格上所有可能的吃子，
 // 用 negamax 取最优。
@@ -102,10 +110,10 @@ func TestSeeGEMatchesNaive(t *testing.T) {
 		InitialFEN,
 		"r1ba1a3/4kn3/2n1b4/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
 		"3ak1b2/4a4/4b4/p1p1p3p/9/2P6/P3P1P1P/1C2C1R2/9/2BAKABN1 w - - 0 1",
-		"2bak1b2/4a4/4k4/p1p1p3p/6p2/2P6/P3P1P1P/1C2C4/9/RNBAKABNR w - - 0 1",
+		"2bak1b2/4a4/4b4/p1p1p3p/6p2/2P6/P3P1P1P/1C2C4/9/RNBAKABNR w - - 0 1",
 		"rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR b - - 0 1",
 		"3k5/4a4/4b4/p1p1p3p/9/2P6/P3P1P1P/1C2C4/4A4/2BAK1B2 w - - 0 1",
-		"2bak4/4a4/4k4/9/9/9/4P4/4C4/9/3AKAB2 w - - 0 1",
+		"2bak4/4a4/4b4/9/9/9/4P4/4C4/9/3AKAB2 w - - 0 1",
 	}
 
 	var checked, mism int
@@ -113,6 +121,15 @@ func TestSeeGEMatchesNaive(t *testing.T) {
 		p, err := ParseFEN(fen)
 		if err != nil {
 			t.Fatal(err)
+		}
+		// 局面必须合法：每方恰好一个将。曾经有两处基座 FEN 在 rank7 误写成
+		// "4k4"（本意是象），于是整盘棋有两个黑将 —— kingSq 只记得住后扫到的
+		// 那个，合法性过滤随后全线错乱（17 个伪合法着法里只剩 1 个"合法"），
+		// 对拍出来的分歧全是假的。
+		for _, c := range []int{Red, Black} {
+			if n := p.bb.byType[King].And(p.bb.byColor[c>>3]).Count(); n != 1 {
+				t.Fatalf("基座局面非法：%s 方的将有 %d 个\n%s", map[int]string{Red: "红", Black: "黑"}[c], n, fen)
+			}
 		}
 		for step := 0; step < 200; step++ {
 			moves := p.LegalMoves(p.Turn)
@@ -126,17 +143,11 @@ func TestSeeGEMatchesNaive(t *testing.T) {
 	rate := float64(mism) / float64(checked) * 100
 	t.Logf("共对比 %d 个吃子着法，与朴素 SEE 分歧 %d 个（%.2f%%）", checked, mism, rate)
 
-	// 上限 1%（当前实际 0.46%）。它的作用是挡住「把 SEE 判定改坏」的改动，
-	// 而不是宣称已经全对 —— 剩余分歧的成因还没查清，怀疑在大象/炮的反向
-	// 攻击判定上（例如红象不能过河这类限制没有被正确反映）。
-	//
-	// 已知分歧的方向都是「SeeGE=true 而朴素 SEE 略亏」，也就是**少剪**：
-	// 不会丢弃本该保留的吃子，对棋力没有负面影响。SEE 目前默认关闭
-	// （见 search 包的 seeEnabled），所以这个缺口不进入产品路径。
-	if rate > 1 {
-		t.Errorf("与朴素 SEE 的分歧率 %.2f%% 超过 1%% 上限，SEE 判定可能被改坏了", rate)
-	}
-	if mism > 0 {
-		t.Logf("提示：仍有 %d 处待修分歧，方向均为「少剪」（无害）", mism)
+	// 当前实测 0。允许极少量分歧是因为 SeeGE 是增量式近似（照皮卡鱼的结构，
+	// 不做「被牵制的子不能吃」那层过滤），个别被牵制局面可能算出不同符号；
+	// 但两个真实 bug 分别产生过 61 处和 8 处（19% 与 0.46%），所以超过个位数
+	// 就一定意味着表语义或增量更新出了问题，不是近似误差。
+	if mism > 2 {
+		t.Errorf("与朴素 SEE 的分歧 %d 处（%.2f%%），远超近似误差范围，SEE 判定被改坏了", mism, rate)
 	}
 }
