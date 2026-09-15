@@ -1,6 +1,6 @@
 # 熊猫象棋 Makefile：测试 / 构建 / 交叉编译 / 运行 / 大模型联调 / 飞牛 fpk 打包
 BINARY := panda-xiangqi
-VERSION := 1.3.1
+VERSION := 2.0.0
 # 编译期注入版本号：单文件 exe / 无 manifest 场景兜底，避免“检查更新”误报 0.0.0
 LDFLAGS := -s -w -X github.com/IamAyang233/panda-xiangqi/internal/api.buildVersion=$(VERSION)
 
@@ -8,14 +8,20 @@ LDFLAGS := -s -w -X github.com/IamAyang233/panda-xiangqi/internal/api.buildVersi
 FNK_PKG := fnos/panda-xiangqi
 FNK_BIN := $(FNK_PKG)/app/server/panda-xiangqi
 
-# 内置皮卡鱼引擎（可选）：把官方 release 的二进制与 pikafish.nnue 放入 dist-engines/
-# 后，fpk / fpk-arm 会将其嵌入 app/server/engines/。该目录已在 .gitignore 中忽略（不入库）。
+# 内嵌 Go 引擎的 NNUE 权重（展开格式）。由 `make nnue-prepare` 从
+# dist-engines/pikafish.nnue 生成到 engines/pikafish.nnue.flat，
+# fpk / dist-zip 会把它放进包的 engines/ 子目录。
+#
+# 引擎已完全用 Go 内嵌，因此**不再随包分发皮卡鱼二进制**，包里也没有任何
+# 需要可执行位的文件 —— 这正是「皮卡鱼可用: false」（非 root 无法 chmod）
+# 那个结构性问题的根除点。权重是纯数据文件，只读即可。
 ENGINE_DIST := dist-engines
 ENGINE_NNUE := $(ENGINE_DIST)/pikafish.nnue
-ENGINE_X86  := $(ENGINE_DIST)/x86_64/pikafish
-ENGINE_ARM  := $(ENGINE_DIST)/aarch64/pikafish
+ENGINE_FLAT := engines/pikafish.nnue.flat
 
-.PHONY: all test build run clean cross docker puzzle-check fpk fpk-arm
+# 默认搜索线程数上限由程序按 CPU 核数自动探测，无需在此配置。
+
+.PHONY: all test build run clean cross dist-zip docker puzzle-check fpk fpk-arm nnue-prepare engine-match
 
 all: build
 
@@ -50,23 +56,36 @@ mockllm:
 clean:
 	rm -f $(BINARY) server.log
 	rm -rf dist
+	rm -rf $(FNK_PKG)/app/server/engines
+
+## nnue-prepare: 把 pikafish.nnue 展开成定长权重，供内嵌 Go 引擎读取。
+##   原文件是 zstd + COMPRESSED_LEB128 双层压缩，展开后服务端不再需要解压依赖。
+##   产物 engines/pikafish.nnue.flat 约 65 MiB，已被 .gitignore 忽略，换机器需重新生成。
+nnue-prepare:
+	go run ./cmd/nnue-prepare -in engines/pikafish.nnue -out engines/pikafish.nnue.flat
+
+## engine-match: 内嵌 Go 引擎与皮卡鱼的等时对拍（棋力验证）
+##   两套引擎的档位参数表不通用，只有固定思考时间是可比的量，所以用 -movetime 对齐。
+##   例：make engine-match ARGS="-mode moves -movetime 1000"
+##       make engine-match ARGS="-mode games -movetime 600 -games 8 -maxply 100"
+engine-match:
+	go run ./cmd/engine-match $(ARGS)
 
 ## fpk: 交叉编译 linux/amd64 静态二进制并打包为飞牛 fnOS .fpk 原生应用
 ##   需先安装 fnpack（https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64）。
-##   若 dist-engines/ 下存在皮卡鱼二进制与 pikafish.nnue，则随包内置。
+##   包里只放展开后的权重（纯数据，无需可执行位）；权重不存在时先跑 make nnue-prepare。
 fpk:
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(FNK_BIN) ./cmd/server
-	@if [ -f $(ENGINE_X86) ] && [ -f $(ENGINE_NNUE) ]; then \
-		mkdir -p $(FNK_PKG)/app/server/engines; \
-		cp $(ENGINE_X86) $(FNK_PKG)/app/server/engines/pikafish; \
-		cp $(ENGINE_NNUE) $(FNK_PKG)/app/server/engines/pikafish.nnue; \
-		cp $(ENGINE_DIST)/Copying.txt $(FNK_PKG)/app/server/engines/Copying.txt; \
-		cp $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)/app/server/engines/NNUE-License.md; \
-		echo "[fpk] 内置皮卡鱼(x86_64) 已嵌入"; \
-	else \
-		echo "[fpk] 错误：未找到 dist-engines（$(ENGINE_X86) / $(ENGINE_NNUE)），拒绝打出无引擎的包。"; \
-		echo "[fpk]       dist-engines/ 已被 gitignore，换机器构建时需重新放置官方引擎文件后再试。"; \
+	@if [ ! -f $(ENGINE_FLAT) ]; then \
+		echo "[fpk] 错误：未找到展开后的权重 $(ENGINE_FLAT)。"; \
+		echo "[fpk]       先运行 make nnue-prepare（需要原权重 $(ENGINE_NNUE)）。"; \
 		exit 1; \
+	fi
+	rm -rf $(FNK_PKG)/app/server/engines
+	mkdir -p $(FNK_PKG)/app/server/engines
+	cp $(ENGINE_FLAT) $(FNK_PKG)/app/server/engines/pikafish.nnue.flat
+	@if [ -f $(ENGINE_DIST)/Copying.txt ]; then \
+		cp $(ENGINE_DIST)/Copying.txt $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)/app/server/engines/; \
 	fi
 	./fnpack.exe build --directory $(FNK_PKG)
 	mv panda-xiangqi.fpk panda-xiangqi_$(VERSION)_x86.fpk
@@ -79,16 +98,16 @@ fpk-arm:
 	rm -rf $(FNK_PKG)-arm
 	cp -r $(FNK_PKG) $(FNK_PKG)-arm
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(FNK_PKG)-arm/app/server/panda-xiangqi ./cmd/server
-	@if [ -f $(ENGINE_ARM) ] && [ -f $(ENGINE_NNUE) ]; then \
-		mkdir -p $(FNK_PKG)-arm/app/server/engines; \
-		cp $(ENGINE_ARM) $(FNK_PKG)-arm/app/server/engines/pikafish; \
-		cp $(ENGINE_NNUE) $(FNK_PKG)-arm/app/server/engines/pikafish.nnue; \
-		cp $(ENGINE_DIST)/Copying.txt $(FNK_PKG)-arm/app/server/engines/Copying.txt; \
-		cp $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)-arm/app/server/engines/NNUE-License.md; \
-		echo "[fpk-arm] 内置皮卡鱼(aarch64) 已嵌入"; \
-	else \
-		echo "[fpk-arm] 错误：未找到 dist-engines（$(ENGINE_ARM) / $(ENGINE_NNUE)），拒绝打出无引擎的包。"; \
+	@if [ ! -f $(ENGINE_FLAT) ]; then \
+		echo "[fpk-arm] 错误：未找到展开后的权重 $(ENGINE_FLAT)。"; \
+		echo "[fpk-arm]       先运行 make nnue-prepare。"; \
 		exit 1; \
+	fi
+	rm -rf $(FNK_PKG)-arm/app/server/engines
+	mkdir -p $(FNK_PKG)-arm/app/server/engines
+	cp $(ENGINE_FLAT) $(FNK_PKG)-arm/app/server/engines/pikafish.nnue.flat
+	@if [ -f $(ENGINE_DIST)/Copying.txt ]; then \
+		cp $(ENGINE_DIST)/Copying.txt $(ENGINE_DIST)/NNUE-License.md $(FNK_PKG)-arm/app/server/engines/; \
 	fi
 	sed -i 's/^platform=x86$$/platform=arm/' $(FNK_PKG)-arm/manifest
 	@if [ -f panda-xiangqi_$(VERSION)_x86.fpk ]; then mv panda-xiangqi_$(VERSION)_x86.fpk panda-xiangqi_$(VERSION)_x86.fpk.bak; fi
@@ -96,3 +115,25 @@ fpk-arm:
 	mv panda-xiangqi.fpk panda-xiangqi_$(VERSION)_arm.fpk
 	@if [ -f panda-xiangqi_$(VERSION)_x86.fpk.bak ]; then mv panda-xiangqi_$(VERSION)_x86.fpk.bak panda-xiangqi_$(VERSION)_x86.fpk; fi
 	rm -rf $(FNK_PKG)-arm
+
+## dist-zip: 生成 Windows 便携版（exe + 内嵌引擎权重 + 许可证 + manifest）并压缩为 zip
+##   目录结构为「exe 与 engines/pikafish.nnue.flat 同级」，与运行期的权重自动探测一致；
+##   放入 manifest 是为了让 exe 能读到真实版本号（否则「检查更新」会误报）。
+dist-zip:
+	mkdir -p dist
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe ./cmd/server
+	@if [ ! -f $(ENGINE_FLAT) ]; then \
+		echo "[dist-zip] 错误：未找到展开后的权重 $(ENGINE_FLAT)。"; \
+		echo "[dist-zip]       先运行 make nnue-prepare。"; \
+		exit 1; \
+	fi
+	rm -rf dist/$(BINARY)-$(VERSION)-windows-amd64
+	mkdir -p dist/$(BINARY)-$(VERSION)-windows-amd64/engines
+	cp dist/$(BINARY)-windows-amd64.exe dist/$(BINARY)-$(VERSION)-windows-amd64/panda-xiangqi.exe
+	cp $(ENGINE_FLAT) dist/$(BINARY)-$(VERSION)-windows-amd64/engines/pikafish.nnue.flat
+	@if [ -f $(ENGINE_DIST)/Copying.txt ]; then \
+		cp $(ENGINE_DIST)/Copying.txt $(ENGINE_DIST)/NNUE-License.md dist/$(BINARY)-$(VERSION)-windows-amd64/engines/; \
+	fi
+	cp $(FNK_PKG)/manifest dist/$(BINARY)-$(VERSION)-windows-amd64/
+	cd dist && powershell -NoProfile -Command "Compress-Archive -Force -Path '$(BINARY)-$(VERSION)-windows-amd64/*' -DestinationPath '$(BINARY)_$(VERSION)_windows-amd64.zip'"
+	@echo "[dist-zip] 产物：dist/$(BINARY)_$(VERSION)_windows-amd64.zip"
