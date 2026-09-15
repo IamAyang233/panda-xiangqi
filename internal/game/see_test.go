@@ -84,6 +84,34 @@ func TestSeeGEThreshold(t *testing.T) {
 	}
 }
 
+// TestSeeGEQuietMove 覆盖「安静着法」（不吃子的走子）——此前的用例全是吃子。
+//
+// 为什么必须单独覆盖：静的着法的 SEE 剪枝是 SEE 的主要用法之一，而它的语义与
+// 吃子不同 —— 第一层「被吃子价值」为 0，全靠后续的交换链判断。而且它的
+// 调用时机有个极易踩的坑：SeeGE 读的是 from/to 两格**当前**的子，必须在落子
+// 之前调用；落子后 from 已空、to 上站着自己的子，「第二层捷径」会恒成立，
+// 于是剪枝一次都不会触发（实测 8.7 万次调用剪掉 0 次，节点数逐位不变）。
+//
+// 布局：红车在 (file1,rank0)、黑兵在 (file1,rank3)。车走到 (file1,rank2) 会被
+// 兵吃掉且无法吃回 —— 净亏一个车（900）。
+func TestSeeGEQuietMove(t *testing.T) {
+	p, err := ParseFEN("4k4/9/9/9/9/9/1p7/9/9/1R1K5 w - - 0 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rookFrom, hangTo, safeTo = 1, 19, 0
+
+	if p.SeeGE(rookFrom, hangTo, 0) {
+		t.Error("车走到被兵看住的格：净亏一个车，门槛 0 时应判为亏")
+	}
+	if !p.SeeGE(rookFrom, hangTo, -1000) {
+		t.Error("门槛 -1000 时亏损 900 在预算内，应判为不亏")
+	}
+	if !p.SeeGE(rookFrom, safeTo, 0) {
+		t.Error("车走到无子看住的空格：无人能吃，SEE = 0，应判为不亏")
+	}
+}
+
 // TestSeeGEDefensive 边界：越界坐标一律返回 false，不应 panic。
 func TestSeeGEDefensive(t *testing.T) {
 	p, err := ParseFEN(InitialFEN)

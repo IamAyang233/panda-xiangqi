@@ -33,6 +33,15 @@ import (
 // 关掉只会少剪（变慢），不会剪掉本该保留的吃子。
 var seeEnabled = os.Getenv("QIJING_SEE") == "on"
 
+// seeQuietEnabled 由环境变量 QIJING_SEEQ=on 启用**静的着法**（非吃子）的 SEE 剪枝。
+//
+// 与上面那个「静态搜索里的坏吃子剪枝」是两回事：那个剪的是 quiesce 里的吃子，
+// 这个剪的是主搜索里的安静着法。阈值照抄皮卡鱼 `see_ge(move, -35*lmrDepth²)`。
+//
+// 默认关闭，等实测确认有收益再开 —— 上一轮的教训是「SEE 基础设施可用」不等于
+// 「某个具体用法有收益」，必须逐个量。
+var seeQuietEnabled = os.Getenv("QIJING_SEEQ") == "on"
+
 // 分值常量。单位与 C++ 的 Value 一致。
 const (
 	// Infinity 大于任何真实评估值，用于 alpha-beta 的初始窗口。
@@ -582,18 +591,15 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			return best
 		}
 		victim := p.PieceAt90(int(m.To))
-		p.Make(m)
-		s.pos.Make(int(m.From), int(m.To))
+		quiet := victim == game.Empty
+		skip := false
 
 		// 前向剪枝，只作用于安静着法：吃子会大幅改变评估，不能按静态值判断。
 		// best > -Infinity 保证至少搜完一个着法，否则整层可能被剪空。
 		//
-		// 落子放在判断之前，是为了能准确回答「这步是否将军」：令对手被将的
-		// 安静着法常含杀机，按静态评估剪掉会漏杀（实测出现过 4194 vs 524283
-		// 这种把将杀剪没的分歧）。将杀窗口内也一律不剪 —— 那时 alpha/beta
-		// 本身已是杀分，静态评估失去参考意义。
-		skip := false
-		if !s.noForward && !isPV && !inCheck && victim == game.Empty && best > -Infinity &&
+		// 将杀窗口内一律不剪 —— 那时 alpha/beta 本身已是杀分，静态评估失去
+		// 参考意义。
+		if !s.noForward && !isPV && !inCheck && quiet && best > -Infinity &&
 			beta < MateScore-MaxPly && alpha > -MateScore+MaxPly {
 			// Futility pruning：静态评估加上随深度放宽的余量仍够不到 alpha，
 			// 这个安静着法不可能成为最佳着法。
@@ -612,9 +618,38 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			if i >= limit {
 				skip = true
 			}
-			if skip && p.InCheck(p.Turn) {
-				skip = false
+		}
+
+		// 静的着法的 SEE 剪枝：这步交换下来会白丢子，而静态评估看不出这点
+		// （futility/LMP 是按位置与静态值判断的）。放在 futility/LMP 之后，
+		// 免得给本该被免费剪掉的着法也付一遍 SEE 的成本。
+		//
+		// **必须在落子之前算。** SeeGE 读的是 from/to 两格上当前的子：落子后
+		// from 已空、to 上站着自己的子，于是它的「第二层捷径」（我方动用的子
+		// 不比 swap 大就直接成立）恒成立，剪枝一次都不会触发 —— 实测把调用
+		// 写在 Make 之后时，8.7 万次调用剪掉 0 次，节点数逐位不变。
+		//
+		// 阈值照抄皮卡鱼：`see_ge(move, -35 * lmrDepth²)`，lmrDepth 是**削减后**
+		// 的有效深度（夹紧到 ≥0）—— 有效深度越大越不该剪，所以允许 SEE 越亏。
+		// 注意因此它只在 lmrDepth 小（浅层）时才咬得住：阈值到了 −1715，任何子
+		// 都在预算内，剪不动。皮卡鱼也是这个性质。
+		if !skip && seeQuietEnabled && !isPV && !inCheck && quiet {
+			lmrDepth := depth - 1 - s.reduction(depth, i, victim, inCheck)
+			if lmrDepth < 0 {
+				lmrDepth = 0
 			}
+			skip = !p.SeeGE(int(m.From), int(m.To), -35*lmrDepth*lmrDepth)
+		}
+
+		p.Make(m)
+		s.pos.Make(int(m.From), int(m.To))
+
+		// 将军豁免对 SEE 与前向剪枝都生效：令对手被将的安静着法常含杀机，
+		// 按「会白丢子」或静态评估剪掉都会漏杀（这条教训在 futility 上
+		// 已经踩过一次 —— 曾把 depth 6 的将杀剪没）。这也是唯一需要落子
+		// 才能回答的问题，所以放在 Make 之后。
+		if skip && p.InCheck(p.Turn) {
+			skip = false
 		}
 		if skip {
 			p.Unmake()
