@@ -1,111 +1,96 @@
 package game
 
-// 着法生成（A3）：只做几何规则判断（蹩腿/塞眼/九宫/过河/照面交由 A5 过滤）。
-// 目标为空或敌子即压栈；buffer 复用以减少分配。
+// 着法生成（位运算版，M3）：全部走法来自预计算攻击表 + 位棋盘集合运算，
+// 不再逐格步进。几何规则（蹩腿/塞眼/九宫/过河）已烘焙进攻击表，
+// 照面等合法性仍由 LegalMoves 过滤（走一步后判己方是否被将军）。
 
-var rookDirs = [4]int{+1, -1, +16, -16}
+var stepDirs = [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+
+// step 从 sq 沿 (df,dr) 走一步；越界返回 -1。
+// 位运算版不再使用，保留给测试中的逐格参考实现。
+func step(sq, df, dr int) int {
+	f := bbFile(sq) + df
+	r := bbRank(sq) + dr
+	if f < 0 || f > 8 || r < 0 || r > 9 {
+		return -1
+	}
+	return bbSquare(f, r)
+}
 
 // GenMoves 生成 side 方全部伪合法着法。
 func (p *Position) GenMoves(side int) []Move {
 	moves := make([]Move, 0, 48)
-	for sq90 := 0; sq90 < 90; sq90++ {
-		sq := mailbox256[sq90]
-		pc := p.Board[sq]
-		if pc == Empty || pc == Edge || ColorOf(pc) != side {
-			continue
+	sideIdx := side >> 3
+	ownPieces := p.bb.byColor[sideIdx]
+	if ownPieces.IsEmpty() {
+		return moves
+	}
+	occ := p.bb.occ
+	free := bbAll.AndNot(ownPieces) // 空格或敌子
+
+	// 帅、仕：九宫表已按侧裁剪，直接与 free 求交。
+	for b := p.bb.byType[King].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		for t := kingMoves[sideIdx][sq].And(free); !t.IsEmpty(); {
+			moves = append(moves, Move{uint8(sq), uint8(t.popLSB())})
 		}
-		f, r := FileOf256(sq), RankOf256(sq)
-		switch TypeOf(pc) {
-		case King:
-			for _, d := range rookDirs {
-				to := sq + d
-				if p.Board[to] != Edge && inPalace(side, FileOf256(to), RankOf256(to)) && !own(side, p.Board[to]) {
-					moves = append(moves, Move{uint8(sq), uint8(to)})
-				}
+	}
+	for b := p.bb.byType[Advisor].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		for t := advisorMoves[sideIdx][sq].And(free); !t.IsEmpty(); {
+			moves = append(moves, Move{uint8(sq), uint8(t.popLSB())})
+		}
+	}
+	// 象：表已含"不过河"，逐目标查塞象眼。
+	for b := p.bb.byType[Elephant].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		for _, es := range elephantSteps[sideIdx][sq] {
+			if es.to < 0 || occ.Test(es.eye) || ownPieces.Test(es.to) {
+				continue
 			}
-		case Advisor:
-			for _, d := range [4]int{+17, +15, -17, -15} {
-				to := sq + d
-				if p.Board[to] != Edge && inPalace(side, FileOf256(to), RankOf256(to)) && !own(side, p.Board[to]) {
-					moves = append(moves, Move{uint8(sq), uint8(to)})
-				}
+			moves = append(moves, Move{uint8(sq), uint8(es.to)})
+		}
+	}
+	// 马：逐目标查蹩腿。
+	for b := p.bb.byType[Horse].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		for _, ks := range knightSteps[sq] {
+			if ks.to < 0 {
+				break
 			}
-		case Elephant:
-			for _, d := range [4]int{+34, +30, -30, -34} {
-				to := sq + d
-				if p.Board[to] == Edge || own(side, p.Board[to]) {
-					continue
-				}
-				if !ownSide(side, RankOf256(to)) || p.Board[sq+d/2] != Empty { // 塞象眼 + 不过河
-					continue
-				}
-				moves = append(moves, Move{uint8(sq), uint8(to)})
+			if occ.Test(ks.leg) || ownPieces.Test(ks.to) {
+				continue
 			}
-		case Horse:
-			for _, m := range knightTbl {
-				tf, tr := f+m.df, r+m.dr
-				if tf < 0 || tf > 8 || tr < 0 || tr > 9 {
-					continue
-				}
-				to := SQ256(tf, tr)
-				if p.Board[to] != Edge && !own(side, p.Board[to]) && p.Board[SQ256(f+m.lf, r+m.lr)] == Empty {
-					moves = append(moves, Move{uint8(sq), uint8(to)})
-				}
-			}
-		case Rook:
-			for _, d := range rookDirs {
-				for to := sq + d; ; to += d {
-					t := p.Board[to]
-					if t == Empty {
-						moves = append(moves, Move{uint8(sq), uint8(to)})
-						continue
-					}
-					if t != Edge && ColorOf(t) != side {
-						moves = append(moves, Move{uint8(sq), uint8(to)})
-					}
-					break
-				}
-			}
-		case Cannon:
-			for _, d := range rookDirs {
-				to := sq + d
-				for p.Board[to] == Empty { // 平走
-					moves = append(moves, Move{uint8(sq), uint8(to)})
-					to += d
-				}
-				// to 处为第一个挡子（或哨兵），越过后找第二个子
-				for to += d; p.Board[to] == Empty; to += d {
-				}
-				if t := p.Board[to]; t != Edge && ColorOf(t) != side { // 翻山吃
-					moves = append(moves, Move{uint8(sq), uint8(to)})
-				}
-			}
-		case Pawn:
-			fwd := 16
-			if side == Black {
-				fwd = -16
-			}
-			to := sq + fwd
-			if p.Board[to] != Edge && !own(side, p.Board[to]) {
-				moves = append(moves, Move{uint8(sq), uint8(to)})
-			}
-			crossed := side == Red && r >= 5 || side == Black && r <= 4
-			if crossed {
-				for _, d := range [2]int{+1, -1} {
-					to := sq + d
-					if p.Board[to] != Edge && !own(side, p.Board[to]) {
-						moves = append(moves, Move{uint8(sq), uint8(to)})
-					}
-				}
-			}
+			moves = append(moves, Move{uint8(sq), uint8(ks.to)})
+		}
+	}
+	// 兵：前进 + 过河横走（已烘焙进表）。
+	for b := p.bb.byType[Pawn].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		for t := pawnMoves[sideIdx][sq].And(free); !t.IsEmpty(); {
+			moves = append(moves, Move{uint8(sq), uint8(t.popLSB())})
+		}
+	}
+	// 车、炮：射线取首个阻挡。
+	for b := p.bb.byType[Rook].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		for t := rookAttacks(sq, occ, ownPieces); !t.IsEmpty(); {
+			moves = append(moves, Move{uint8(sq), uint8(t.popLSB())})
+		}
+	}
+	for b := p.bb.byType[Cannon].And(ownPieces); !b.IsEmpty(); {
+		sq := b.popLSB()
+		quiet, capture := cannonAttacks(sq, occ, ownPieces)
+		for t := quiet.Or(capture).And(free); !t.IsEmpty(); {
+			moves = append(moves, Move{uint8(sq), uint8(t.popLSB())})
 		}
 	}
 	return moves
 }
 
-func own(side int, target byte) bool { return target != Empty && target != Edge && ColorOf(target) == side }
+func own(side int, target byte) bool { return target != Empty && ColorOf(target) == side }
 
-// LegalMoves 返回 side 方全部合法着法（A5：走完己方不被将军/不照面）。
+// LegalMoves 返回 side 方全部合法着法（走完己方不被将军/不照面）。
 func (p *Position) LegalMoves(side int) []Move {
 	pseudo := p.GenMoves(side)
 	legal := pseudo[:0]

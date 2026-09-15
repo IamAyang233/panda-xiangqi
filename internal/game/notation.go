@@ -40,8 +40,8 @@ func (p *Position) MoveToChinese(m Move) string {
 	pc := p.Board[m.From]
 	color := ColorOf(pc)
 	typ := TypeOf(pc)
-	f, r := FileOf256(int(m.From)), RankOf256(int(m.From))
-	tf, tr := FileOf256(int(m.To)), RankOf256(int(m.To))
+	f, r := bbFile(int(m.From)), bbRank(int(m.From))
+	tf, tr := bbFile(int(m.To)), bbRank(int(m.To))
 
 	name := pieceName[color>>3][typ]
 
@@ -49,7 +49,7 @@ func (p *Position) MoveToChinese(m Move) string {
 	prefix := ""
 	var same []int // 同纵线同类同色子的 rank 列表
 	for rr := 0; rr < 10; rr++ {
-		if p.Board[SQ256(f, rr)] == pc {
+		if p.Board[bbSquare(f, rr)] == pc {
 			same = append(same, rr)
 		}
 	}

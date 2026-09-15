@@ -20,11 +20,11 @@ const (
 
 // Status 描述当前局面判定结果（在每手走完后调用）。
 type Status struct {
-	Result   string // Result*（空 = 进行中）
-	Reason   string
-	InCheck  bool // 当前方（轮走方）被将军
-	Winner   string
-	IsDraw   bool
+	Result  string // Result*（空 = 进行中）
+	Reason  string
+	InCheck bool // 当前方（轮走方）被将军
+	Winner  string
+	IsDraw  bool
 }
 
 // CheckStatus 判定局面状态。
@@ -76,7 +76,7 @@ func winnerAgainst(side int) string {
 
 func (p *Position) hasAttacking(color int) bool {
 	for sq90 := 0; sq90 < 90; sq90++ {
-		pc := p.Board[mailbox256[sq90]]
+		pc := p.Board[sq90]
 		if pc == Empty || ColorOf(pc) != color {
 			continue
 		}
@@ -89,10 +89,11 @@ func (p *Position) hasAttacking(color int) bool {
 }
 
 // RepetitionCount 统计当前局面键在历史中出现的次数（含当前局面）。
+// 搜索用的空着（null move）不入账：它不改变子力，不应参与重复判定。
 func (p *Position) RepetitionCount() int {
 	n := 1
 	for _, h := range p.hist {
-		if h.key == p.Key {
+		if !h.null && h.key == p.Key {
 			n++
 		}
 	}

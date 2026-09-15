@@ -32,7 +32,7 @@ func TestFENRoundTrip(t *testing.T) {
 
 func TestFENParseErrors(t *testing.T) {
 	bad := []string{
-		"9/9/9/9/9/9/9/9/9/9 w - - 0 1",                    // 缺将帅
+		"9/9/9/9/9/9/9/9/9/9 w - - 0 1",                                         // 缺将帅
 		"rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR x - - 0 1", // 轮走方非法
 	}
 	for i, fen := range bad {
@@ -203,20 +203,20 @@ func TestFlyingGeneral(t *testing.T) {
 }
 
 func TestIsAttackedScenarios(t *testing.T) {
-	e8 := uint8(SQ256(4, 8))
+	e8 := bbSquare(4, 8)
 	// 黑马 g7 攻 e8 需要蹩腿点 f7 为空；f7 有红兵则不攻击
 	p, err := ParseFEN("3k5/9/5Pn2/9/9/9/9/9/9/4K4 w - - 0 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.isAttacked(int(e8), Black) {
+	if p.bb.isAttackedBB(e8, Black) {
 		t.Error("蹩马腿后 e8 不应被黑马攻击")
 	}
 	p2, err := ParseFEN("3k5/9/6n2/9/9/9/9/9/9/4K4 w - - 0 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p2.isAttacked(int(e8), Black) {
+	if !p2.bb.isAttackedBB(e8, Black) {
 		t.Error("无蹩腿时 e8 应被黑马攻击")
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,18 +69,47 @@ func fileExists(p string) bool {
 	return true
 }
 
+// executable 报告文件是否带可执行位。
+//
+// Windows 没有权限位这一说，只看是不是目录；Unix 上检查 mode 的 0111 位。
+func executable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0o111 != 0
+}
+
 func (e *UCIEngine) start() error {
-	// fnpack 等打包器不会保留可执行位（打包为 0o666），必须在拉起子进程前补回 +x，
-	// 否则 os/exec 在 Start 时会因权限不足直接失败（握手逻辑根本走不到）。
-	if err := os.Chmod(e.path, 0o755); err != nil {
-		return fmt.Errorf("设置引擎可执行权限失败 %s: %w", e.path, err)
+	// 只在确实缺可执行位时才尝试补位：本应用以专用用户（非 root）运行，
+	// 进程内 chmod 属于 root 的文件会 EPERM —— 这正是过去「皮卡鱼可用: false」
+	// 的结构性根源。引擎改 Go 内嵌后已不再随包分发，走到这里的通常是本机
+	// 自带的外置引擎（属主是自己，chmod 能成功）。
+	//
+	// 补位失败也不提前返回：交给 os/exec 给出准确的错误信息，
+	// 免得把一个本可运行的引擎判成不可用。
+	if !executable(e.path) {
+		_ = os.Chmod(e.path, 0o755)
 	}
 
 	// 工作目录设为引擎所在目录：皮卡鱼默认在 cwd 找 pikafish.nnue（EvalFile 相对路径），
 	// fnOS 启动时 cwd=应用根而引擎在 app/server/engines/，不设 Dir 会导致引擎按相对路径
 	// 找不到权重（部分版本缺权重直接退出，uciok 等不到 → 启动失败）。
-	cmd := exec.Command(e.path)
-	cmd.Dir = filepath2(e.path)
+	//
+	// 必须先转成绝对路径：设了 cmd.Dir 之后 exec 会把相对路径解释为「相对于 cmd.Dir」，
+	// 于是 "dist/pikafish.exe" 会跑去 dist/ 下再找一次 dist/pikafish.exe 而失败。
+	exePath := e.path
+	if abs, err := filepath.Abs(exePath); err == nil {
+		exePath = abs
+	}
+	cmd := exec.Command(exePath)
+	cmd.Dir = filepath2(exePath)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -131,10 +162,14 @@ func (e *UCIEngine) start() error {
 		return fmt.Errorf("%w（引擎 stderr: %s）", err, e.lastStderr())
 	}
 
-	// 指向随包内置的 NNUE 权重文件，避免引擎因找不到 pikafish.nnue 而退出。
-	// 该文件与引擎二进制同目录（engines/pikafish.nnue）。
-	if nnue := filepath2(e.path) + "/pikafish.nnue"; fileExists(nnue) {
-		e.send("setoption name EvalFile value " + nnue)
+	// 权重固定用**相对路径**：工作目录已设为引擎所在目录（见 start），引擎按
+	// 相对名就能找到。
+	//
+	// 不要传绝对路径 —— 引擎对含非 ASCII 字符的路径（中文用户名、中文项目目录
+	// 都很常见）处理不了，会加载失败后直接退出，症状表现为「引擎输出流关闭」，
+	// 从外部完全看不出是路径编码问题。
+	if fileExists(filepath2(e.path) + "/pikafish.nnue") {
+		e.send("setoption name EvalFile value pikafish.nnue")
 	} else {
 		// cwd 已是引擎目录，皮卡鱼会按相对路径 pikafish.nnue 自动找到；都没有则告警
 		e.reportStderr()
@@ -211,13 +246,31 @@ func (e *UCIEngine) Name() string { return e.name }
 
 // BestMove 通过 UCI 协议求着法；崩溃/超时自动重启并重试一次。
 func (e *UCIEngine) BestMove(ctx context.Context, pos *game.Position, level int) (game.Move, error) {
+	skill, movetime := uciLevelParams(level)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	mv, err := e.bestOnce(ctx, pos, level)
+	mv, err := e.bestOnce(ctx, pos, skill, movetime)
 	if err != nil {
 		_ = e.restart()
-		mv, err = e.bestOnce(ctx, pos, level)
+		mv, err = e.bestOnce(ctx, pos, skill, movetime)
+	}
+	return mv, err
+}
+
+// BestMoveTimed 用指定的思考时间与 Skill 等级求着法。
+//
+// 供跨引擎**等时公平对拍**使用：档位映射表两套引擎并不通用（皮卡鱼调的是
+// Skill Level，内嵌引擎调的是深度与随机池），要比较棋力只能把思考时间固定成同一个量。
+// skill 传 20 表示不削弱。
+func (e *UCIEngine) BestMoveTimed(ctx context.Context, pos *game.Position, movetime time.Duration, skill int) (game.Move, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	mv, err := e.bestOnce(ctx, pos, skill, movetime)
+	if err != nil {
+		_ = e.restart()
+		mv, err = e.bestOnce(ctx, pos, skill, movetime)
 	}
 	return mv, err
 }
@@ -238,19 +291,14 @@ func (e *UCIEngine) restart() error {
 	return e.start()
 }
 
-func (e *UCIEngine) bestOnce(ctx context.Context, pos *game.Position, level int) (game.Move, error) {
-	skill, movetime := uciLevelParams(level)
+func (e *UCIEngine) bestOnce(ctx context.Context, pos *game.Position, skill int, movetime time.Duration) (game.Move, error) {
 	e.send(fmt.Sprintf("setoption name Skill Level value %d", skill))
 	e.send("isready")
 	if err := e.expect("readyok", 5*time.Second); err != nil {
 		return game.Move{}, err
 	}
 
-	if moves := uciMoves(pos); moves != "" {
-		e.send("position fen " + pos.FEN() + " moves " + moves)
-	} else {
-		e.send("position fen " + pos.FEN())
-	}
+	e.send(positionCommand(pos))
 	e.send(fmt.Sprintf("go movetime %d", movetime.Milliseconds()))
 
 	type res struct {
@@ -310,11 +358,7 @@ func (e *UCIEngine) BestLine(ctx context.Context, pos *game.Position, movetimeMs
 	if err = e.expect("readyok", 5*time.Second); err != nil {
 		return
 	}
-	if moves := uciMoves(pos); moves != "" {
-		e.send("position fen " + pos.FEN() + " moves " + moves)
-	} else {
-		e.send("position fen " + pos.FEN())
-	}
+	e.send(positionCommand(pos))
 	e.send(fmt.Sprintf("go movetime %d", movetimeMs))
 
 	type res struct {
@@ -413,11 +457,13 @@ func uciLevelParams(level int) (skill int, movetime time.Duration) {
 	}
 }
 
-// uciMoves 从局面历史栈还原 UCI 着法序列。
-func uciMoves(pos *game.Position) string {
-	parts := make([]string, 0, pos.MoveCount())
-	for _, m := range pos.HistoryMoves() {
-		parts = append(parts, m.String())
-	}
-	return strings.Join(parts, " ")
+// positionCommand 构造发给引擎的 position 命令。
+//
+// **只发 FEN，绝不附加 moves 尾巴**：FEN 已经完整描述了当前局面（含走子方与
+// 着数），再附上历史着法等于把整局重放一遍。那些着法在 FEN 局面上多半本身
+// 就不合法（实测：FEN 已写 b（黑走），却还附带红方的 b2b5）。皮卡鱼遇到
+// 不合法的 moves 会静默忽略、仍按 FEN 作答，所以这个 bug 不会稳定复现成
+// 错误着法，但会偶发地让引擎答出非法着法（对局工具里表现为 "illegal:" 中断）。
+func positionCommand(pos *game.Position) string {
+	return "position fen " + pos.FEN()
 }

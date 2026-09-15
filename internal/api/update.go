@@ -167,12 +167,12 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := map[string]any{
-		"app":        AppName,
-		"version":    AppVersion,
-		"category":   req.Category,
-		"title":      req.Title,
+		"app":         AppName,
+		"version":     AppVersion,
+		"category":    req.Category,
+		"title":       req.Title,
 		"description": req.Description,
-		"contact":    req.Contact,
+		"contact":     req.Contact,
 	}
 	if req.IncludeLogs {
 		payload["logs"] = s.collectDiagnostics(req.ClientInfo)
@@ -221,8 +221,8 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 
 // collectDiagnostics 服务端诊断信息（PanDa 文档 §6.4 日志收集的轻量版）。
 func (s *Server) collectDiagnostics(clientInfo string) string {
-	log := fmt.Sprintf("=== 熊猫象棋诊断信息 ===\n版本: %s\n引擎: %s（皮卡鱼可用: %v）\n残局: %d 关\n在线会话: %d\n运行时: %s %s/%s\n时间: %s\n",
-		AppVersion, s.Engines.EngineName(), s.Engines.HasUCI(),
+	log := fmt.Sprintf("=== 熊猫象棋诊断信息 ===\n版本: %s\n引擎: %s（内嵌 Go 引擎: %v，皮卡鱼兜底: %v）\n残局: %d 关\n在线会话: %d\n运行时: %s %s/%s\n时间: %s\n",
+		AppVersion, s.Engines.EngineName(), s.Engines.HasNative(), s.Engines.HasUCI(),
 		s.Puzzles.Count(), s.Sessions.Count(), runtime.Version(), runtime.GOOS, runtime.GOARCH,
 		time.Now().Format("2006-01-02 15:04:05"))
 	if clientInfo != "" {

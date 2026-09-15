@@ -12,12 +12,12 @@ import (
 	"os/signal"
 	"runtime"
 
+	qiweb "github.com/IamAyang233/panda-xiangqi"
 	"github.com/IamAyang233/panda-xiangqi/internal/api"
 	"github.com/IamAyang233/panda-xiangqi/internal/config"
 	"github.com/IamAyang233/panda-xiangqi/internal/engine"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
 	"github.com/IamAyang233/panda-xiangqi/internal/session"
-	qiweb "github.com/IamAyang233/panda-xiangqi"
 )
 
 func main() {
@@ -53,9 +53,10 @@ func main() {
 	// 残局：外置目录优先，否则内嵌
 	puzzles := mustPuzzles(cfg.PuzzlesDir)
 
-	engines := engine.NewManager(cfg.EnginePath)
+	engines := engine.NewManagerWithNNUE(cfg.EnginePath, cfg.NNUEPath)
 	defer engines.Close()
-	log.Printf("引擎: %s（皮卡鱼可用: %v）", engines.EngineName(), engines.HasUCI())
+	log.Printf("引擎: %s（内嵌 Go 引擎: %v，皮卡鱼兜底: %v）",
+		engines.EngineName(), engines.HasNative(), engines.HasUCI())
 	// 引擎探测诊断：皮卡鱼没启动起来时，日志里能看到每个候选路径的失败原因
 	// （文件缺失 / 权限被拒 / 架构不符 / 握手超时 / 权重缺失），用户反馈时按图索骥。
 	for _, d := range engines.Diagnostics() {

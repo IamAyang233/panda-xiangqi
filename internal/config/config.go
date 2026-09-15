@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Port          int    // 监听端口（本地开发 TCP 模式）
 	EnginePath    string // 皮卡鱼路径（空 = 自动探测）
+	NNUEPath      string // 内嵌 Go 引擎的 NNUE 权重（.flat）路径；空 = 自动探测
 	PuzzlesDir    string // 外置残局目录（空 = 使用内嵌）
 	OpenBrowser   bool   // 启动时自动打开浏览器（仅本地 TCP 模式有效）
 	UpdateAPI     string // PanDa 推送更新服务入口（默认公网域名）
@@ -58,6 +59,9 @@ func Load(configPath string) Config {
 	if v := os.Getenv("QIJING_ENGINE"); v != "" {
 		apply(&c, "engine", v)
 	}
+	if v := os.Getenv("QIJING_NNUE"); v != "" {
+		apply(&c, "nnue", v)
+	}
 	if v := os.Getenv("QIJING_PUZZLES"); v != "" {
 		apply(&c, "puzzles", v)
 	}
@@ -91,6 +95,8 @@ func apply(c *Config, key, val string) {
 		}
 	case "engine", "engine_path", "engine-path":
 		c.EnginePath = val
+	case "nnue", "nnue_path", "nnue-path", "weights":
+		c.NNUEPath = val
 	case "puzzles", "puzzles_dir", "puzzles-dir":
 		c.PuzzlesDir = val
 	case "open_browser", "open-browser", "openbrowser":

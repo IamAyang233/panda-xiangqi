@@ -10,20 +10,51 @@ import (
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 )
 
-// Manager 引擎管理器：优先使用皮卡鱼（高棋力），低档位与缺失时用自研引擎兜底。
+// Manager 引擎管理器。
+//
+// 调度优先级：**内嵌 Go 引擎**（internal/search，不需要外部文件、不需要执行位）
+// → 皮卡鱼 UCI 子进程（内嵌引擎不可用时的强引擎兜底）
+// → 自研简单引擎（最后兜底，并在最低档位上用于制造「人味失误」）。
+//
+// 内嵌引擎是默认主力：它彻底消除了「应用以非 root 运行、却要给引擎文件补
+// 可执行位」这个结构性依赖。
 type Manager struct {
 	mu     sync.RWMutex
+	native *NativeEngine
 	uci    *UCIEngine
 	simple *SimpleEngine
 	path   string   // 皮卡鱼路径；空 = 未配置
-	diag   []string // 探测诊断：每个候选引擎的尝试结果（失败原因），供日志输出
+	diag   []string // 探测诊断：每个候选的尝试结果（失败原因），供日志输出
 }
 
-// NewManager 探测皮卡鱼：优先 enginePath 参数，其次 PATH 中的 pikafish 与
-// 可执行文件同目录 engines/ 下。每个候选的失败原因记录进 Diagnostics，
-// "启动不了"类问题凭启动日志即可定位（文件缺失/权限/架构不符/杀软拦截/权重缺失）。
+// NewManager 只配置皮卡鱼路径（内嵌引擎的权重走自动探测）。
 func NewManager(enginePath string) *Manager {
-	m := &Manager{simple: NewSimpleEngine(), path: enginePath}
+	return NewManagerWithNNUE(enginePath, "")
+}
+
+// NewManagerWithNNUE 同时配置皮卡鱼路径与内嵌引擎的 NNUE 权重路径。
+//
+// 两个路径都可以留空：皮卡鱼会自动探测（参数 → PATH → 可执行文件同目录/engines），
+// 权重也会自动探测（参数 → 可执行文件同目录/models → engines → 当前目录）。
+func NewManagerWithNNUE(enginePath, nnuePath string) *Manager {
+	m := &Manager{
+		simple: NewSimpleEngine(),
+		native: NewNativeEngine(nnuePath, 0),
+		path:   enginePath,
+	}
+
+	// 内嵌引擎：只需要一个只读的权重文件。
+	if p := firstExisting(candidateWeightPaths(nnuePath)); p != "" {
+		m.native.weightsPath = p
+		m.diag = append(m.diag, "内嵌 Go 引擎: 权重 "+p)
+	} else {
+		// 清掉无效配置：留着会让 Available() 误报「可用」。
+		m.native.weightsPath = ""
+		m.diag = append(m.diag, "内嵌 Go 引擎: 未找到 NNUE 权重（pikafish.nnue.flat，"+
+			"期望位于可执行文件同目录或 engines/ 子目录）")
+	}
+
+	// 皮卡鱼兜底：每个候选的失败原因都记进诊断，"启动不了"类问题凭启动日志即可定位。
 	seen := map[string]bool{}
 	for _, cand := range candidatePaths(enginePath) {
 		if cand == "" || seen[cand] {
@@ -48,6 +79,21 @@ func NewManager(enginePath string) *Manager {
 		m.diag = append(m.diag, "未找到皮卡鱼可执行文件（期望位于可执行文件同目录或 engines/ 子目录）")
 	}
 	return m
+}
+
+// firstExisting 返回候选路径里第一个存在的文件；都不存在返回空串。
+func firstExisting(paths []string) string {
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if fileExists(p) {
+			return p
+		}
+	}
+	return ""
 }
 
 func candidatePaths(cfgPath string) []string {
@@ -82,6 +128,7 @@ func candidatePaths(cfgPath string) []string {
 // Diagnostics 返回引擎探测/运行诊断（每行一条），供启动日志与 /api/status 输出。
 func (m *Manager) Diagnostics() []string {
 	out := append([]string{}, m.diag...)
+	out = append(out, m.native.Diagnostics()...)
 	m.mu.RLock()
 	u := m.uci
 	m.mu.RUnlock()
@@ -102,29 +149,83 @@ func filepath2(p string) string {
 
 // EngineName 返回当前主力引擎名。
 func (m *Manager) EngineName() string {
+	if m.HasNative() {
+		return m.native.Name()
+	}
 	if m.uci != nil {
 		return m.uci.Name()
 	}
 	return m.simple.Name()
 }
 
-// HasUCI 是否有皮卡鱼可用。
+// HasNative 报告内嵌 Go 引擎是否可用（权重文件存在）。
+//
+// 权重是延迟加载的，所以这里只判断「文件在不在」——若文件损坏，
+// 首次搜索会失败并自动降级到皮卡鱼或自研引擎。
+func (m *Manager) HasNative() bool {
+	return m.native != nil && m.native.Available()
+}
+
+// HasUCI 是否有皮卡鱼可用（内嵌引擎不可用时的强引擎兜底）。
 func (m *Manager) HasUCI() bool { return m.uci != nil }
 
-// BestMove 按档位调度引擎：1~4 档恒用自研（含随机性），5 档以上优先皮卡鱼。
-func (m *Manager) BestMove(ctx context.Context, pos *game.Position, level int) (game.Move, error) {
-	if level >= 1 && level <= 4 {
-		return m.simple.BestMove(ctx, pos, level)
+// HasStrong 是否有任一强引擎可用（内嵌 Go 引擎或皮卡鱼）。
+func (m *Manager) HasStrong() bool { return m.HasNative() || m.HasUCI() }
+
+// maxDiag 限制运行时追加的诊断条数：长会话里搜索失败可能反复出现，
+// 不设上限会让诊断列表无限增长（它会被 /api/status 输出）。
+const maxDiag = 64
+
+// noteDiag 追加一条诊断（去重且不超上限）。
+func (m *Manager) noteDiag(s string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range m.diag {
+		if d == s {
+			return
+		}
 	}
+	if len(m.diag) < maxDiag {
+		m.diag = append(m.diag, s)
+	}
+}
+
+// BestMove 按档位调度引擎。
+//
+// 档位语义（1~16 由 search.Level 定义）在两个强引擎间通用：内嵌引擎直接接受
+// 档位参数；皮卡鱼则把档位映射成 Skill Level 与思考时间。
+func (m *Manager) BestMove(ctx context.Context, pos *game.Position, level int) (game.Move, error) {
+	if err := ctxErr(ctx); err != nil {
+		return game.Move{}, err
+	}
+
+	if m.HasNative() {
+		mv, err := m.native.BestMove(ctx, pos, level)
+		if err == nil {
+			return mv, nil
+		}
+		if ctxErr(ctx) != nil {
+			// 是取消而不是引擎故障，不该降级接着算。
+			return game.Move{}, err
+		}
+		m.noteDiag("内嵌 Go 引擎搜索失败，降级: " + err.Error())
+	}
+
 	m.mu.RLock()
 	uci := m.uci
 	m.mu.RUnlock()
 	if uci != nil {
-		if mv, err := uci.BestMove(ctx, pos, level); err == nil {
+		mv, err := uci.BestMove(ctx, pos, level)
+		if err == nil {
 			return mv, nil
 		}
-		// 皮卡鱼故障 → 降档到自研引擎高深度
-		return m.simple.BestMove(ctx, pos, 12)
+		if ctxErr(ctx) != nil {
+			return game.Move{}, err
+		}
+		m.noteDiag("皮卡鱼搜索失败，降级到自研引擎: " + err.Error())
+	}
+	if err := ctxErr(ctx); err != nil {
+		return game.Move{}, err
 	}
 	return m.simple.BestMove(ctx, pos, level)
 }
@@ -138,8 +239,16 @@ func (m *Manager) Hint(ctx context.Context, pos *game.Position) (game.Move, erro
 	return mv, nil
 }
 
-// RankedMoves 自研引擎排序的前 n 候选着法（LLM 引擎候选模式）。
+// RankedMoves 返回引擎评估排序的前 n 个候选着法（LLM 引擎候选模式）。
+//
+// 内嵌引擎的根节点本来就会给每个着法打分，直接取排序结果即可；
+// 它不可用时退回到自研引擎的简化排序。
 func (m *Manager) RankedMoves(ctx context.Context, pos *game.Position, level, n int) []game.Move {
+	if m.HasNative() {
+		if out := m.native.RankedMoves(ctx, pos, level, n); len(out) > 0 {
+			return out
+		}
+	}
 	return m.simple.RankedMoves(ctx, pos, level, n)
 }
 
@@ -149,5 +258,9 @@ func (m *Manager) Close() {
 	defer m.mu.Unlock()
 	if m.uci != nil {
 		m.uci.Close()
+		m.uci = nil
+	}
+	if m.native != nil {
+		m.native.Close()
 	}
 }

@@ -43,12 +43,6 @@ func PieceToFen(pc byte) byte {
 // ParseFEN 解析标准 Xiangqi FEN。
 func ParseFEN(fen string) (*Position, error) {
 	p := &Position{}
-	for i := range p.Board { // 16×16 边界哨兵：滑子越界自然停止
-		p.Board[i] = Edge
-	}
-	for _, sq := range mailbox256 { // 有效格先清空
-		p.Board[sq] = Empty
-	}
 	fields := strings.Fields(fen)
 	if len(fields) < 2 {
 		return nil, fmt.Errorf("FEN 至少需要 2 个字段: %q", fen)
@@ -72,8 +66,8 @@ func ParseFEN(fen string) (*Position, error) {
 			if f > 8 {
 				return nil, fmt.Errorf("FEN 第 %d 行超长", r)
 			}
-			sq := SQ256(f, r)
-			p.Board[sq] = pc
+			sq := bbSquare(f, r)
+			p.setPiece(sq, pc)
 			if TypeOf(pc) == King {
 				p.kingSq[ColorOf(pc)>>3] = sq
 			}
@@ -109,10 +103,10 @@ func ParseFEN(fen string) (*Position, error) {
 
 func (p *Position) recomputeKey() {
 	var key uint64
-	for sq90 := 0; sq90 < 90; sq90++ {
-		sq := mailbox256[sq90]
+	for sq := 0; sq < 90; sq++ {
 		if pc := p.Board[sq]; pc != Empty {
-			key ^= pieceKeys[pc][sq]
+			// 键位沿用 256 下标，保证与改造前的 Key 逐位一致。
+			key ^= pieceKeys[pc][mailbox256[sq]]
 		}
 	}
 	if p.Turn == Black {
@@ -130,7 +124,7 @@ func (p *Position) FEN() string {
 		}
 		emptyRun := 0
 		for f := 0; f < 9; f++ {
-			pc := p.Board[SQ256(f, r)]
+			pc := p.Board[bbSquare(f, r)]
 			if pc == Empty {
 				emptyRun++
 				continue
