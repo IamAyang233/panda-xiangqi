@@ -10,6 +10,9 @@ package nnue
 // UsesAVX2 在非 amd64 上恒为 false。
 func UsesAVX2() bool { return false }
 
+// SIMDStatus 说明当前架构没有汇编内核，统一走标量实现。
+func SIMDStatus() string { return "标量（当前架构无 SIMD 内核，如 arm64）" }
+
 func addI16(acc *[L1]int16, w8 []byte) { addI16Scalar(acc, w8) }
 
 func subI16(acc *[L1]int16, w8 []byte) { subI16Scalar(acc, w8) }

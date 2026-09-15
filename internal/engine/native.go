@@ -304,8 +304,10 @@ func (e *NativeEngine) Diagnostics() []string {
 	if !e.ready.Load() {
 		return []string{"内嵌 Go 引擎: 权重未加载（首次使用时加载）"}
 	}
-	return []string{fmt.Sprintf("内嵌 Go 引擎: 就绪（权重 %s，%d 线程，置换表 %d MB）",
-		e.weightsPath, e.pool.Threads(), search.DefaultTTSizeMB)}
+	// 把指令集路径一并报出来：低配设备上排查「引擎起不来 / 跑得异常慢」
+	// 时，第一件要确认的就是它走的是 AVX2 还是标量兜底。
+	return []string{fmt.Sprintf("内嵌 Go 引擎: 就绪（权重 %s，%d 线程，置换表 %d MB，累加器内核 %s）",
+		e.weightsPath, e.pool.Threads(), search.DefaultTTSizeMB, nnue.SIMDStatus())}
 }
 
 // Close 释放权重与搜索池占用的内存。
