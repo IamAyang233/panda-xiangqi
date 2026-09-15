@@ -89,6 +89,7 @@ func main() {
 	verbose := flag.Bool("v", false, "逐着打印")
 	maxDepthFlag := flag.Int("maxdepth", 7, "逐层诊断的最大深度（mode=profile）")
 	fenFlag := flag.String("fen", "", "只诊断这一个 FEN（mode=profile，留空则用内置局面集）")
+	depthsFlag := flag.String("depths", "10,12", "固定深度列表，逗号分隔（mode=self；调 LMR/剪枝时对比节点总数）")
 	flag.Parse()
 
 	mt := time.Duration(*movetime) * time.Millisecond
@@ -137,6 +138,8 @@ func main() {
 	case "nodes":
 		uci.Close()
 		nodesBudget(*flatPath, *uciPath, *uciSkill, []int64{5000, 20000, 100000, 500000}, matchFENs)
+	case "self":
+		runSelfProbe(*flatPath, parseInts(*depthsFlag, []int{10, 12}), matchFENs)
 	default:
 		fmt.Println("未知 mode：", *mode)
 		os.Exit(2)
