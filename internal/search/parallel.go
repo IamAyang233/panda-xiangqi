@@ -185,14 +185,18 @@ func (p *Pool) worker(idx int, pos *game.Position, maxDepth int) {
 	if start > maxDepth {
 		start = maxDepth
 	}
+	// 各线程各自维护期望窗口的上一层分值：窗口是每线程私有的搜索策略，
+	// 共享的只有置换表。
+	prev, hasPrev := -Infinity, false
 	for d := start; d <= maxDepth; d++ {
 		if s.stopped() {
 			return
 		}
-		roots, ok := s.rootSearch(pos, d)
+		roots, ok := s.searchRootAspiration(pos, d, prev, hasPrev)
 		if !ok || len(roots) == 0 || s.stopped() {
 			return
 		}
+		prev, hasPrev = roots[0].Score, true
 		s.ageHistory()
 	}
 }

@@ -31,7 +31,7 @@ func (s *Searcher) SearchNodes(p *game.Position, maxNodes int64) Result {
 func (s *Searcher) searchLoopNodes(p *game.Position, maxNodes int64) Result {
 	s.prepare(p)
 
-	roots, ok := s.rootSearch(p, 1)
+	roots, ok := s.rootSearch(p, 1, -Infinity, Infinity)
 	if !ok || len(roots) == 0 {
 		return Result{Nodes: s.nodes}
 	}
@@ -44,8 +44,8 @@ func (s *Searcher) searchLoopNodes(p *game.Position, maxNodes int64) Result {
 		if s.nodes >= maxNodes {
 			break
 		}
-		roots, ok := s.rootSearch(p, d)
-		if !ok || len(roots) == 0 {
+		roots, ok := s.searchRootAspiration(p, d, res.Score, res.Depth > 0)
+		if !ok || len(roots) == 0 || s.stopped() {
 			break
 		}
 		res.Score, res.Best, res.Depth, res.Roots = roots[0].Score, roots[0].Move, d, roots
@@ -89,7 +89,7 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 	s.prepare(p)
 
 	// 第 1 层不计时：代价极小，但没有它调用方可能拿不到任何着法。
-	roots, ok := s.rootSearch(p, 1)
+	roots, ok := s.rootSearch(p, 1, -Infinity, Infinity)
 	if !ok || len(roots) == 0 {
 		return Result{Nodes: s.nodes}
 	}
@@ -124,7 +124,7 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 		if limit.Soft > 0 && time.Since(start) >= limit.Soft {
 			break
 		}
-		roots, ok := s.rootSearch(p, d)
+		roots, ok := s.searchRootAspiration(p, d, res.Score, res.Depth > 0)
 		if !ok || len(roots) == 0 || s.stopped() {
 			break
 		}

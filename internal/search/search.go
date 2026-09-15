@@ -119,6 +119,7 @@ type Searcher struct {
 	noNull    bool
 	noForward bool // 关闭前向剪枝（reverse futility / futility / LMP），供对照实验
 	noSEE     bool // 关闭静态搜索里的坏吃子剪枝，供对照实验
+	noAsp     bool // 关闭期望窗口（每层都用全窗），供对照实验
 
 	// 排序质量统计。走法排序的作用是让「最好的着法尽早被搜到」，
 	// 因为 alpha-beta 的第一个着法能定下 alpha，越早出现高分着法，
@@ -249,6 +250,12 @@ func (s *Searcher) DisableForwardPruning() { s.noForward = true }
 // DisableSEE 关闭静态搜索里的坏吃子剪枝，供对照实验使用。
 func (s *Searcher) DisableSEE() { s.noSEE = true }
 
+// DisableAspiration 关闭期望窗口，每层都用全窗 —— 即引入期望窗口之前的行为。
+//
+// 对照实验里要它是因为：期望窗口会通过置换表扰动搜索轨迹，使个别局面在同一
+// 深度上的将杀发现晚一层。想让参照搜索给出「信息最完整」的结果时，必须把它关掉。
+func (s *Searcher) DisableAspiration() { s.noAsp = true }
+
 // ttProbe / ttStore 在置换表被禁用时退化为空操作。
 func (s *Searcher) ttProbe(key uint64) (ttEntry, bool) {
 	if s.tt == nil {
@@ -290,7 +297,7 @@ func (s *Searcher) SearchDepth(p *game.Position, depth int) Result {
 	s.nodes = 0
 	s.Clear()
 	s.prepare(p)
-	roots, ok := s.rootSearch(p, depth)
+	roots, ok := s.rootSearch(p, depth, -Infinity, Infinity)
 	if !ok || len(roots) == 0 {
 		return Result{Nodes: s.nodes}
 	}
@@ -320,7 +327,7 @@ func (s *Searcher) TTLen() int {
 // 随机挑 —— 这需要知道除最优之外的着法有多好。分值是 fail-soft 语义，
 // 未超过 alpha 的着法返回的是其子树实际搜到的最大值（真实值的上界），
 // 用于排序足够。
-func (s *Searcher) rootSearch(p *game.Position, depth int) ([]RootMove, bool) {
+func (s *Searcher) rootSearch(p *game.Position, depth, alpha, beta int) ([]RootMove, bool) {
 	moves := p.LegalMoves(p.Turn)
 	if len(moves) == 0 {
 		return nil, false
@@ -334,7 +341,7 @@ func (s *Searcher) rootSearch(p *game.Position, depth int) ([]RootMove, bool) {
 	roots := make([]RootMove, 0, len(moves))
 	best := game.Move{}
 	bestScore := -Infinity
-	alpha := -Infinity
+	entryAlpha := alpha
 
 	for i, m := range moves {
 		if s.stopped() {
@@ -346,16 +353,18 @@ func (s *Searcher) rootSearch(p *game.Position, depth int) ([]RootMove, bool) {
 
 		var score int
 		if i == 0 {
-			score = -s.alphaBeta(p, depth-1, -Infinity, -alpha, 1, true, true)
+			score = -s.alphaBeta(p, depth-1, -beta, -alpha, 1, true, true)
 		} else {
 			// 根节点同样走 PVS + LMR：先窄窗口试探，必要时重搜。
+			// 只有落在窗口内部的着法才值得全窗重搜 —— 已经达到 beta 的着法
+			// 意味着本层 fail high，调用方会放宽窗口整层重搜，这里不必再花代价。
 			red := s.reduction(depth, i, victim, false)
 			score = -s.alphaBeta(p, depth-1-red, -alpha-1, -alpha, 1, false, true)
 			if score > alpha && red > 0 {
 				score = -s.alphaBeta(p, depth-1, -alpha-1, -alpha, 1, false, true)
 			}
-			if score > alpha {
-				score = -s.alphaBeta(p, depth-1, -Infinity, -alpha, 1, true, true)
+			if score > alpha && score < beta {
+				score = -s.alphaBeta(p, depth-1, -beta, -alpha, 1, true, true)
 			}
 		}
 		p.Unmake()
@@ -368,13 +377,29 @@ func (s *Searcher) rootSearch(p *game.Position, depth int) ([]RootMove, bool) {
 		if score > alpha {
 			alpha = score
 		}
+		// fail high：本层作废，调用方会放宽窗口把整层重搜一次。继续往下搜只会
+		// 在退化的窗口里空转（alpha 已 ≥ beta，后续子节点拿到的是空窗口），
+		// 等于白费节点。全窗时 beta = +∞，这条分支不可能触发，所以它只影响
+		// 期望窗口路径。
+		if score >= beta {
+			break
+		}
 	}
 	if s.stopped() {
 		return roots, true
 	}
 
 	sortRootsDesc(roots)
-	s.ttStore(p.Key, best, scoreToTT(bestScore, 0), depth, ttExact)
+	// 写表的标志必须跟着**入口窗口**走：入口是 ±∞（全窗）时才是精确值；
+	// 期望窗口下没有超过入口 alpha 说明是上界、达到入口 beta 说明是下界。
+	// 一律写 ttExact 会把截断值当成精确值喂给后续搜索。
+	flag := ttExact
+	if bestScore <= entryAlpha {
+		flag = ttUpper
+	} else if bestScore >= beta {
+		flag = ttLower
+	}
+	s.ttStore(p.Key, best, scoreToTT(bestScore, 0), depth, flag)
 	return roots, true
 }
 
