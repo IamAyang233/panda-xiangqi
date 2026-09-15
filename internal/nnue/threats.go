@@ -70,21 +70,32 @@ func pawnAttacksTo(c, s int) bitboard {
 
 // slidingAttack 对应 Bitboards::sliding_attack<pt>（pt 为车或炮）。
 //
-// 用预计算的射线表 + 位扫描找第一个阻挡，不做逐格步进 —— 这是每次走子都会
-// 调用的热点（updateThreats 里要算车、炮各一套）。
-//
 // 语义与逐格版一致：车打到阻挡子为止（含阻挡子本身）；
 // 炮在越过炮架后把余下的格子全部纳入（是否真有子由调用方按占用集过滤）。
+//
+// 实现委托给 slidingAttackBoth，只取需要的一半 —— 保持单一逻辑来源，
+// 避免两个版本各自演化后分叉。初始化期建表时用它，
+// 每次走子的热路径则直接用 slidingAttackBoth 一次拿全。
 func slidingAttack(pt, sq int, occupied bitboard) bitboard {
-	var attack bitboard
+	rook, cannon := slidingAttackBoth(sq, occupied)
+	if pt == ptRook {
+		return rook
+	}
+	return cannon
+}
+
+// slidingAttackBoth 一次算出同一格上车与炮的攻击集。
+//
+// 热路径（updateThreats）总是两个都要，而两者的射线与阻挡完全相同 ——
+// 分开调用会把「取射线、与占用集求交、找第一个阻挡」重复做一遍。
+// 合并后这些只算一次，四个方向的循环也只走一遍。
+func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 	for di := 0; di < 4; di++ {
 		ray := rayBB[sq][di]
 		blockers := ray.and(occupied)
 		if blockers.isEmpty() {
 			// 整条射线都没子：车可以直接走到底；炮没有炮架，打不到任何格。
-			if pt == ptRook {
-				attack = attack.or(ray)
-			}
+			rook = rook.or(ray)
 			continue
 		}
 		// 北/东向格号递增取最低置位，南/西向递减取最高置位。
@@ -94,20 +105,19 @@ func slidingAttack(pt, sq int, occupied bitboard) bitboard {
 		} else {
 			fb = blockers.msb()
 		}
-		// sq 到第一个阻挡之间的空段。
-		forward := rayBB[fb][di].or(bbOf(fb))
-		if pt == ptRook {
-			// 车：把空段与阻挡子本身都算进去。
-			attack = attack.or(ray.andNot(forward))
-			attack.set(fb)
-			continue
-		}
+		// 阻挡子之后的射线既用于车的「空段截止」，也用作炮的「越过炮架」。
+		fbRay := rayBB[fb][di]
+		forward := fbRay.or(bbOf(fb))
+
+		// 车：把空段与阻挡子本身都算进去。
+		rook = rook.or(ray.andNot(forward))
+		rook.set(fb)
+
 		// 炮：炮架之前一格都不算（hurdle 未越过），
 		// 越过 fb 之后一直算到下一个子（含）为止。
-		second := rayBB[fb][di]
-		after := second.and(occupied)
+		after := fbRay.and(occupied)
 		if after.isEmpty() {
-			attack = attack.or(second)
+			cannon = cannon.or(fbRay)
 			continue
 		}
 		var nb int
@@ -116,9 +126,9 @@ func slidingAttack(pt, sq int, occupied bitboard) bitboard {
 		} else {
 			nb = after.msb()
 		}
-		attack = attack.or(second.andNot(rayBB[nb][di]))
+		cannon = cannon.or(fbRay.andNot(rayBB[nb][di]))
 	}
-	return attack
+	return rook, cannon
 }
 
 var bishopDirections = [4]int{

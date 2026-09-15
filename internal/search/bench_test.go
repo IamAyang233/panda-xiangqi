@@ -40,3 +40,24 @@ func BenchmarkMoveGen(b *testing.B) {
 		_ = p.LegalMoves(p.Turn)
 	}
 }
+
+// BenchmarkSearchFixedNodes 固定节点预算的搜索。
+//
+// 相比固定深度，它排除「节点数变化」的干扰 —— 做「把某段计算替换成空实现」
+// 这类性能上界实验时，搜索行为会变、节点数也会变，只有锁死预算才能比出
+// 那段计算的真实占比。
+func BenchmarkSearchFixedNodes(b *testing.B) {
+	w, err := nnue.Load(flatPath)
+	if err != nil {
+		b.Skip("未找到展开后的权重，跳过")
+	}
+	p, err := game.ParseFEN(game.InitialFEN)
+	if err != nil {
+		b.Fatal(err)
+	}
+	s := New(w)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.SearchNodes(p, 100000)
+	}
+}

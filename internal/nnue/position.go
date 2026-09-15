@@ -413,8 +413,8 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	occupied := p.occ
 	pt := pieceType(int(pc))
 
-	rAttacks := slidingAttack(ptRook, s, occupied)
-	cAttacks := slidingAttack(ptCannon, s, occupied)
+	// 车与炮的射线、阻挡完全相同，一次算全，省掉一半的重复计算。
+	rAttacks, cAttacks := slidingAttackBoth(s, occupied)
 
 	// ---- 该子发出的威胁 ----
 	var threatened bitboard
