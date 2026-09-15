@@ -63,3 +63,23 @@ loop:
 	JNZ       loop
 	VZEROUPPER
 	RET
+
+// func maddubsProbe(a, b []byte, out []int16)
+//
+// 诊断用：把 VPMADDUBSW 的结果原样导出。
+//
+// 该指令的语义是「src1 无符号 × src2 有符号，相邻两对相加后饱和到 i16」，
+// 但 Go 汇编（Plan9 语法）里操作数的书写顺序与 Intel 文档相反，
+// 且哪个操作数被视为无符号不能靠猜 —— 弄反了不会报错，只会静默算错评估值。
+// 这个探针让 TestMaddubsSemantics 能用已知输入把语义钉死。
+//
+// out[k] 对应 a[2k]*b[2k] + a[2k+1]*b[2k+1]（若首操作数无符号）。
+TEXT ·maddubsProbe(SB), NOSPLIT, $0-72
+	MOVQ a_base+0(FP), SI
+	MOVQ b_base+24(FP), DI
+	MOVQ out_base+48(FP), DX
+	VMOVDQU (SI), Y0
+	VPMADDUBSW (DI), Y0, Y1
+	VMOVDQU Y1, (DX)
+	VZEROUPPER
+	RET

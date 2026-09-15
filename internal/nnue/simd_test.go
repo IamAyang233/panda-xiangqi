@@ -2,6 +2,7 @@ package nnue
 
 import (
 	"math/rand"
+	"os"
 	"testing"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
@@ -71,7 +72,15 @@ func TestSIMDMatchesScalar(t *testing.T) {
 
 // TestDetectAVX2Sanity 确认检测函数本身能给出结论（本机应当支持 AVX2）。
 func TestDetectAVX2Sanity(t *testing.T) {
+	// 显式读一次 QIJING_SIMD：该变量在**包初始化**时被读取，而 Go 的
+	// 测试缓存只追踪测试执行期间的 os.Getenv —— init 期间的读取不被记录。
+	// 不在这里读一次的话，`QIJING_SIMD=off go test` 会错误地复用上一次
+	// AVX2 模式的结果（表现为 "(cached)"），让「标量兜底已验证」变成假象。
+	// 只要包内有任意一个测试读了它，整个包的缓存键就会带上该变量的值。
+	_ = os.Getenv("QIJING_SIMD")
+
 	t.Logf("useAVX2 = %v（本机 13th Gen Intel，应当为 true）", UsesAVX2())
+	t.Logf("内核路径：%s", SIMDStatus())
 }
 
 func benchAdd(b *testing.B, fn func(*[L1]int16, []byte)) {
