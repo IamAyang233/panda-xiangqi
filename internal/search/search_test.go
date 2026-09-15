@@ -143,30 +143,36 @@ func TestSearchDeterministic(t *testing.T) {
 	t.Logf("depth 3 两次均为 %s（score=%d nodes=%d）✓", a.Best, a.Score, a.Nodes)
 }
 
-// TestPruningEffectiveness 剪枝与缓存必须真正生效且不改变结果。
+// TestPruningEffectiveness 剪枝与缓存必须真正生效。
 //
-// 对照「全开」与「关掉置换表 + 空着剪枝」，两者应给出同一最优着法与分值；
-// 同时全开的节点数应明显更少，且两个机制都确实被触发过
+// 对照「全开」与「全部关掉（置换表 + 空着剪枝 + 前向剪枝）」：
+// 全开的节点数必须明显更少，且各机制都确实被触发过
 // —— 否则就是「写了但没接上」这类静默失效。
+//
+// 注意不再断言「两者结果相同」：置换表与空着剪枝是无损的，
+// 但前向剪枝（reverse futility / futility / LMP）按静态评估推断
+// 「此分支不可能更好」并直接跳过，属于**有损启发式**，
+// 改用它就是会改变搜索结果 —— 那是它的工作方式，不是缺陷。
+//
+// 深度取 6：depth 4 时前向剪枝几乎覆盖整棵树，会把置换表与空着剪枝
+// 的贡献完全盖住，量不出效果。
 func TestPruningEffectiveness(t *testing.T) {
 	w := loadWeights(t)
 	p, err := game.ParseFEN(game.InitialFEN)
 	if err != nil {
 		t.Fatal(err)
 	}
+	const depth = 6
 
 	full := New(w)
-	rFull := full.SearchDepth(p, 4)
+	rFull := full.Search(p, depth)
 
 	none := New(w)
 	none.DisableTT()
 	none.DisableNullMove()
-	rNone := none.SearchDepth(p, 4)
+	none.DisableForwardPruning()
+	rNone := none.Search(p, depth)
 
-	if rFull.Best != rNone.Best || rFull.Score != rNone.Score {
-		t.Errorf("剪枝改变了结果：全开 %s/%d，全关 %s/%d",
-			rFull.Best, rFull.Score, rNone.Best, rNone.Score)
-	}
 	if full.TTHits() == 0 {
 		t.Error("置换表一次未命中，等于没生效")
 	}
@@ -176,9 +182,12 @@ func TestPruningEffectiveness(t *testing.T) {
 	if rFull.Nodes >= rNone.Nodes {
 		t.Errorf("剪枝未减少节点：全开 %d，全关 %d", rFull.Nodes, rNone.Nodes)
 	}
-	t.Logf("depth 4: 全开 %s/%d nodes=%d（TT 命中 %d，空着 %d）｜全关 nodes=%d｜省 %.0f%%",
+	t.Logf("depth %d：全开 %s/%d nodes=%d（TT 命中 %d，空着 %d）｜全关 %s/%d nodes=%d｜省 %.0f%%",
+		depth,
 		rFull.Best, rFull.Score, rFull.Nodes, full.TTHits(), full.NullMoves(),
-		rNone.Nodes, (1-float64(rFull.Nodes)/float64(rNone.Nodes))*100)
+		rNone.Best, rNone.Score, rNone.Nodes,
+		(1-float64(rFull.Nodes)/float64(rNone.Nodes))*100)
+	t.Logf("（两者最佳着法可能不同：前向剪枝是有损启发式）")
 }
 
 // TestSearchWinsFreePiece 战术验证：白吃无保护的车时，深度 2 必须选吃子着法。
