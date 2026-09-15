@@ -1,0 +1,70 @@
+//go:build amd64
+
+package nnue
+
+// AVX2 内核的 Go 侧声明。实现在 simd_amd64.s，由 go build 内置的汇编器处理。
+//
+//go:noescape
+func addI16AVX2(acc *[L1]int16, w8 []byte)
+
+//go:noescape
+func subI16AVX2(acc *[L1]int16, w8 []byte)
+
+//go:noescape
+func cpuid(eax, ecx uint32) (a, b, c, d uint32)
+
+//go:noescape
+func xgetbv(index uint32) (eax, edx uint32)
+
+// useAVX2 在包初始化时确定一次，之后各处的分派只读它。
+var useAVX2 = detectAVX2()
+
+// detectAVX2 判定当前 CPU 与操作系统是否都支持 AVX2。
+//
+// 三项缺一不可，少任何一项都会在真实硬件上踩坑：
+//  1. CPUID.1:ECX.OSXSAVE —— 说明 OS 启用了 XSAVE，否则无法用 XGETBV
+//  2. CPUID.1:ECX.AVX     —— CPU 有 AVX
+//  3. XGETBV(0) 的 bit1/bit2 —— OS 实际保存 XMM 与 YMM 状态
+//  4. CPUID.7:EBX.AVX2    —— 有 AVX2 指令
+//
+// 只查第 4 项是不够的：某些虚拟化环境或旧内核下 CPU 支持 AVX2 但 OS
+// 不保存 YMM 状态，执行 AVX2 指令会触发 #UD。
+//
+// 这里自己读 CPUID 而不是用 golang.org/x/sys/cpu，是为了守住「零第三方依赖」。
+func detectAVX2() bool {
+	_, _, c1, _ := cpuid(1, 0)
+	const (
+		osxsaveBit = 1 << 27
+		avxBit     = 1 << 28
+	)
+	if c1&osxsaveBit == 0 || c1&avxBit == 0 {
+		return false
+	}
+	// XCR0 的 bit1(XMM) 与 bit2(YMM) 都必须置位。
+	if eax, _ := xgetbv(0); eax&0x6 != 0x6 {
+		return false
+	}
+	_, b7, _, _ := cpuid(7, 0)
+	return b7&(1<<5) != 0
+}
+
+// UsesAVX2 报告当前是否走 AVX2 内核（供测试与诊断使用）。
+func UsesAVX2() bool { return useAVX2 }
+
+// addI16 把 int8 权重符号扩展后累加到 int16 累加器。
+func addI16(acc *[L1]int16, w8 []byte) {
+	if useAVX2 {
+		addI16AVX2(acc, w8)
+		return
+	}
+	addI16Scalar(acc, w8)
+}
+
+// subI16 是 addI16 的减版本。
+func subI16(acc *[L1]int16, w8 []byte) {
+	if useAVX2 {
+		subI16AVX2(acc, w8)
+		return
+	}
+	subI16Scalar(acc, w8)
+}

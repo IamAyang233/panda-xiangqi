@@ -126,20 +126,12 @@ func (w *Weights) rebuildThreats(p *Position, a *Accumulator, c int, mirror bool
 // ---- 单条特征的加减。权重是 int8 存为 byte，必须先转 int8 再转 int16，
 // 否则 int16(byte) 会做无符号扩展，负权重变成 +192 这类大正数。
 //
-// 内层 1024 通道循环一律 4 路展开：Go 编译器至今不做 SIMD 自动向量化，
-// 单累加链又吃不满 CPU 的乱序窗口，展开后能拿到约 28% 的提速（实测）。
-// 展开边界由 L1%4==0 保证，不需要尾巴处理。
+// 内层 1024 通道循环交给 addI16 / subI16；它们在有 AVX2 时走汇编内核
+// （一次 16 路），否则退回 4 路展开的标量实现，见 simd*.go。
 
 func psqAdd(a *Accumulator, w *Weights, c, idx int) {
-	acc := &a.PsqAcc[c]
 	base := idx * L1
-	wb := w.W[base : base+L1]
-	for i := 0; i < L1; i += 4 {
-		acc[i] += int16(int8(wb[i]))
-		acc[i+1] += int16(int8(wb[i+1]))
-		acc[i+2] += int16(int8(wb[i+2]))
-		acc[i+3] += int16(int8(wb[i+3]))
-	}
+	addI16(&a.PsqAcc[c], w.W[base:base+L1])
 	base = psqPsqtBase + idx*PSQTBuckets
 	for k := 0; k < PSQTBuckets; k++ {
 		a.PsqPsqt[c][k] += w.Psqt[base+k]
@@ -147,15 +139,8 @@ func psqAdd(a *Accumulator, w *Weights, c, idx int) {
 }
 
 func psqSub(a *Accumulator, w *Weights, c, idx int) {
-	acc := &a.PsqAcc[c]
 	base := idx * L1
-	wb := w.W[base : base+L1]
-	for i := 0; i < L1; i += 4 {
-		acc[i] -= int16(int8(wb[i]))
-		acc[i+1] -= int16(int8(wb[i+1]))
-		acc[i+2] -= int16(int8(wb[i+2]))
-		acc[i+3] -= int16(int8(wb[i+3]))
-	}
+	subI16(&a.PsqAcc[c], w.W[base:base+L1])
 	base = psqPsqtBase + idx*PSQTBuckets
 	for k := 0; k < PSQTBuckets; k++ {
 		a.PsqPsqt[c][k] -= w.Psqt[base+k]
@@ -163,15 +148,8 @@ func psqSub(a *Accumulator, w *Weights, c, idx int) {
 }
 
 func thrAdd(a *Accumulator, w *Weights, c, idx int) {
-	acc := &a.ThrAcc[c]
 	base := idx * L1
-	wb := w.ThreatW[base : base+L1]
-	for i := 0; i < L1; i += 4 {
-		acc[i] += int16(int8(wb[i]))
-		acc[i+1] += int16(int8(wb[i+1]))
-		acc[i+2] += int16(int8(wb[i+2]))
-		acc[i+3] += int16(int8(wb[i+3]))
-	}
+	addI16(&a.ThrAcc[c], w.ThreatW[base:base+L1])
 	base = idx * PSQTBuckets
 	for k := 0; k < PSQTBuckets; k++ {
 		a.ThrPsqt[c][k] += w.Psqt[base+k]
@@ -179,15 +157,8 @@ func thrAdd(a *Accumulator, w *Weights, c, idx int) {
 }
 
 func thrSub(a *Accumulator, w *Weights, c, idx int) {
-	acc := &a.ThrAcc[c]
 	base := idx * L1
-	wb := w.ThreatW[base : base+L1]
-	for i := 0; i < L1; i += 4 {
-		acc[i] -= int16(int8(wb[i]))
-		acc[i+1] -= int16(int8(wb[i+1]))
-		acc[i+2] -= int16(int8(wb[i+2]))
-		acc[i+3] -= int16(int8(wb[i+3]))
-	}
+	subI16(&a.ThrAcc[c], w.ThreatW[base:base+L1])
 	base = idx * PSQTBuckets
 	for k := 0; k < PSQTBuckets; k++ {
 		a.ThrPsqt[c][k] -= w.Psqt[base+k]
