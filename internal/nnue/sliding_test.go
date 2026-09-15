@@ -110,17 +110,67 @@ func TestSlidingAttackBothMatchesRef(t *testing.T) {
 	t.Logf("合并版与参考实现在全部 90 格、两个兵种上逐位一致 ✓")
 }
 
+// benchSink* 用于防止基准测试的调用被编译器整体消除。
+//
+// 这一点必须较真：原来写的是 `_, _ = slidingAttackBoth(sq, occ)` 且 sq/occ
+// 都是常量 —— 函数结果未被使用，编译器完全可以把整个调用删掉。
+// 那样量出来的数字是假的，会严重误导优化决策。
+var (
+	benchSinkRook bitboard
+	benchSinkCann bitboard
+)
+
+// benchOccupancies 生成一组「像真实局面」的占用集：32 个子力散布在 90 格上。
+//
+// 固定用同一个 occupied 反复算，分支会被完美预测、rayBB 的索引恒为同一个，
+// 测出的是乐观下限；真实搜索里 occupied 与格子每步都在变。
+func benchOccupancies(n int) []bitboard {
+	out := make([]bitboard, n)
+	for i := range out {
+		rng := rand.New(rand.NewSource(int64(i)*2654435761 + 7))
+		for k := 0; k < 32; k++ {
+			out[i].set(rng.Intn(squareNB))
+		}
+	}
+	return out
+}
+
+func benchSquares(n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = i % squareNB
+	}
+	return out
+}
+
+// BenchmarkSlidingAttackBoth 测合并版滑动攻击。
+//
+// 分两个子基准：
+//   - Fixed：同一 occupied 反复算 —— 分支完美预测、表全在 L1，乐观下限
+//   - Varying：occupied 与格子都在变 —— 接近真实搜索的形态
+//
+// 两者之差就是分支预测失败与访存局部性的代价。只看 Fixed 会让人误判
+// 「这段代码已经很便宜、不值得优化」。
 func BenchmarkSlidingAttackBoth(b *testing.B) {
-	var occ bitboard
-	rng := rand.New(rand.NewSource(5))
-	for i := 0; i < 20; i++ {
-		occ.set(rng.Intn(squareNB))
-	}
-	sq := 4*9 + 4
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = slidingAttackBoth(sq, occ)
-	}
+	occs := benchOccupancies(256)
+	sqs := benchSquares(256)
+
+	b.Run("Fixed", func(b *testing.B) {
+		occ := occs[0]
+		sq := 4*9 + 4
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			benchSinkRook, benchSinkCann = slidingAttackBoth(sq, occ)
+		}
+	})
+
+	b.Run("Varying", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			j := i & 255
+			benchSinkRook, benchSinkCann = slidingAttackBoth(sqs[j], occs[j])
+		}
+	})
 }
 
 // BenchmarkSlidingAttackSplit 是合并前的调用形态（车、炮各算一遍）。
@@ -128,15 +178,25 @@ func BenchmarkSlidingAttackBoth(b *testing.B) {
 // 必须调 slidingAttackRef 而不是 slidingAttack —— 后者现在也委托给合并版，
 // 那样测出来的会是「合并版跑两遍」，量不到任何收益。
 func BenchmarkSlidingAttackSplit(b *testing.B) {
-	var occ bitboard
-	rng := rand.New(rand.NewSource(5))
-	for i := 0; i < 20; i++ {
-		occ.set(rng.Intn(squareNB))
-	}
-	sq := 4*9 + 4
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = slidingAttackRef(ptRook, sq, occ)
-		_ = slidingAttackRef(ptCannon, sq, occ)
-	}
+	occs := benchOccupancies(256)
+	sqs := benchSquares(256)
+
+	b.Run("Fixed", func(b *testing.B) {
+		occ := occs[0]
+		sq := 4*9 + 4
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			benchSinkRook = slidingAttackRef(ptRook, sq, occ)
+			benchSinkCann = slidingAttackRef(ptCannon, sq, occ)
+		}
+	})
+
+	b.Run("Varying", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			j := i & 255
+			benchSinkRook = slidingAttackRef(ptRook, sqs[j], occs[j])
+			benchSinkCann = slidingAttackRef(ptCannon, sqs[j], occs[j])
+		}
+	})
 }

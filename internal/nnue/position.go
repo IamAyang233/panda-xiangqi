@@ -414,6 +414,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	pt := pieceType(int(pc))
 
 	// 车与炮的射线、阻挡完全相同，一次算全，省掉一半的重复计算。
+	if diagOn {
+		diagStats.SlidingCalls++
+	}
 	rAttacks, cAttacks := slidingAttackBoth(s, occupied)
 
 	// ---- 该子发出的威胁 ----
@@ -484,6 +487,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 		psq := candidates.popLSB()
 		cpt := pieceType(int(p.board[psq]))
 		// 排除 s 本身：指向 s 的关系已由上面处理。
+		if diagOn {
+			diagStats.RayAttackCall += 2
+		}
 		before := attacksBB(cpt, psq, occBefore).and(occupied).andNot(bbOf(s))
 		after := attacksBB(cpt, psq, occAfter).and(occupied).andNot(bbOf(s))
 		for t := before.andNot(after); !t.isEmpty(); {

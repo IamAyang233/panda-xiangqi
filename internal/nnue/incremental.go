@@ -14,9 +14,25 @@ package nnue
 // 「威胁段在前、PSQ 段在后」，与 C++ 的 combinedPsqtWeights 一致。
 const psqPsqtBase = ThreatInputs * PSQTBuckets
 
-// pendingLimit 是走增量路径的脏条目上限。超过它时全量重建反而更便宜
-// （全量要枚举约 96 个特征，每个特征一次 1024 通道累加）。
-const pendingLimit = 96
+// pendingLimit 是走增量路径的脏条目上限，超过它时改走全量重建。
+//
+// 写成变量而非常量，是为了能在一轮基准里扫描取值（见
+// search.TestPendingLimitSweep）。实测结论是**这个值不应该调大**：
+//
+//	pendingLimit   96     256    512    1024   2048
+//	相对耗时       1.000  1.000  1.078  1.086  1.141
+//
+// 直觉上「全量重建要枚举全部特征（约 32 次滑动攻击 + 21 条 thrAdd），
+// 比增量贵得多，所以阈值该放大」是错的：提高阈值只让约 12% 的视角少走重建，
+// 却让占 88% 的增量路径窗口同步变长，条目数线性增长，净效果是变慢。
+var pendingLimit = 96
+
+// SetPendingLimit 调整阈值并返回原值，供基准扫描使用。
+func SetPendingLimit(n int) int {
+	old := pendingLimit
+	pendingLimit = n
+	return old
+}
 
 // Apply 把累加器更新到局面 p 当前的特征集合。
 //
@@ -30,6 +46,15 @@ const pendingLimit = 96
 func (w *Weights) Apply(p *Position, a *Accumulator) {
 	if !a.ready {
 		w.Reset(a)
+	}
+
+	if diagOn {
+		diagStats.ApplyCalls++
+		n := len(p.pendingThreats)
+		diagStats.ApplyWindow += int64(n)
+		if n > diagStats.MaxWindow {
+			diagStats.MaxWindow = n
+		}
 	}
 
 	stale := p.stale
@@ -74,6 +99,9 @@ func (w *Weights) RefreshFromPosition(p *Position, a *Accumulator) {
 
 // applyPSQ 按脏格子更新 PSQ 累加器。索引含桶号，所以调用前必须确认桶与镜像未变。
 func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bool) {
+	if diagOn {
+		diagStats.ApplyPieces += int64(len(p.pendingPieces))
+	}
 	for _, d := range p.pendingPieces {
 		if d.oldPc != 0 {
 			psqSub(a, w, c, PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror))
@@ -86,6 +114,9 @@ func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bo
 
 // applyThreats 按脏条目更新威胁累加器（索引只含镜像）。
 func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) {
+	if diagOn {
+		diagStats.ApplyEntries += int64(len(p.pendingThreats))
+	}
 	for _, t := range p.pendingThreats {
 		idx := ThreatIndex(c, int(t.attacker), t.from, t.to, int(t.attacked), mirror)
 		if idx >= ThreatInputs {
@@ -100,6 +131,9 @@ func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) 
 }
 
 func (w *Weights) rebuildPSQ(p *Position, a *Accumulator, c, bucket int, mirror bool) {
+	if diagOn {
+		diagStats.RebuildPSQ++
+	}
 	for i := 0; i < L1; i++ {
 		a.PsqAcc[c][i] = w.FTBiases[i]
 	}
@@ -108,12 +142,18 @@ func (w *Weights) rebuildPSQ(p *Position, a *Accumulator, c, bucket int, mirror 
 	}
 	for s := 0; s < squareNB; s++ {
 		if pc := p.board[s]; pc != 0 {
+			if diagOn {
+				diagStats.RebuildPiece++
+			}
 			psqAdd(a, w, c, PSQIndex(c, s, int(pc), bucket, mirror))
 		}
 	}
 }
 
 func (w *Weights) rebuildThreats(p *Position, a *Accumulator, c int, mirror bool) {
+	if diagOn {
+		diagStats.RebuildThreat++
+	}
 	for i := 0; i < L1; i++ {
 		a.ThrAcc[c][i] = 0
 	}
@@ -182,6 +222,9 @@ func (p *Position) forEachThreat(perspective int, mirror bool, fn func(idx int))
 		for t := attacks.and(occ); !t.isEmpty(); {
 			to := t.popLSB()
 			if idx := ThreatIndex(perspective, attacker, from, to, int(p.board[to]), mirror); idx < ThreatInputs {
+				if diagOn {
+					diagStats.RebuildFeat++
+				}
 				fn(idx)
 			}
 		}

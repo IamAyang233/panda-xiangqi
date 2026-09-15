@@ -106,12 +106,10 @@ func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 			fb = blockers.msb()
 		}
 		// 阻挡子之后的射线既用于车的「空段截止」，也用作炮的「越过炮架」。
+		// 射线表本身不含 sq，所以 ray 去掉 fbRay 剩下的正好是「sq 到 fb（含 fb）」，
+		// 不必再拼 bbOf(fb) 后取补 —— 少两次位运算和一次 set 的分支。
 		fbRay := rayBB[fb][di]
-		forward := fbRay.or(bbOf(fb))
-
-		// 车：把空段与阻挡子本身都算进去。
-		rook = rook.or(ray.andNot(forward))
-		rook.set(fb)
+		rook = rook.or(ray.andNot(fbRay))
 
 		// 炮：炮架之前一格都不算（hurdle 未越过），
 		// 越过 fb 之后一直算到下一个子（含）为止。
