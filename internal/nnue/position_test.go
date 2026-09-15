@@ -282,6 +282,37 @@ func BenchmarkTransform(b *testing.B) {
 	}
 }
 
+// BenchmarkMakeUnmake 测「走子 → 回退」这条路径，覆盖 updateThreats 的三段
+// （该子发出的威胁、指向 s 的威胁、射线穿透）。
+//
+// 用多个着法轮换而不是反复走同一步：射线穿透那一段的开销取决于「与 s 同行列的
+// 车炮有几枚」，反复走同一步会把这个数字固定住，量不出真实分布。
+// 局面选带活跃车炮的中局。
+//
+// 它比端到端搜索灵敏得多 —— 搜索总耗时里含大量与本次改动无关的部分，
+// 4% 量级的改进会被 ±5% 的采样噪声盖住，这个基准不会。
+func BenchmarkMakeUnmake(b *testing.B) {
+	const fen = "r1bakabnr/9/1cn2c3/p1p1p1p1p/9/9/P1P1P1P1P/1C2R2C1/9/RNBAKABN1 b - - 0 1"
+	q, err := game.ParseFEN(fen)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var pos Position
+	pos.ResetFromGame(&q.Board, q.Turn>>3)
+
+	moves := q.LegalMoves(q.Turn)
+	if len(moves) == 0 {
+		b.Skip("构造局面没有合法着法")
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m := moves[i%len(moves)]
+		pos.Make(int(m.From), int(m.To))
+		pos.Unmake()
+	}
+}
+
 // BenchmarkFeatureBucket 测 O(1) 版特征桶（对照 Board 版的全盘遍历）。
 func BenchmarkFeatureBucket(b *testing.B) {
 	p, _ := game.ParseFEN(game.InitialFEN)

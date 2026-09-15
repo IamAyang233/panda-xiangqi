@@ -414,9 +414,6 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	pt := pieceType(int(pc))
 
 	// 车与炮的射线、阻挡完全相同，一次算全，省掉一半的重复计算。
-	if diagOn {
-		diagStats.SlidingCalls++
-	}
 	rAttacks, cAttacks := slidingAttackBoth(s, occupied)
 
 	// ---- 该子发出的威胁 ----
@@ -487,11 +484,41 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 		psq := candidates.popLSB()
 		cpt := pieceType(int(p.board[psq]))
 		// 排除 s 本身：指向 s 的关系已由上面处理。
-		if diagOn {
-			diagStats.RayAttackCall += 2
+		var before, after bitboard
+		if cpt == ptRook {
+			// 车：候选集保证 psq 与 s 同行或同列，所以「加入 s」只会把该方向的
+			// 射程截断到 s 为止，另外三个方向一律不受影响。于是只需一次滑动攻击，
+			// 而不是不含 s / 含 s 各算一次 —— computeRay 段占了滑动攻击调用量的
+			// 四分之三，候选又几乎全是车炮，省下来的正是这里。
+			if diagOn {
+				diagStats.RayAttackCall++
+			}
+			raw := attacksBB(ptRook, psq, occWithout)
+			with := raw
+			if raw.test(s) {
+				// s 原本就在射程内（且 s 与 psq 同行列，方向必然可判）。
+				// 射线表不含起点，所以 raw 去掉 s 之后的射线，剩下的正好是
+				// 「psq 到 s（含 s）」。s 在射程外时 raw 不变。
+				with = raw.andNot(rayBB[s][rayDirBetween(psq, s)])
+			}
+			// 两个占用集都要按「当前 occupied 含 s、并排除 s 本身」整理 ——
+			// 与下面 else 分支保持同一口径。
+			base := raw.and(occupied).andNot(bbOf(s))
+			full := with.and(occupied).andNot(bbOf(s))
+			if put {
+				before, after = base, full
+			} else {
+				before, after = full, base
+			}
+		} else {
+			// 炮与马/象仍算两次：炮的炮架与目标会随 s 一起移动，马/象则取决于
+			// s 是否堵住腿位或象眼，都不是「按方向截断」能表达的。
+			if diagOn {
+				diagStats.RayAttackCall += 2
+			}
+			before = attacksBB(cpt, psq, occBefore).and(occupied).andNot(bbOf(s))
+			after = attacksBB(cpt, psq, occAfter).and(occupied).andNot(bbOf(s))
 		}
-		before := attacksBB(cpt, psq, occBefore).and(occupied).andNot(bbOf(s))
-		after := attacksBB(cpt, psq, occAfter).and(occupied).andNot(bbOf(s))
 		for t := before.andNot(after); !t.isEmpty(); {
 			tt := t.popLSB()
 			p.pendingThreats = append(p.pendingThreats,
@@ -503,6 +530,28 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 				dirtyThreat{p.board[psq], p.board[tt], psq, tt, true})
 		}
 	}
+}
+
+// rayDirBetween 返回 to 相对 from 所在的射线方向索引，顺序与 rayDirs 一致
+// （0 北 / 1 南 / 2 东 / 3 西）。两类格子不同行也不同列时返回 -1。
+//
+// 调用处依赖「候选集保证 from 与 to 同行或同列」这一不变式：computeRay 段的
+// 车候选来自 pseudoAttacks[ptRook][s]，必然与 s 同行列。若不变式被破坏，
+// 返回 -1 会让调用方以越界下标 panic，而不是静默算错。
+func rayDirBetween(from, to int) int {
+	if fileOf(from) == fileOf(to) {
+		if to > from {
+			return 0
+		}
+		return 1
+	}
+	if rankOf(from) == rankOf(to) {
+		if to > from {
+			return 2
+		}
+		return 3
+	}
+	return -1
 }
 
 // knightAttackers 返回「能马步攻击 s 且腿位为空」的马所在格。

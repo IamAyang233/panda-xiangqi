@@ -90,6 +90,11 @@ func slidingAttack(pt, sq int, occupied bitboard) bitboard {
 // 分开调用会把「取射线、与占用集求交、找第一个阻挡」重复做一遍。
 // 合并后这些只算一次，四个方向的循环也只走一遍。
 func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
+	// 计数放在函数内而不是调用点：computeRay 段经 attacksBB 转发进来的调用同样
+	// 要算，只在 updateThreats 里统计会把总量低估四分之三。
+	if diagOn {
+		diagStats.SlidingCalls++
+	}
 	for di := 0; di < 4; di++ {
 		ray := rayBB[sq][di]
 		blockers := ray.and(occupied)
