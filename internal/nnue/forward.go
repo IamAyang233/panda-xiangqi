@@ -213,22 +213,16 @@ func sqrClippedReLU(v int32) byte {
 	return byte(s)
 }
 
+// clamp16 把 v 截到 [lo, hi]。
+//
+// 用内置 min/max 而不是两个 if：两个比较在随机局面上都几乎不可预测，
+// 而 Transform 每次评估要跑 1024 次（2 视角 × 512），分支预测失败的代价
+// 会直接反映在评估耗时上。内置 min/max 对定长整数会编译成无分支序列。
 func clamp16(v, lo, hi int16) int16 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return max(lo, min(v, hi))
 }
 
+// clamp32 把 v 截到 [lo, hi]。与 clamp16 同理，用无分支的内置 min/max。
 func clamp32(v, lo, hi int32) int32 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return max(lo, min(v, hi))
 }

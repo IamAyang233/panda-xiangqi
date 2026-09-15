@@ -254,6 +254,34 @@ func BenchmarkPropagate(b *testing.B) {
 	}
 }
 
+// transformSink 防止基准测试的调用被编译器消除 —— 结果未被使用时，
+// 整个调用都可能被删掉，量出来的就是假数字。
+var transformSink [L1]byte
+
+// BenchmarkTransform 测 Transform 内层：512 次 clamp + 相乘 + 右移。
+//
+// 单独列出来是因为 pprof 显示这块占搜索时间约 18.6%（reluMul 8.27% +
+// clamp16 5.80% + 本体 4.56%），是 slidingAttackBoth 之外最大的一块。
+// 它的两个 clamp 分支在随机局面上不可预测，改成无分支实现是本轮的目标。
+func BenchmarkTransform(b *testing.B) {
+	w, err := Load(flatPath)
+	if err != nil {
+		b.Skip("未找到展开后的权重，跳过")
+	}
+	p, _ := game.ParseFEN(game.InitialFEN)
+	var pos Position
+	pos.ResetFromGame(&p.Board, p.Turn>>3)
+	var a Accumulator
+	w.Apply(&pos, &a)
+	bucket := pos.LayerStackBucket()
+	side := pos.SideToMove()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, transformSink = a.Transform(side, bucket)
+	}
+}
+
 // BenchmarkFeatureBucket 测 O(1) 版特征桶（对照 Board 版的全盘遍历）。
 func BenchmarkFeatureBucket(b *testing.B) {
 	p, _ := game.ParseFEN(game.InitialFEN)

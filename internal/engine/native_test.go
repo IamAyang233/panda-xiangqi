@@ -51,7 +51,16 @@ func TestNativeEngineBestMove(t *testing.T) {
 	t.Logf("5 档 best=%s（%s）", mv, p.MoveToChinese(mv))
 }
 
-// TestNativeEngineLevels 档位越高耗时越长，且都给出合法着法。
+// TestNativeEngineLevels 各档位都必须给出合法着法，且不改动传入的局面。
+//
+// 原来断言的是「档位越高耗时越长」，但这个前提并不成立：1 档是
+// Time=60ms / MaxDepth=2，8 档是 Time=500ms / MaxDepth=5 —— 两者都被
+// MaxDepth 提前终止（实测 29ms vs 30ms），时间预算相差 8 倍却完全用不上。
+// 那条断言等于在赌「两个几乎相等的数不会差 2 倍」，换个 CPU 负载就会失败。
+//
+// 这里只做集成层面的检查。档位真正的语义（随机池 TopN、分值容差 Slack、
+// 参数表单调性）由 internal/search 覆盖 —— 那些是纯函数与纯数据，
+// 确定性好，也不会被置换表的冷热状态干扰。
 func TestNativeEngineLevels(t *testing.T) {
 	e := NewNativeEngine(requireWeights(t), 1)
 	defer e.Close()
@@ -60,24 +69,20 @@ func TestNativeEngineLevels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fen0 := p.FEN()
 
-	var prevMs int64
 	for _, lv := range []int{1, 8, 12} {
-		start := time.Now()
 		mv, err := e.BestMove(context.Background(), p, lv)
-		el := time.Since(start)
 		if err != nil {
 			t.Fatalf("%d 档搜索失败: %v", lv, err)
 		}
 		if !p.IsLegal(mv) {
 			t.Errorf("%d 档给出的着法 %s 非法", lv, mv)
 		}
-		t.Logf("%d 档: %s 用时 %v", lv, mv, el.Round(time.Millisecond))
-		// 允许一定波动（随机挑选与迭代加深的层数不完全稳定），但不应大幅倒退。
-		if prevMs > 0 && el.Milliseconds()*2 < prevMs {
-			t.Errorf("%d 档用时 %v 远少于上一档的 %dms", lv, el.Round(time.Millisecond), prevMs)
-		}
-		prevMs = el.Milliseconds()
+		t.Logf("%d 档: %s（%s）", lv, mv, p.MoveToChinese(mv))
+	}
+	if p.FEN() != fen0 {
+		t.Errorf("档位搜索改动了传入的局面：\n原 %s\n后 %s", fen0, p.FEN())
 	}
 }
 
