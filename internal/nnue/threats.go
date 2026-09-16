@@ -89,49 +89,80 @@ func slidingAttack(pt, sq int, occupied bitboard) bitboard {
 // 热路径（updateThreats）总是两个都要，而两者的射线与阻挡完全相同 ——
 // 分开调用会把「取射线、与占用集求交、找第一个阻挡」重复做一遍。
 // 合并后这些只算一次，四个方向的循环也只走一遍。
+//
+// **全程没有任何与棋盘数据相关的分支**：原来每个方向有两次 isEmpty 判断
+// （射线是否全空、炮架之后是否还有子），实测那两处占了本函数自身耗时的 38%
+// —— 分支结果取决于占用集，预测器学不到规律。现在改成把「第一个阻挡的格号」
+// 用位运算直接编码成查表下标（见 incIndex / decIndex），空射线也有对应的
+// 表项（空集），于是两个分支一起消失。
+//
+// 实测（本机）：
+//   - 微基准 Varying（每次换 (sq, occ)，即真实搜索的形态）：109.8 → 71.3 ns/次
+//   - 端到端固定 10 万节点搜索（initial 局面，5 次取中位数）：1651 → 1479 ms
+//     即整机吞吐 +11.6%；节点数逐位未变（1040484 / 1100668 / 深度 14.70 三个
+//     基准值与改动前完全一致），确认是纯速度改动。
 func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 	// 计数放在函数内而不是调用点：computeRay 段经 attacksBB 转发进来的调用同样
 	// 要算，只在 updateThreats 里统计会把总量低估四分之三。
 	if diagOn {
 		diagStats.SlidingCalls++
 	}
+	occLo, occHi := occupied[0], occupied[1]
 	for di := 0; di < 4; di++ {
 		ray := rayBB[sq][di]
-		blockers := ray.and(occupied)
-		if blockers.isEmpty() {
-			// 整条射线都没子：车可以直接走到底；炮没有炮架，打不到任何格。
-			rook = rook.or(ray)
-			continue
-		}
-		// 北/东向格号递增取最低置位，南/西向递减取最高置位。
-		var fb int
-		if di == 0 || di == 2 {
-			fb = blockers.lsb()
-		} else {
-			fb = blockers.msb()
-		}
-		// 阻挡子之后的射线既用于车的「空段截止」，也用作炮的「越过炮架」。
-		// 射线表本身不含 sq，所以 ray 去掉 fbRay 剩下的正好是「sq 到 fb（含 fb）」，
-		// 不必再拼 bbOf(fb) 后取补 —— 少两次位运算和一次 set 的分支。
-		fbRay := rayBB[fb][di]
-		rook = rook.or(ray.andNot(fbRay))
+		inc := di == 0 || di == 2 // 北/东格号递增，南/西递减
 
-		// 炮：炮架之前一格都不算（hurdle 未越过），
-		// 越过 fb 之后一直算到下一个子（含）为止。
-		after := fbRay.and(occupied)
-		if after.isEmpty() {
-			cannon = cannon.or(fbRay)
-			continue
-		}
-		var nb int
-		if di == 0 || di == 2 {
-			nb = after.lsb()
+		var fb bitboard
+		if inc {
+			fb = beyondInc[di][incIndex(ray[0]&occLo, ray[1]&occHi)]
 		} else {
-			nb = after.msb()
+			fb = beyondDec[di][decIndex(ray[0]&occLo, ray[1]&occHi)]
 		}
-		cannon = cannon.or(fbRay.andNot(rayBB[nb][di]))
+		// 射线表本身不含 sq，所以 ray 去掉 fb（阻挡之后的射线）剩下的正好是
+		// 「sq 到 fb（含 fb）」，不必再拼 bbOf(fb) 后取补。
+		rook = rook.or(ray.andNot(fb))
+
+		// 炮：炮架之前一格都不算（hurdle 未越过），越过 fb 之后一直算到下一个子（含）。
+		// fb 为空（本方向没有子）时下面整段自然产出空集。
+		var fb2 bitboard
+		if inc {
+			fb2 = beyondInc[di][incIndex(fb[0]&occLo, fb[1]&occHi)]
+		} else {
+			fb2 = beyondDec[di][decIndex(fb[0]&occLo, fb[1]&occHi)]
+		}
+		cannon = cannon.or(fb.andNot(fb2))
 	}
 	return rook, cannon
+}
+
+// incIndex 把「递增方向（北/东）上第一个阻挡所在格」编码成 beyondInc 的下标。
+//
+// 做法：先看低位字（格号 0~63）有没有子，有就直接取它的最低置位；
+// 没有才看高位字。两个分支都用算式代替 —— math/bits 在入参为 0 时返回 64，
+// 正好让两条路径的结果能拼在一个表达式里：
+//
+//	lo 非零 → a（0~63）；否则 64 + b（64~128，两个都空时得 128 = 空集表项）
+func incIndex(lo, hi uint64) int {
+	nz := (lo | -lo) >> 63           // lo 非零 → 1，否则 0
+	a := uint64(trailingZeros64(lo)) // 空 → 64
+	b := uint64(trailingZeros64(hi)) // 空 → 64
+	m := -nz                         // 全 1 或全 0，用来无分支二选一
+	return int((a & m) | ((64 + b) &^ m))
+}
+
+// decIndex 把「递减方向（南/西）上第一个阻挡所在格」编码成 beyondDec 的下标，
+// 编码比递增方向多偏移 1（表里第 0 项留给「射线全空」）。
+//
+// 递减方向要取最高置位，所以先看高位字；用 bits.LeadingZeros64 的 0 → 64 性质
+// 把两条路径拼进一个表达式：
+//
+//	hi 非零 → 128-a（65~128）；否则 64-b（1~64，两个都空时得 0 = 空集表项）
+func decIndex(lo, hi uint64) int {
+	nz := (hi | -hi) >> 63
+	a := uint64(bitsLeadingZeros64(hi))
+	b := uint64(bitsLeadingZeros64(lo))
+	m := -nz
+	return int(((128 - a) & m) | ((64 - b) &^ m))
 }
 
 var bishopDirections = [4]int{

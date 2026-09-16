@@ -168,6 +168,18 @@ var (
 	// rayBB[sq][di] 是从 sq 沿 rayDirs[di] 到棋盘边缘的全部格子（不含 sq）。
 	// 用于把滑子攻击从「逐格步进」改成「位运算取段」。
 	rayBB [squareNB][4]bitboard
+
+	// beyondInc / beyondDec 把「找第一个阻挡」的两步合并成一次查表：
+	// 下标由 incIndex / decIndex 从占用集直接编码出来（编码里含「射线全空」
+	// 这一档，表项为空集），于是热路径上一个数据相关的分支都不剩。
+	//
+	//	beyondInc[di][k] = rayBB[k][di]    （k < 90；90~128 为空集）
+	//	beyondDec[di][k] = rayBB[k-1][di]  （k ≥ 1；0 为空集）
+	//
+	// 两张表分开是因为两个方向的编码差 1：递减方向要用 0 表示「射线全空」，
+	// 而 0 是合法的格号 0。表本身各 4×129×16B ≈ 8.2KB，只占 L1 的一小块。
+	beyondInc [4][129]bitboard
+	beyondDec [4][129]bitboard
 )
 
 // rayDirs 的顺序与 slidingAttack 的循环一致；北/东方向格号递增，
@@ -182,6 +194,16 @@ func buildRayTable() {
 				b.set(t)
 			}
 			rayBB[sq][di] = b
+		}
+	}
+	for di := 0; di < 4; di++ {
+		for k := 0; k < 129; k++ {
+			if k < squareNB {
+				beyondInc[di][k] = rayBB[k][di]
+			}
+			if k >= 1 && k-1 < squareNB {
+				beyondDec[di][k] = rayBB[k-1][di]
+			}
 		}
 	}
 }
