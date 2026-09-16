@@ -96,13 +96,22 @@ func own(side int, target byte) bool { return target != Empty && ColorOf(target)
 // 后者每次检验要做两次王安全扫描（Make 内部还算了一次「对方是否被将军」），
 // 实测占全部扫描的 75%。语义严格等价，由 TestLegalMovesMatchRef 逐局面对拍
 // 与 perft 的黄金计数共同守住。
+//
+// 未被将军时再叠一层「危险格」预筛（见 kingSafety）：非王的着法若 from 与 to
+// 都不在危险格里，就不可能让王陷入被攻，直接判合法 —— 省掉绝大多数扫描。
+// 被将军时必须走完整扫描（危险格那套推导的前提不成立），但这种节点很少。
 func (p *Position) LegalMoves(side int) []Move {
 	pseudo := p.GenMoves(side)
 	legal := pseudo[:0]
 	them := Opponent(side)
 	ksq := p.kingSq[side>>3]
+	inCheck, danger := p.bb.kingSafety(ksq, side)
 	for _, m := range pseudo {
 		from, to := int(m.From), int(m.To)
+		if from != ksq && !inCheck && !danger.Test(from) && !danger.Test(to) {
+			legal = append(legal, m)
+			continue
+		}
 		sq := ksq
 		if from == ksq {
 			sq = to // 走的是王，判定点跟着移
