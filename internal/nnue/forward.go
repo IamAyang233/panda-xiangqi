@@ -81,24 +81,21 @@ func (a *Accumulator) Transform(sideToMove, bucket int) (int32, [L1]byte) {
 	persp := [2]int{p0, p1}
 	for p := 0; p < 2; p++ {
 		offset := (L1 / 2) * p
-		psa, tha := &a.PsqAcc[persp[p]], &a.ThrAcc[persp[p]]
-		// 4 路展开：clamp 带两个分支，展开能让四条独立链的
-		// 分支互相穿插，减少预测失败造成的流水线空洞。
-		for j := 0; j < L1/2; j += 4 {
-			out[offset+j] = reluMul(psa[j], tha[j], psa[j+L1/2], tha[j+L1/2])
-			out[offset+j+1] = reluMul(psa[j+1], tha[j+1], psa[j+1+L1/2], tha[j+1+L1/2])
-			out[offset+j+2] = reluMul(psa[j+2], tha[j+2], psa[j+2+L1/2], tha[j+2+L1/2])
-			out[offset+j+3] = reluMul(psa[j+3], tha[j+3], psa[j+3+L1/2], tha[j+3+L1/2])
-		}
+		psa := a.PsqAcc[persp[p]][:]
+		tha := a.ThrAcc[persp[p]][:]
+		// 每个视角 512 个元素：低半段与高半段逐对配成 reluMul 的两个参数。
+		// AVX2 内核一次处理 32 个，标量兜底在 transform.go。
+		transformHalf(out[offset:offset+L1/2], psa[:L1/2], tha[:L1/2], psa[L1/2:], tha[L1/2:])
 	}
 	return psqt, out
 }
 
-// reluMul 是 Transform 内层的单元素运算：
+// reluMul 是 Transform 内层的单元素运算，也是 AVX2 内核（transform_amd64.s）
+// 必须逐位对齐的规格：
 // 先把两段和各自 clamp 到 [0,255]，再按 sum0*sum1/512 求积（右移代替除法）。
 //
-// 注：Transform 是每次评估都要走的路径（约 6µs 里占不小一块），
-// 这里的 clamp16 两个分支在随机局面上很难预测，故调用方按 4 路展开。
+// 注：psq+thr 是 int16 加法，**溢出会回绕**，回绕出的值随后照样被 clamp 掉；
+// 内核用 VPADDW 复现同一行为，别改成先扩展到 int32 再相加。
 func reluMul(psq0, thr0, psq1, thr1 int16) byte {
 	s0 := uint32(clamp16(psq0+thr0, 0, 255))
 	s1 := uint32(clamp16(psq1+thr1, 0, 255))
