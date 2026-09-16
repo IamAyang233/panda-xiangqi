@@ -42,6 +42,23 @@ var seeEnabled = os.Getenv("QIJING_SEE") == "on"
 // 「某个具体用法有收益」，必须逐个量。
 var seeQuietEnabled = os.Getenv("QIJING_SEEQ") == "on"
 
+// probCutEnabled 由环境变量 QIJING_PC=on 启用 ProbCut。
+//
+// 它是 SEE 的第三个用法 —— 用 `see_ge(move, probCutBeta - staticEval)` 筛掉
+// 白丢子的吃子。前两个用法（静态搜索里的坏吃子剪枝、静的着法剪枝）实测都没有
+// 可靠收益，但那是「剪掉整个着法」；ProbCut 是「先花一次浅搜验证，再决定是否
+// 按这个下界返回」，SEE 在这里省掉那些注定验证不通过的浅搜 —— **实测只有这个
+// 用法让 SEE 有了正向贡献**（去掉筛选后从 0.992× 变 1.039×）。
+//
+// 默认关闭 —— ProbCut 本身在本引擎上是净亏损，理由见 alphaBeta 里的注释。
+var probCutEnabled = os.Getenv("QIJING_PC") == "on"
+
+// probCutSmallEnabled 由环境变量 QIJING_PC_SMALL=on 启用「廉价的 ProbCut 变体」
+// （皮卡鱼 Step 11）：置换表里已有「下界、足够深、高出 beta 470」的证据时，
+// 直接按该下界返回 —— 不额外搜索，所以是纯粹的免费捷径。
+// 实测同样净亏损，默认关闭（理由见 alphaBeta 里的注释）。
+var probCutSmallEnabled = os.Getenv("QIJING_PC_SMALL") == "on"
+
 // 分值常量。单位与 C++ 的 Value 一致。
 const (
 	// Infinity 大于任何真实评估值，用于 alpha-beta 的初始窗口。
@@ -129,6 +146,8 @@ type Searcher struct {
 	noForward bool // 关闭前向剪枝（reverse futility / futility / LMP），供对照实验
 	noSEE     bool // 关闭静态搜索里的坏吃子剪枝，供对照实验
 	noAsp     bool // 关闭期望窗口（每层都用全窗），供对照实验
+	noProbCut bool // 关闭 ProbCut 与「廉价 ProbCut 变体」，供对照实验
+	noPCSee   bool // 让 ProbCut 考虑全部吃子而不做 SEE 筛选，供对照实验
 
 	// 排序质量统计。走法排序的作用是让「最好的着法尽早被搜到」，
 	// 因为 alpha-beta 的第一个着法能定下 alpha，越早出现高分着法，
@@ -258,6 +277,15 @@ func (s *Searcher) DisableForwardPruning() { s.noForward = true }
 
 // DisableSEE 关闭静态搜索里的坏吃子剪枝，供对照实验使用。
 func (s *Searcher) DisableSEE() { s.noSEE = true }
+
+// DisableProbCut 关闭 ProbCut（含「廉价 ProbCut 变体」），供对照实验使用。
+func (s *Searcher) DisableProbCut() { s.noProbCut = true }
+
+// DisableProbCutSeeFilter 让 ProbCut 考虑全部吃子而不做 SEE 筛选，供对照实验使用。
+//
+// 实测这个筛选是 ProbCut 能否有收益的关键：去掉后安静局面节点从 0.992× 变成
+// 1.039×。守卫 TestProbCutSeeFilterIsUsed 靠它证明「筛选确实被读取」。
+func (s *Searcher) DisableProbCutSeeFilter() { s.noPCSee = true }
 
 // DisableAspiration 关闭期望窗口，每层都用全窗 —— 即引入期望窗口之前的行为。
 //
@@ -476,9 +504,17 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	inCheck := p.InCheck(p.Turn)
 
 	var ttMove game.Move
+	ttHit := false
+	ttScore := -Infinity
+	ttDepth := 0
+	ttFlag := uint8(ttNone)
 	s.probeCnt++
 	if e, ok := s.ttProbe(p.Key); ok {
 		s.ttHits++
+		ttHit = true
+		ttScore = scoreFromTT(e.score, ply)
+		ttDepth = int(e.depth)
+		ttFlag = e.flag
 		ttMove = decodeMove(e.move)
 		if ttMove.From != 0 || ttMove.To != 0 {
 			s.ttMoveAvail++
@@ -557,12 +593,6 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	}
 
 	// 内部迭代削减（IIR）：置换表里没有这个局面的着法，说明它还没被搜过，
-	// 着法排序只能靠 MVV-LVA / 历史启发，质量差。先按削减一层的深度搜一遍
-	// 把它写进置换表，后续就能拿到着法来排序。
-	//
-	// 我们的置换表命中率只有 7~8%（剪枝与置换表相互替代，见 tt_diag_test），
-	// 所以「没有 TT 着法」是常态而不是例外 —— 这一项本该更常触发。
-	// 内部迭代削减（IIR）：置换表里没有这个局面的着法，说明它还没被搜过，
 	// 着法排序只能靠 MVV-LVA 与历史启发，质量差。先按削减一层的深度搜一遍
 	// 把它写进置换表，后续（迭代加深的下一轮、或别的路径到达同一局面）
 	// 就能拿到着法来排序，从而剪掉更多分支。
@@ -614,6 +644,120 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	best := -Infinity
 	bestMove := game.Move{}
 	origAlpha := alpha
+
+	// ProbCut：某个吃子着法一经浅搜就远超 beta，说明当前节点几乎必然 fail high
+	// （对手不会容忍走到这里），可以直接按这个下界返回。
+	//
+	// 与其它前向剪枝的根本区别：它**真的搜一遍**（先静态搜索验证，再按削减的
+	// 深度搜），所以代价高得多 —— 只在 depth >= 3、且有「看起来白赚」的吃子时才做。
+	//
+	// 候选着法的筛选用 SEE（`see_ge(move, probCutBeta - staticEval)`）——这一步
+	// 照抄皮卡鱼 MovePicker 的 PROBCUT 阶段。**这个筛选是 ProbCut 能否站得住的
+	// 关键**：实测去掉它（考虑全部吃子）后安静局面从 0.992× 变成 1.039×，由
+	// 「小赚」变「净亏」。它也是本项目里 SEE 唯一测出正向贡献的用法（另外两个
+	// 用法见 seeEnabled / seeQuietEnabled 的注释，都无收益）。
+	//
+	// 阈值里的 improving 项方向是**抬高一档更难触发**：251 - 66*improving
+	// （improving 时余量 185），同时削减的深度也更多（-5 而非 -3）。
+	// 这条与反 futility 的 improving 项方向相反，别凭直觉统一。
+	//
+	// ⚠️ 实测在本引擎上是净亏损，默认关闭（QIJING_PC=on 启用）。
+	// 表里所有数字都是确定性测量（单线程 + 每题独立置换表）：
+	//
+	//	安静局面 depth 10（55 个）      节点 0.992×
+	//	固定 6 万节点（20 个安静局面）   均深 14.70 → 14.90
+	//	固定 10 万节点·400 题           命中 336 → 329、均深 50.17 → 49.95
+	//	残局 400 题 depth 9            节点 1.110×（命中 263 → 264）
+	//	保真度（20 个安静局面 depth 6，对照「关前向剪枝 + 关期望窗口」）
+	//	                              一致率 13/20、平均分值差 56、最大 237
+	//	                              —— 开关两态**完全相同**
+	//
+	// 保真度无差异说明它**不是剪过头**，问题是每节点并不更有效。成因已量清：
+	// 残局题上 42573 个节点进入判断、只有 6988 个吃子通过 SEE（16.4%）、其中
+	// 4351 个验证成功（62.3%）—— 失败的 2637 次验证（qsearch + 削减 alphaBeta）
+	// 是纯开销，而成功截断省下的着法循环本来就不贵。ProbCut 成立的前提是
+	// 「节点内着法循环贵、浅搜便宜」，而本引擎经期望窗口 + IIR + 反 futility
+	// 之后恰好相反：着法循环已经很便宜，验证搜索反而不便宜。
+	probCutBeta := beta + 251
+	if improving {
+		probCutBeta = beta + 185
+	}
+	// 置换表已经给出「低于阈值」的证据时不必再试（皮卡鱼的
+	// `!(is_valid(ttData.value) && ttData.value < probCutBeta)`）。
+	if !s.noProbCut && probCutEnabled && depth >= 3 &&
+		beta < MateScore-MaxPly && beta > -MateScore+MaxPly &&
+		!(ttHit && ttScore < probCutBeta) {
+		probCutDepth := depth - 3
+		if improving {
+			probCutDepth = depth - 5
+		}
+		for _, m := range moves {
+			// 只考虑吃子（皮卡鱼的 PROBCUT 阶段也只生成吃子）。
+			//
+			// 这里**不能**用「遇到第一个安静着法就 break」来筛 —— 排序分里
+			// TT 着法（1<<24）高于所有吃子，TT 着法恰是安静着法时它会排在首位，
+			// 那样一进循环就 break，ProbCut 等于没实现。用 continue 逐个判。
+			if p.PieceAt90(int(m.To)) == game.Empty {
+				continue
+			}
+			if s.stopped() {
+				return best
+			}
+			// SEE 必须在落子之前算（落子后 from 已空、to 上站着自己的子，
+			// SeeGE 的第二层捷径恒成立 —— 这个坑在静的着法剪枝上踩过一次）。
+			if !s.noPCSee && !p.SeeGE(int(m.From), int(m.To), probCutBeta-staticEval) {
+				continue
+			}
+			p.Make(m)
+			s.pos.Make(int(m.From), int(m.To))
+			// 先做一次零窗静态搜索：吃子本身就被静态搜索覆盖，不划算的在这里就出局了。
+			v := -s.quiesce(p, -probCutBeta, -probCutBeta+1, ply+1)
+			if v >= probCutBeta && probCutDepth > 0 {
+				v = -s.alphaBeta(p, probCutDepth, -probCutBeta, -probCutBeta+1, ply+1, false, true)
+			}
+			p.Unmake()
+			s.pos.Unmake()
+			if v >= probCutBeta {
+				// 存进去让后续节点也能直接用这个下界。深度夹紧到 0：probCutDepth
+				// 在 depth 3~4 且 improving 时会是负数，若直接传给 uint8 的深度
+				// 字段会回绕成 255 —— 那会变成「极深的下界」，引发错误的截断。
+				stored := probCutDepth + 1
+				if stored < 0 {
+					stored = 0
+				}
+				s.ttStore(p.Key, m, scoreToTT(v, ply), stored, ttLower)
+				if v < MateScore-MaxPly {
+					// 把「在更高的 beta 上验证出的下界」换算回本节点的窗口。
+					return v - (probCutBeta - beta)
+				}
+				// 将杀分不做换算也不返回：那是「找到了杀」而不是「评估远超 beta」，
+				// 换算会得到一个无意义的分数。留给正常着法循环去确认。
+			}
+		}
+	}
+
+	// 「廉价 ProbCut 变体」（皮卡鱼 Step 11）：置换表里已经有「下界、深度只差
+	// 不到 4 层、分值高出 beta 470」的证据时，直接按这个下界返回 —— 不额外搜索，
+	// 所以它比上面那个 ProbCut 便宜得多，代价是精度更低（用一个别处搜出来的
+	// 下界近似本节点的分值）。
+	//
+	// 与上面的 ProbCut 分开开关，因为两者代价量级不同，必须各自量。
+	// 将杀分与将杀窗口都要排除：那是「找到杀」而不是「评估远超 beta」，
+	// 返回 beta+470 会掩盖真实的杀棋距离。
+	//
+	// ⚠️ 实测同样净亏损，默认关闭（QIJING_PC_SMALL=on 启用）：
+	//
+	//	安静局面 depth 10（55 个）      节点 1.006×（触发 8680 次）
+	//	固定 10 万节点·400 题           命中 336 → 327、均深 50.17 → 50.66
+	//
+	// 后一行是关键：**深度升了 0.49 层而命中反降 9 题** —— 深了却更不准，
+	// 这正是「有害剪枝」的特征（用一个别处搜出的下界近似本节点分值，
+	// 省了节点但把分值带偏了）。
+	if !s.noProbCut && probCutSmallEnabled && ttHit && ttFlag == ttLower &&
+		ttDepth >= depth-4 && beta < MateScore-MaxPly && beta > -MateScore+MaxPly &&
+		ttScore >= beta+470 && ttScore < MateScore-MaxPly && ttScore > -MateScore+MaxPly {
+		return beta + 470
+	}
 
 	for i, m := range moves {
 		if s.stopped() {
