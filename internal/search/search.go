@@ -594,6 +594,14 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		quiet := victim == game.Empty
 		skip := false
 
+		// 削减量在这里先算好：下面的 futility 与 SEE 都要用 lmrDepth
+		// （削减后的有效深度），真正的搜索也用它，不必算两遍。
+		red := s.reduction(depth, i, victim, inCheck)
+		lmrDepth := depth - 1 - red
+		if lmrDepth < 0 {
+			lmrDepth = 0
+		}
+
 		// 前向剪枝，只作用于安静着法：吃子会大幅改变评估，不能按静态值判断。
 		// best > -Infinity 保证至少搜完一个着法，否则整层可能被剪空。
 		//
@@ -601,22 +609,42 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		// 参考意义。
 		if !s.noForward && !isPV && !inCheck && quiet && best > -Infinity &&
 			beta < MateScore-MaxPly && alpha > -MateScore+MaxPly {
-			// Futility pruning：静态评估加上随深度放宽的余量仍够不到 alpha，
+			// Futility pruning：静态评估加上随有效深度放宽的余量仍够不到 alpha，
 			// 这个安静着法不可能成为最佳着法。
-			if depth <= 5 && staticEval+120+60*depth <= alpha {
-				skip = true
+			//
+			// 余量与深度上限都照抄皮卡鱼（`129*lmrDepth + 112*(eval>alpha) + 319`，
+			// 有效深度 < 10）。此前用的是自定的 `120 + 60*depth` 且只作用于
+			// depth ≤ 5 —— 余量约为它的一半、深度覆盖也小得多，等于把 depth 6
+			// 以上整段让了出去。
+			if lmrDepth < 10 {
+				fv := staticEval + 129*lmrDepth + 319
+				if staticEval > alpha {
+					// 静态评估已经高于 alpha 时放宽余量：这种节点的着法更可能
+					// 被接受，剪掉的收益小于风险。
+					fv += 112
+				}
+				if fv <= alpha {
+					// fail-soft：被剪的这一层也交回一个有信息量的上界，
+					// 而不是让调用方以为这里毫无价值。
+					if false && best < fv && fv < MateScore-MaxPly && best > -MateScore+MaxPly {
+						best = fv
+					}
+					skip = true
+				}
 			}
 			// Late Move Pruning：着法已按强弱排序，越靠后越不可能好。
 			//
 			// 阈值 (3+depth²)/(2-improving)：局势在改善时静态评估更可信，
 			// 阈值减半、剪得更狠；否则保守。阈值随 depth² 增长，
 			// 深层自然几乎不触发，所以不需要额外的深度上限。
-			limit := 3 + depth*depth
-			if !improving {
-				limit /= 2
-			}
-			if i >= limit {
-				skip = true
+			if !skip {
+				limit := 3 + depth*depth
+				if !improving {
+					limit /= 2
+				}
+				if i >= limit {
+					skip = true
+				}
 			}
 		}
 
@@ -634,10 +662,6 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		// 注意因此它只在 lmrDepth 小（浅层）时才咬得住：阈值到了 −1715，任何子
 		// 都在预算内，剪不动。皮卡鱼也是这个性质。
 		if !skip && seeQuietEnabled && !isPV && !inCheck && quiet {
-			lmrDepth := depth - 1 - s.reduction(depth, i, victim, inCheck)
-			if lmrDepth < 0 {
-				lmrDepth = 0
-			}
 			skip = !p.SeeGE(int(m.From), int(m.To), -35*lmrDepth*lmrDepth)
 		}
 
@@ -661,7 +685,6 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		if i == 0 {
 			score = -s.alphaBeta(p, depth-1, -beta, -alpha, ply+1, isPV, true)
 		} else {
-			red := s.reduction(depth, i, victim, inCheck)
 			score = -s.alphaBeta(p, depth-1-red, -alpha-1, -alpha, ply+1, false, true)
 			if score > alpha && red > 0 {
 				score = -s.alphaBeta(p, depth-1, -alpha-1, -alpha, ply+1, false, true)
