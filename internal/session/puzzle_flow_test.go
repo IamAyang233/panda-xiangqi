@@ -82,13 +82,26 @@ func playPuzzle(t *testing.T, p *puzzle.Puzzle, conn *recConn) {
 	}
 }
 
-// lastMoveMsg 返回最后一条 move 类型消息（含残局 step）。
+// isMoveMsg 判断是否为走子消息。
+//
+// 走子消息的类型随模式变化：人机/残局是 engine_move、LLM 是 llm_move，
+// 其余模式才是 move（见 session.applyMoveLocked）。前端对三者同样处理，
+// 所以这里也必须一并接受，否则按模式断言会得到假阴性。
+func isMoveMsg(m map[string]any) bool {
+	switch t, _ := m["type"].(string); t {
+	case "move", "engine_move", "llm_move":
+		return true
+	}
+	return false
+}
+
+// lastMoveMsg 返回最后一条走子消息（含残局 step）。
 func (c *recConn) lastMoveMsg() (map[string]any, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := len(c.msgs) - 1; i >= 0; i-- {
 		if m, ok := c.msgs[i].(map[string]any); ok {
-			if t, _ := m["type"].(string); t == "move" {
+			if isMoveMsg(m) {
 				return m, true
 			}
 		}
@@ -139,8 +152,8 @@ func TestPuzzleStepCountsWrongMoves(t *testing.T) {
 	if got, _ := m["step"].(int); got != 1 {
 		t.Fatalf("走错 1 步后期望 move.step=1, 实际 %v", m["step"])
 	}
-	if got, _ := m["type"].(string); got != "move" {
-		t.Fatalf("期望 move 类型, 实际 %v", m["type"])
+	if !isMoveMsg(m) {
+		t.Fatalf("期望走子消息类型, 实际 %v", m["type"])
 	}
 }
 

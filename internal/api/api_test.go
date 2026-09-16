@@ -82,14 +82,32 @@ func TestRESTCreateAndPuzzles(t *testing.T) {
 	}
 }
 
+// mateInOneRed 从题库里挑一道「红先一步杀」的题。
+//
+// 不硬编码题号：题库会随版本增删，写死的 ID 一换库就 404（v1.2.4 换库时已经断过一次）。
+func mateInOneRed(t *testing.T) *puzzle.Puzzle {
+	t.Helper()
+	store, err := puzzle.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range store.All() {
+		if p.Goal == "win" && p.PlayerSide == "red" && p.ParMoves == 1 && len(p.Solution) == 1 {
+			return p
+		}
+	}
+	t.Skip("题库里没有红先一步杀的题")
+	return nil
+}
+
 // TestWSHandshakeAndPlay 用手写 WS 客户端（掩码帧）完成握手并模拟一步棋。
 func TestWSHandshakeAndPlay(t *testing.T) {
 	ts, _ := testServer(t, "", "")
 	defer ts.Close()
 
-	// 创建残局会话（pzl-001：三车逼宫，一步杀 a0a9）
+	pz := mateInOneRed(t)
 	resp, err := ts.Client().Post(ts.URL+"/api/games", "application/json",
-		strings.NewReader(`{"mode":"puzzle","puzzleId":"pzl-001"}`))
+		strings.NewReader(`{"mode":"puzzle","puzzleId":"`+pz.ID+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +156,9 @@ func TestWSHandshakeAndPlay(t *testing.T) {
 		t.Fatalf("首条消息异常: %v", state)
 	}
 
-	// 走杀着 a0a9
-	writeWSFrame(t, conn, []byte(`{"type":"move","from":"a0","to":"a9"}`))
+	// 走杀着（题库答案的第一步）
+	mate := pz.Solution[0]
+	writeWSFrame(t, conn, []byte(`{"type":"move","from":"`+mate[:2]+`","to":"`+mate[2:]+`"}`))
 
 	// 依次应收到 move 与 game_over
 	var gameOver map[string]any
@@ -153,8 +172,13 @@ func TestWSHandshakeAndPlay(t *testing.T) {
 	if gameOver == nil {
 		t.Fatal("未收到 game_over")
 	}
-	if gameOver["result"] != game.ResultRedWin || gameOver["reason"] != game.ReasonCheckmate {
+	// 一步制胜可能是将死也可能是困毙（象棋里被困毙同样判负），
+	// finishLocked 对两者都记通关，这里照同一语义断言。
+	if gameOver["result"] != game.ResultRedWin {
 		t.Errorf("game_over 异常: %v", gameOver)
+	}
+	if r := gameOver["reason"]; r != game.ReasonCheckmate && r != game.ReasonStalemate {
+		t.Errorf("一步制胜的终局原因应是将死或困毙: %v", gameOver)
 	}
 	if stars, ok := gameOver["stars"].(float64); !ok || stars != 3 {
 		t.Errorf("一步杀 + 无提示应得 3 星, got %v", gameOver["stars"])
