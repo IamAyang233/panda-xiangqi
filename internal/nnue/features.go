@@ -397,6 +397,9 @@ func init() {
 	// rayBB 必须最先建：buildPseudoAttacks / buildThreatOffsets 在初始化期
 	// 就会调用 slidingAttack，那时表还是空的会静默算出空攻击集。
 	buildRayTable()
+	// 象/马的正向落点表也要早于 buildPseudoAttacks：后者会调 lameLeaperAttack
+	// 来建 pseudoAttacks，表空着会静默算出全空的攻击集。
+	buildLeaperForwardTables()
 	buildPSQOffsets()
 	buildKingBuckets()
 	buildMidMirrorEncoding()

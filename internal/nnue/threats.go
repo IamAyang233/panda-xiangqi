@@ -174,6 +174,53 @@ var knightDirections = [8]int{
 	dirNorth + 2*dirWest, dirNorth + 2*dirEast, 2*dirNorth + dirWest, 2*dirNorth + dirEast,
 }
 
+// 象与马的「正向」落点表：某格上的子朝各方向能走到的格子与对应的象眼/腿位。
+// 落点越界时两者都是 -1。
+//
+// 注意与 position.go 的 knightToFrom / knightToLeg 区分：那两张是**反向**表
+// （「哪些马能攻击 s」，供 isAttacked 与 computeRay 的候选集用），这两张是
+// **正向**表（「s 上的马能攻击哪些格」）。
+//
+// 之所以要预计算：原来每个方向都在热路径上现算 lameLeaperPath，里面有
+// fileOf/rankOf/abs/取模/除法加一串分支，一次调用要算 4~8 遍。
+var (
+	bishopTo  [squareNB][4]int
+	bishopEye [squareNB][4]int
+	knightTo  [squareNB][8]int
+	knightLeg [squareNB][8]int
+)
+
+// buildLeaperForwardTables 填上面四张表。
+//
+// **必须在 buildPseudoAttacks 之前调用**：那一步会拿「空占用集」调
+// lameLeaperAttack 来建 pseudoAttacks[ptBishop] / [ptKnight]，表还没填就会
+// 静默建出全空的攻击集 —— 与 rayBB 必须最先建是同一类坑（错也不报，只是
+// 整个威胁特征集偏移）。
+func buildLeaperForwardTables() {
+	for s := 0; s < squareNB; s++ {
+		for i, d := range bishopDirections {
+			to := s + d
+			if !okSquare(to) || chebyshev(s, to) >= 3 {
+				bishopTo[s][i], bishopEye[s][i] = -1, -1
+				continue
+			}
+			bishopTo[s][i] = to
+			// 上一步的 chebyshev < 3 严格强于 lameLeaperPath 内部的 > 3，
+			// 所以这里必然拿到一个有效象眼（不会是 -1）。
+			bishopEye[s][i] = lameLeaperPath(ptBishop, d, s)
+		}
+		for i, d := range knightDirections {
+			to := s + d
+			if !okSquare(to) || chebyshev(s, to) >= 3 {
+				knightTo[s][i], knightLeg[s][i] = -1, -1
+				continue
+			}
+			knightTo[s][i] = to
+			knightLeg[s][i] = lameLeaperPath(ptKnight, d, s)
+		}
+	}
+}
+
 // lameLeaperPath 对应 lame_leaper_path<pt>(d, s)：走到 (s+d) 时被蹩的那个格。
 // 返回 -1 表示该方向无有效落点。pt 只支持象与马。
 func lameLeaperPath(pt, d, s int) int {
@@ -209,28 +256,38 @@ func lameLeaperPath(pt, d, s int) int {
 }
 
 // lameLeaperAttack 对应 lame_leaper_attack<pt>：象或马在给定占用下的攻击集。
+//
+// 落点与象眼/腿位都取自预计算表（见 bishopTo / knightTo 的说明），热路径上
+// 只剩「查表 + 判腿位是否被占 + 置位」。原实现每个方向现算 lameLeaperPath，
+// 是这段的主要开销。
 func lameLeaperAttack(pt, s int, occupied bitboard) bitboard {
 	var b bitboard
-	dirs := knightDirections[:]
 	if pt == ptBishop {
-		dirs = bishopDirections[:]
-	}
-	for _, d := range dirs {
-		to := s + d
-		if !okSquare(to) || chebyshev(s, to) >= 3 {
-			continue
+		for i := 0; i < 4; i++ {
+			to := bishopTo[s][i]
+			if to < 0 {
+				continue
+			}
+			if occupied.test(bishopEye[s][i]) {
+				continue
+			}
+			b.set(to)
 		}
-		if leg := lameLeaperPath(pt, d, s); leg >= 0 && occupied.test(leg) {
-			continue
-		}
-		b.set(to)
-	}
-	if pt == ptBishop {
 		side := 0
 		if rankOf(s) > 4 {
 			side = 1
 		}
-		b = b.and(halfBB[side])
+		return b.and(halfBB[side])
+	}
+	for i := 0; i < 8; i++ {
+		to := knightTo[s][i]
+		if to < 0 {
+			continue
+		}
+		if occupied.test(knightLeg[s][i]) {
+			continue
+		}
+		b.set(to)
 	}
 	return b
 }
