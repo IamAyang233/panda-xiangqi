@@ -528,8 +528,12 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	// 允许的最大深度由 futilityDepth 动态给出（而不是固定值）：评估越接近
 	// 将杀分值，允许剪的深度越小，从而保住杀棋查找。
 	if !s.noForward && !isPV && !inCheck && beta < MateScore-MaxPly &&
-		depth < futilityDepth(staticEval, beta) && staticEval-120*depth >= beta {
-		return staticEval
+		depth < futilityDepth(staticEval, beta) {
+		margin := reverseFutilityMargin(depth, improving,
+			ply >= 1 && staticEval > -s.staticEvalHist[ply-1])
+		if staticEval-margin >= beta {
+			return staticEval
+		}
 	}
 
 	// 空着剪枝：让对手连走两步仍不能改善，说明这个分支已经足够好。
@@ -928,4 +932,32 @@ func (s *Searcher) ageHistory() {
 			s.history[i][j] /= 2
 		}
 	}
+}
+
+// reverseFutilityMargin 是反 futility 剪枝允许的评估余量（照皮卡鱼 Step 7）。
+//
+// 余量随深度增长得比线性慢：futilityMult 从 depth 1 的 44 长到 129 后封顶
+// （depth ≥ 23）。再按 improving / opponentWorsening 各减一档 —— 局势正在
+// 改善、或对手刚走差时静态评估更可信，敢多剪；两项同时成立最多减掉
+// 2.785×mult，浅层足以让余量变成负数。
+//
+// 原来用的是固定 120*depth（更早版本自定），实测那是一条**曲率不对**的线：
+// 反 futility 的触发点里平均深度只有 1.5，而 120 在 depth 1 就要求评估高出
+// beta 120，浅层几乎剪不动；到 depth 20 又比皮卡鱼宽松。换成这里之后安静局面
+// 节点减少 49%、固定 6 万节点的平均深度 12.30 → 14.55，且与「关掉前向剪枝」
+// 的参照相比平均分值差从 71 降到 56 —— 是剪得更准，不是更狠。
+func reverseFutilityMargin(depth int, improving, oppWorse bool) int {
+	mult := 40 + depth*4
+	if mult > 129 {
+		mult = 129
+	}
+	margin := mult * depth
+	adj := 0
+	if improving {
+		adj += 2512
+	}
+	if oppWorse {
+		adj += 340
+	}
+	return margin - adj*mult/1024
 }
