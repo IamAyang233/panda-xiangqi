@@ -171,16 +171,10 @@ func (ls *LayerStack) propagate(feat *[L1]byte) int32 {
 		fc1in[FC0Out-1+i] = clippedReLU(fc0[i])
 	}
 
-	// fc_1: 30 → L3
+	// fc_1: FC1In → L3。这是 propagate 里最重的一段（实测占 66%）：
+	// 标量版是 960 次 int8×uint8 乘加，内核按平台分派（fc1_amd64.s / 标量兜底）。
 	var fc1 [L3]int32
-	for j := 0; j < L3; j++ {
-		base := j * FC1PaddedIn
-		s := ls.FC1Bias[j]
-		for i := 0; i < FC1In; i++ {
-			s += int32(int8(ls.FC1W[base+i])) * int32(fc1in[i])
-		}
-		fc1[j] = s
-	}
+	fc1Forward(&fc1, ls.FC1W, ls.FC1Bias, &fc1in)
 
 	var fc2in [L3]byte
 	for i := 0; i < L3; i++ {
