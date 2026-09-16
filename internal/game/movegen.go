@@ -91,15 +91,25 @@ func (p *Position) GenMoves(side int) []Move {
 func own(side int, target byte) bool { return target != Empty && ColorOf(target) == side }
 
 // LegalMoves 返回 side 方全部合法着法（走完己方不被将军/不照面）。
+//
+// 用「不动局面的试走判定」（isAttackedAfter）而不是 Make → InCheck → Unmake：
+// 后者每次检验要做两次王安全扫描（Make 内部还算了一次「对方是否被将军」），
+// 实测占全部扫描的 75%。语义严格等价，由 TestLegalMovesMatchRef 逐局面对拍
+// 与 perft 的黄金计数共同守住。
 func (p *Position) LegalMoves(side int) []Move {
 	pseudo := p.GenMoves(side)
 	legal := pseudo[:0]
+	them := Opponent(side)
+	ksq := p.kingSq[side>>3]
 	for _, m := range pseudo {
-		p.Make(m)
-		if !p.InCheck(side) {
+		from, to := int(m.From), int(m.To)
+		sq := ksq
+		if from == ksq {
+			sq = to // 走的是王，判定点跟着移
+		}
+		if !p.bb.isAttackedAfter(sq, them, from, to, p.Board[to]) {
 			legal = append(legal, m)
 		}
-		p.Unmake()
 	}
 	return legal
 }
