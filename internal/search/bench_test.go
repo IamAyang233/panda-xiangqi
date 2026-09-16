@@ -1,6 +1,8 @@
 package search
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
@@ -59,5 +61,56 @@ func BenchmarkSearchFixedNodes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.SearchNodes(p, 100000)
+	}
+}
+
+// quietFENsForBench 读取安静局面语料（与 loadQuietFENs 同源，但可用于基准）。
+func quietFENsForBench(b *testing.B, n int) []string {
+	b.Helper()
+	raw, err := os.ReadFile("testdata/quiet_fens.txt")
+	if err != nil {
+		b.Skip("未找到安静局面语料，跳过")
+	}
+	var out []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
+}
+
+// BenchmarkQuietFixedNodes 与 TestSearchTreeEfficiency 同口径：20 个中局安静局面 ×
+// 固定 6 万节点，每个局面用全新的 Searcher。
+//
+// 与 BenchmarkSearchFixedNodes（初始局面）**配对使用** —— 同一个改动在两套语料上的
+// 收益可以差近一倍，只在初始局面上量会系统性高估。实测（把 computeRay 的滑动攻击
+// 从「四方向」改成「只算 s 所在的那一个方向」，各 8~9 样本交替 A/B、两组区间都
+// 完全不重叠）：
+//
+//	初始局面（32 子在场）  1083.8 → 919.0 ms/10 万节点  = +17.9%
+//	中局 20 局面（子力已减） 9519.3 → 8625.2 ms/120 万节点 = +10.4%
+//
+// 原因是威胁链路（computeRay 的候选子数）随在场子数增长，初始局面最重。
+func BenchmarkQuietFixedNodes(b *testing.B) {
+	w, err := nnue.Load(flatPath)
+	if err != nil {
+		b.Skip("未找到展开后的权重，跳过")
+	}
+	fens := quietFENsForBench(b, 20)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, f := range fens {
+			p, err := game.ParseFEN(f)
+			if err != nil {
+				b.Fatal(err)
+			}
+			New(w).SearchNodes(p, 60000)
+		}
 	}
 }

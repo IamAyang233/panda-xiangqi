@@ -110,6 +110,76 @@ func TestSlidingAttackBothMatchesRef(t *testing.T) {
 	t.Logf("合并版与参考实现在全部 90 格、两个兵种上逐位一致 ✓")
 }
 
+// TestSlidingAttackDirMatchesBoth 保证「只算一个方向」与「四个方向全算」在
+// 该方向上的取值逐位相同。
+//
+// 动机：computeRay 段只需要 s 所在的那一个方向（另外三个方向在
+// before/after 的对称差里必然抵消），于是那里改调 slidingAttackDir。
+// 这个等价关系是本项目里第二次「同一套逻辑拆成两个入口」，必须有可执行的
+// 证据 —— 一旦两者分叉，症状会是 NNUE 特征悄悄偏移，而不是报错。
+//
+// 逐位比较方式：slidingAttackBoth 的另外三个方向落在与 rayBB[sq][di] 不相交的
+// 格子上，所以把它与该射线求交就得到「该方向的贡献」。
+func TestSlidingAttackDirMatchesBoth(t *testing.T) {
+	check := func(name string, occ bitboard) {
+		for sq := 0; sq < squareNB; sq++ {
+			fullR, fullC := slidingAttackBoth(sq, occ)
+			for d := 0; d < 4; d++ {
+				ray := rayBB[sq][d]
+				gotR, gotC := slidingAttackDir(sq, d, occ)
+				wantR := fullR.and(ray)
+				wantC := fullC.and(ray)
+				if gotR != wantR {
+					t.Fatalf("%s：车 sq=%d d=%d 不一致\n单方向 %v\n全方向∩射线 %v",
+						name, sq, d, gotR, wantR)
+				}
+				if gotC != wantC {
+					t.Fatalf("%s：炮 sq=%d d=%d 不一致\n单方向 %v\n全方向∩射线 %v",
+						name, sq, d, gotC, wantC)
+				}
+			}
+		}
+	}
+
+	check("空棋盘", bitboard{})
+
+	var full bitboard
+	for s := 0; s < squareNB; s++ {
+		full.set(s)
+	}
+	check("满棋盘", full)
+
+	rng := rand.New(rand.NewSource(20260916))
+	// 稀疏占用必须单独覆盖：炮架距离只有 0/1/2 三种情形，稀疏时才会出现
+	// 「空射线」「只有一个子」这些边界，密集棋盘几乎全是「立刻撞阻挡」。
+	for _, pieces := range []int{1, 2, 3, 8, 24} {
+		for iter := 0; iter < 200; iter++ {
+			var occ bitboard
+			for n := pieces; n > 0; n-- {
+				occ.set(rng.Intn(squareNB))
+			}
+			check("随机棋盘", occ)
+		}
+	}
+
+	// 同行/同列的单个子，覆盖炮架的各种间距。
+	base := 4*9 + 4
+	for d := 1; d <= 8; d++ {
+		var occ bitboard
+		if base+d < squareNB {
+			occ.set(base + d)
+			check("东侧单子", occ)
+		}
+		var occ2 bitboard
+		if base+9*d < squareNB {
+			occ2.set(base + 9*d)
+			check("北侧单子", occ2)
+		}
+	}
+
+	t.Logf("单方向版与合并版在全部 90 格 × 4 方向 × 多类占用上逐位一致 ✓")
+}
+
 // benchSink* 用于防止基准测试的调用被编译器整体消除。
 //
 // 这一点必须较真：原来写的是 `_, _ = slidingAttackBoth(sq, occ)` 且 sq/occ
@@ -197,6 +267,24 @@ func BenchmarkSlidingAttackSplit(b *testing.B) {
 			j := i & 255
 			benchSinkRook = slidingAttackRef(ptRook, sqs[j], occs[j])
 			benchSinkCann = slidingAttackRef(ptCannon, sqs[j], occs[j])
+		}
+	})
+}
+
+// BenchmarkSlidingAttackDir 是 computeRay 段改用的形态：只算一个方向。
+//
+// 与 BenchmarkSlidingAttackBoth 对照，量「四方向 → 单方向」省了多少。
+// 入参仍每轮都换（含方向），因为真实调用点是「候选子 psq + s 决定的方向」，
+// 两者都在变 —— 固定方向会让分支与表索引被完美预测。
+func BenchmarkSlidingAttackDir(b *testing.B) {
+	occs := benchOccupancies(256)
+	sqs := benchSquares(256)
+
+	b.Run("Varying", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			j := i & 255
+			benchSinkRook, benchSinkCann = slidingAttackDir(sqs[j], j&3, occs[j])
 		}
 	})
 }

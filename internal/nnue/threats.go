@@ -135,6 +135,35 @@ func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 	return rook, cannon
 }
 
+// beyondOf 返回「沿方向 d 越过 set 中最近的那个子之后」的格子集合。
+//
+// 入参 set 必须是某个格子的射线（即 rayBB[x][d]）或它的子集，两者都满足
+// 「沿 d 递增/递减排列的连续区间」；beyondInc/beyondDec 的下标编码正是据此
+// 把「找最近置位」变成一次查表。set 与 occ 无交集时返回空集
+// （递增方向落到下标 128、递减方向落到下标 0，两张表的这两档都是空集）。
+func beyondOf(set, occ bitboard, d int) bitboard {
+	lo, hi := set[0]&occ[0], set[1]&occ[1]
+	if d == 0 || d == 2 {
+		return beyondInc[d][incIndex(lo, hi)]
+	}
+	return beyondDec[d][decIndex(lo, hi)]
+}
+
+// slidingAttackDir 只算方向 d 上的滑动攻击 —— 车集与炮集。
+//
+// 与 slidingAttackBoth 的关系：后者四个方向都要，供 updateThreats 的主路径用；
+// 这里只算一个方向，供 computeRay 段用 —— 那里的候选子 psq 与 s 同行或同列，
+// 而 s 只落在 psq 四条射线中的一条上，另外三条在「s 空 / s 有子」两种占用下
+// 完全一致（调用处取对称差，它们会自然抵消）。四个方向算一个，省掉四分之三。
+func slidingAttackDir(sq, d int, occ bitboard) (rook, cannon bitboard) {
+	ray := rayBB[sq][d]
+	fb := beyondOf(ray, occ, d)
+	rook = ray.andNot(fb)
+	// 炮：越过炮架后到下一个子（含）。fb 为空时 beyondOf 得空集，整体为空。
+	cannon = fb.andNot(beyondOf(fb, occ, d))
+	return rook, cannon
+}
+
 // incIndex 把「递增方向（北/东）上第一个阻挡所在格」编码成 beyondInc 的下标。
 //
 // 做法：先看低位字（格号 0~63）有没有子，有就直接取它的最低置位；

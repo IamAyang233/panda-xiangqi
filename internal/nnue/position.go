@@ -483,26 +483,28 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	for !candidates.isEmpty() {
 		psq := candidates.popLSB()
 		cpt := pieceType(int(p.board[psq]))
-		// 排除 s 本身：指向 s 的关系已由上面处理。
+		// 候选集保证 psq 与 s 同行或同列，所以 s 只落在 psq 四条射线中的一条上。
+		// 而调用处只用 before/after 的**对称差**（见下面两段循环）—— 另外三个方向上
+		// s 的占用与否压根不影响攻击集，它们在差里必然抵消。所以只算 s 所在的那一个
+		// 方向就够了，不必四向都算两遍。
+		d := rayDirBetween(psq, s)
 		var before, after bitboard
 		if cpt == ptRook {
-			// 车：候选集保证 psq 与 s 同行或同列，所以「加入 s」只会把该方向的
-			// 射程截断到 s 为止，另外三个方向一律不受影响。于是只需一次滑动攻击，
-			// 而不是不含 s / 含 s 各算一次 —— computeRay 段占了滑动攻击调用量的
-			// 四分之三，候选又几乎全是车炮，省下来的正是这里。
+			// 车：occWith 只是在 occWithout 上多了一个 s，所以「含 s」那侧可以把
+			// 射程截断到 s 为止，不必重算一遍。
 			if diagOn {
 				diagStats.RayAttackCall++
 			}
-			raw := attacksBB(ptRook, psq, occWithout)
+			ray := rayBB[psq][d]
+			raw := ray.andNot(beyondOf(ray, occWithout, d))
 			with := raw
 			if raw.test(s) {
-				// s 原本就在射程内（且 s 与 psq 同行列，方向必然可判）。
-				// 射线表不含起点，所以 raw 去掉 s 之后的射线，剩下的正好是
-				// 「psq 到 s（含 s）」。s 在射程外时 raw 不变。
-				with = raw.andNot(rayBB[s][rayDirBetween(psq, s)])
+				// s 原本就在射程内（否则 psq 与 s 之间已有阻挡，加入 s 不改射程）。
+				// 射线表不含起点，所以 raw 去掉「s 之后的射线」，剩下的正好是
+				// 「psq 到 s（含 s）」。
+				with = raw.andNot(rayBB[s][d])
 			}
-			// 两个占用集都要按「当前 occupied 含 s、并排除 s 本身」整理 ——
-			// 与下面 else 分支保持同一口径。
+			// 两侧都按「当前 occupied 含 s、并排除 s 本身」整理 —— 与下面分支同一口径。
 			base := raw.and(occupied).andNot(bbOf(s))
 			full := with.and(occupied).andNot(bbOf(s))
 			if put {
@@ -510,9 +512,20 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 			} else {
 				before, after = full, base
 			}
+		} else if cpt == ptCannon {
+			// 炮必须算两次：炮架与目标会随 s 一起移动，「按方向截断」表达不了。
+			// 但同样只有 s 所在的那一个方向需要重算。
+			if diagOn {
+				diagStats.RayAttackCall += 2
+			}
+			_, b := slidingAttackDir(psq, d, occBefore)
+			_, a := slidingAttackDir(psq, d, occAfter)
+			before = b.and(occupied).andNot(bbOf(s))
+			after = a.and(occupied).andNot(bbOf(s))
 		} else {
-			// 炮与马/象仍算两次：炮的炮架与目标会随 s 一起移动，马/象则取决于
-			// s 是否堵住腿位或象眼，都不是「按方向截断」能表达的。
+			// 马/象：s 是否堵住腿位/象眼会改变攻击集，同样只影响一条线，但那条线是
+			// **对角**（象眼/腿位与 s 同行列，落点却在对角线上），与 rayDirBetween 的
+			// 正交方向不是一回事，没法用上面那套按方向取。沿用两次全量计算。
 			if diagOn {
 				diagStats.RayAttackCall += 2
 			}
