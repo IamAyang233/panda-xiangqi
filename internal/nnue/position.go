@@ -448,20 +448,33 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	rookAttackers := rAttacks.and(p.byType[ptRook])
 	cannonAttackers := cAttacks.and(p.byType[ptCannon])
 
-	// 八行写成两条并行的链（而不是一条八级的 or 链）：or 是串行依赖，
-	// 每次都要等上一次的结果，链长直接乘以单次 or 的延迟。
-	var inA, inB bitboard
-	inA = pseudoAttacks[paPawnToWhite][s].and(p.byColor[colorWhite].and(p.byType[ptPawn])).
-		or(pseudoAttacks[paPawnToBlack][s].and(p.byColor[colorBlack].and(p.byType[ptPawn])))
-	inB = p.knightAttackers(s).and(p.byType[ptKnight]).
-		or(lameLeaperAttack(ptBishop, s, occupied).and(p.byType[ptBishop]))
+	// 十六进制不说谎：本函数汇编里 MOVUPS 占 17.8%、而真正的位运算只占 5%。
+	// 原因是 8 个 bitboard（各 16 字节）同时存活，amd64 的 16 个 GPR 装不下，
+	// 中间值被溢出到栈，每次位运算都要多付一次 load/store。
+	// 把 incoming 段改写成 lo/hi 两个 uint64 —— 各占 1 个寄存器，可以留在 GPR 里。
+	wPawns := p.byColor[colorWhite].and(p.byType[ptPawn])
+	bPawns := p.byColor[colorBlack].and(p.byType[ptPawn])
+	wAtt, bAtt := pseudoAttacks[paPawnToWhite][s], pseudoAttacks[paPawnToBlack][s]
+	inALo, inAHi := wAtt[0]&wPawns[0], wAtt[1]&wPawns[1]
+	inALo, inAHi = inALo|bAtt[0]&bPawns[0], inAHi|bAtt[1]&bPawns[1]
+
+	knight := p.knightAttackers(s)
+	bishop := lameLeaperAttack(ptBishop, s, occupied)
+	inBLo, inBHi := knight[0]&p.byType[ptKnight][0], knight[1]&p.byType[ptKnight][1]
+	inBLo, inBHi = inBLo|bishop[0]&p.byType[ptBishop][0], inBHi|bishop[1]&p.byType[ptBishop][1]
+
 	// 士与将只在九宫内活动，两张表在九宫外恒为空 —— 与 buildPseudoAttacks 里
 	// 填充它们时的条件（palaceBB.test(s)）严格一致，所以跳过是等价的。
 	if palaceBB.test(s) {
-		inA = inA.or(pseudoAttacks[ptAdvisor][s].and(p.byType[ptAdvisor]))
-		inB = inB.or(pseudoAttacks[ptKing][s].and(p.byType[ptKing]))
+		advisor, king := pseudoAttacks[ptAdvisor][s], pseudoAttacks[ptKing][s]
+		inALo, inAHi = inALo|advisor[0]&p.byType[ptAdvisor][0], inAHi|advisor[1]&p.byType[ptAdvisor][1]
+		inBLo, inBHi = inBLo|king[0]&p.byType[ptKing][0], inBHi|king[1]&p.byType[ptKing][1]
 	}
-	incoming := inA.or(inB).or(rookAttackers.or(cannonAttackers))
+
+	inLo, inHi := inALo|inBLo, inAHi|inBHi
+	inLo, inHi = inLo|rookAttackers[0], inHi|rookAttackers[1]
+	inLo, inHi = inLo|cannonAttackers[0], inHi|cannonAttackers[1]
+	incoming := bitboard{inLo, inHi}
 	if diagOn {
 		diagStats.ThreatIn += int64(incoming.count())
 	}
