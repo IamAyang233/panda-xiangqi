@@ -545,6 +545,50 @@ func (s *Searcher) stopped() bool {
 // isPV 标记主变例节点：只有非 PV 节点才允许直接用置换表的分值剪枝，
 // 因为 PV 节点的分值受窗口影响，直接返回会截断主变例。
 // canNull 标记允许空着剪枝（连续两次空着会退化成无意义的搜索，须禁止）。
+// diagTier 开启「截断着法来自哪一档排序」的统计（`QIJING_TIER=on`）。
+//
+// 用途：判断该补哪一项排序技术，而不是凭「皮卡鱼有、我们没有」就动手。
+//
+// **实测结论（2026-09-17，23 个局面、15037 次截断）：排序不是本引擎的瓶颈，
+// 投历史启发是白费。** 分布如下（后者为平均截断序号）：
+//
+//	ttMove        23.8%（0.00）   吃子 MVV-LVA  46.2%（0.29）
+//	killer[0]     16.4%（0.97）   killer[1]      3.9%（1.45）
+//	history>0      7.1%（2.69）   history=0      2.5%（11.83）
+//
+// 即 **70% 的截断发生在搜索序号 ≤0.3 的位置**，已经接近最优；历史两档合计
+// 只有 9.6%。而且历史表**没有饱和**（非零格仅 0.2%、顶到上限 0 格）——
+// 这一点与「历史启发只加不减会导致饱和」的直觉相反，是我先错误假设、后实测
+// 推翻的。即使把历史修到完美，最多也只值约 2% 节点（<0.03 层），低于噪声。
+//
+// 保留它作为将来的机制指标：任何排序改动都应该先让这张表动起来。
+var diagTier = os.Getenv("QIJING_TIER") == "on"
+
+type tierStat struct{ cnt, idxSum int64 }
+
+var tierDiag [6]tierStat
+var tierNames = [6]string{"ttMove", "吃子(MVV-LVA)", "killer[0]", "killer[1]", "history>0", "history=0"}
+
+// moveTier 判定着法落在哪一档（顺序必须与 moveScore 的优先级一致）。
+func (s *Searcher) moveTier(m game.Move, ply int, ttMove game.Move, victim uint8) int {
+	if m == ttMove && ttMove != (game.Move{}) {
+		return 0
+	}
+	if victim != game.Empty {
+		return 1
+	}
+	if m == s.killers[ply][0] {
+		return 2
+	}
+	if m == s.killers[ply][1] {
+		return 3
+	}
+	if s.history[m.From][m.To] > 0 {
+		return 4
+	}
+	return 5
+}
+
 // boolToInt 把布尔转成 0/1，用于照抄皮卡鱼那些「按条件加减余量」的公式。
 // Go 的 bool 不能直接参与算术，写成 if 会让公式与源码对不上号。
 func boolToInt(b bool) int {
@@ -1087,6 +1131,13 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			alpha = score
 		}
 		if alpha >= beta {
+			if diagTier {
+				// 必须在 updateQuietStats 之前分类：否则杀手与历史已被这一步改过，
+				// 统计到的是「改后」的档位。
+				ti := s.moveTier(m, ply, ttMove, victim)
+				tierDiag[ti].cnt++
+				tierDiag[ti].idxSum += int64(i)
+			}
 			if victim == game.Empty {
 				s.updateQuietStats(m, ply, depth)
 			}
