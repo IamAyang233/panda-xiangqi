@@ -66,6 +66,8 @@ func TestFeatureChainStructure(t *testing.T) {
 		float64(d.RebuildPiece)/float64(maxI64(d.RebuildPSQ, 1)))
 	t.Logf("增量消费威胁条目 %.2f 条/节点（每条约 2 次 1KB 随机行 add/sub）",
 		float64(d.ApplyEntries)/n)
+	// 重建占 12.7% 全机，但只有「窗口超限」那一档才可能通过 pendingLimit 调参改善。
+	t.Logf("重建原因：%s", d.RebuildReasonReport())
 
 	// 守卫：这些量级本身是「该不该动手」的判据，飘了就该重新评估
 	if c := float64(d.CandRook+d.CandCannon+d.CandLeaper) / n; c > 3 {

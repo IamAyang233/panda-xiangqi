@@ -1,5 +1,7 @@
 package nnue
 
+import "fmt"
+
 // 威胁增量链路的规模统计。
 //
 // 起因：把 slidingAttackBoth 改成空实现后，固定节点预算的搜索从 4.6s 掉到
@@ -35,6 +37,61 @@ type DiagStats struct {
 	RebuildPiece  int64 // rebuildPSQ 累加的棋子特征总数
 	ApplyEntries  int64 // applyThreats 实际消费的条目总数
 	ApplyPieces   int64 // applyPSQ 实际消费的棋子条目总数
+
+	// 全量重建的触发原因分解。
+	//
+	// 重建（rebuildPSQ + rebuildThreats）实测占全机 12.7%，是特征链路里
+	// 除 applyThreats 之外最大的一块。但它是不是「可省的」取决于触发原因：
+	// 桶/镜像变化与首帧是设计代价，脏窗口超限才可能与 pendingLimit 有关。
+	// 没有这张分解表就没法判断该往哪使劲。
+	RebStale    int64 // 局面被标记为脏（stale）
+	RebInvalid  int64 // 累加器尚未建立（首帧）
+	RebBucket   int64 // 特征桶变化（王换了桶）
+	RebMirror   int64 // 镜像变化（跨中线）
+	RebPieceWin int64 // PSQ 侧棋子脏窗口超限
+	RebThrWin   int64 // 威胁侧脏窗口超限
+}
+
+// rebPSQ 分类记录 PSQ 侧走全量重建的原因（只在 diagOn 时调用）。
+func rebPSQ(stale bool, a *Accumulator, c, bucket int, mirror bool) {
+	switch {
+	case stale:
+		diagStats.RebStale++
+	case !a.valid[c]:
+		diagStats.RebInvalid++
+	case a.psqBucket[c] != int8(bucket):
+		diagStats.RebBucket++
+	case a.mirror[c] != mirror:
+		diagStats.RebMirror++
+	default:
+		diagStats.RebPieceWin++
+	}
+}
+
+// rebThreat 分类记录威胁侧走全量重建的原因（威胁侧没有桶条件）。
+func rebThreat(stale bool, a *Accumulator, c int, mirror bool) {
+	switch {
+	case stale:
+		diagStats.RebStale++
+	case !a.valid[c]:
+		diagStats.RebInvalid++
+	case a.mirror[c] != mirror:
+		diagStats.RebMirror++
+	default:
+		diagStats.RebThrWin++
+	}
+}
+
+// RebuildReasonReport 返回重建原因的简短分布（供诊断测试打印）。
+func (s DiagStats) RebuildReasonReport() string {
+	tot := s.RebStale + s.RebInvalid + s.RebBucket + s.RebMirror + s.RebPieceWin + s.RebThrWin
+	if tot == 0 {
+		return "（无重建）"
+	}
+	pct := func(v int64) float64 { return 100 * float64(v) / float64(tot) }
+	return fmt.Sprintf("stale %.1f%%｜首帧 %.1f%%｜桶变 %.1f%%｜镜像变 %.1f%%｜PSQ窗口 %.1f%%｜威胁窗口 %.1f%%（共 %d 次）",
+		pct(s.RebStale), pct(s.RebInvalid), pct(s.RebBucket), pct(s.RebMirror),
+		pct(s.RebPieceWin), pct(s.RebThrWin), tot)
 }
 
 // RebuildShare 返回威胁累加器走全量重建的比例（0~1）。

@@ -442,15 +442,26 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	// 非滑子靠反向查表；滑子（车与炮）也在这里一并覆盖：
 	// 车不攻击 s 时不在 rAttacks 里，炮需要炮架所以它可能在 cAttacks 而不在 rAttacks，
 	// 两个都与射线分支的取值互斥，因此不会重复。
-	var incoming bitboard
-	incoming = incoming.or(pseudoAttacks[paPawnToWhite][s].and(p.byColor[colorWhite].and(p.byType[ptPawn])))
-	incoming = incoming.or(pseudoAttacks[paPawnToBlack][s].and(p.byColor[colorBlack].and(p.byType[ptPawn])))
-	incoming = incoming.or(p.knightAttackers(s).and(p.byType[ptKnight]))
-	incoming = incoming.or(lameLeaperAttack(ptBishop, s, occupied).and(p.byType[ptBishop]))
-	incoming = incoming.or(pseudoAttacks[ptAdvisor][s].and(p.byType[ptAdvisor]))
-	incoming = incoming.or(pseudoAttacks[ptKing][s].and(p.byType[ptKing]))
-	incoming = incoming.or(rAttacks.and(p.byType[ptRook]))
-	incoming = incoming.or(cAttacks.and(p.byType[ptCannon]))
+	//
+	// 攻击 s 的车/炮这两批同时被下面的 computeRay 段用到（那里按候选遍历），
+	// 所以在这里算一次共用。
+	rookAttackers := rAttacks.and(p.byType[ptRook])
+	cannonAttackers := cAttacks.and(p.byType[ptCannon])
+
+	// 八行写成两条并行的链（而不是一条八级的 or 链）：or 是串行依赖，
+	// 每次都要等上一次的结果，链长直接乘以单次 or 的延迟。
+	var inA, inB bitboard
+	inA = pseudoAttacks[paPawnToWhite][s].and(p.byColor[colorWhite].and(p.byType[ptPawn])).
+		or(pseudoAttacks[paPawnToBlack][s].and(p.byColor[colorBlack].and(p.byType[ptPawn])))
+	inB = p.knightAttackers(s).and(p.byType[ptKnight]).
+		or(lameLeaperAttack(ptBishop, s, occupied).and(p.byType[ptBishop]))
+	// 士与将只在九宫内活动，两张表在九宫外恒为空 —— 与 buildPseudoAttacks 里
+	// 填充它们时的条件（palaceBB.test(s)）严格一致，所以跳过是等价的。
+	if palaceBB.test(s) {
+		inA = inA.or(pseudoAttacks[ptAdvisor][s].and(p.byType[ptAdvisor]))
+		inB = inB.or(pseudoAttacks[ptKing][s].and(p.byType[ptKing]))
+	}
+	incoming := inA.or(inB).or(rookAttackers.or(cannonAttackers))
 	if diagOn {
 		diagStats.ThreatIn += int64(incoming.count())
 	}
@@ -485,7 +496,6 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 
 	// ① 攻击 s 的车：s 从空变占（或反之）会让它的射线停在 s 或继续越过 s，
 	//    于是「越过 s 之后那一格」上的关系随之反转。
-	rookAttackers := rAttacks.and(p.byType[ptRook])
 	if diagOn {
 		diagStats.CandRook += int64(rookAttackers.count())
 	}
@@ -499,7 +509,6 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	}
 
 	// ② 攻击 s 的炮（恰好一个炮架在中间）：同上。
-	cannonAttackers := cAttacks.and(p.byType[ptCannon])
 	if diagOn {
 		diagStats.CandCannon += int64(cannonAttackers.count())
 	}

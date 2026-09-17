@@ -65,6 +65,9 @@ func (w *Weights) Apply(p *Position, a *Accumulator) {
 			len(p.pendingPieces) <= pendingLimit {
 			w.applyPSQ(p, a, c, bucket, mirror)
 		} else {
+			if diagOn {
+				rebPSQ(stale, a, c, bucket, mirror)
+			}
 			w.rebuildPSQ(p, a, c, bucket, mirror)
 		}
 
@@ -72,6 +75,9 @@ func (w *Weights) Apply(p *Position, a *Accumulator) {
 			len(p.pendingThreats) <= pendingLimit {
 			w.applyThreats(p, a, c, mirror)
 		} else {
+			if diagOn {
+				rebThreat(stale, a, c, mirror)
+			}
 			w.rebuildThreats(p, a, c, mirror)
 		}
 
