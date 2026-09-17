@@ -76,7 +76,7 @@ var matchFENs = []struct {
 }
 
 func main() {
-	mode := flag.String("mode", "moves", "moves = 着法一致率；games = 完整对局；puzzle = 残局战术诊断；depth = 同题同时间的搜索深度对比")
+	mode := flag.String("mode", "moves", "moves = 着法一致率；games = 完整对局；puzzle = 残局战术诊断；depth = 同题同时间的搜索深度对比；curve = 节点预算→命中率曲线")
 	movetime := flag.Int("movetime", 1000, "每步思考时间（毫秒）")
 	games := flag.Int("games", 6, "对局数（mode=games）")
 	maxPly := flag.Int("maxply", 50, "单局步数上限（mode=games）")
@@ -138,6 +138,10 @@ func main() {
 	case "nodes":
 		uci.Close()
 		nodesBudget(*flatPath, *uciPath, *uciSkill, []int64{5000, 20000, 100000, 500000}, matchFENs)
+	case "curve":
+		uci.Close()
+		effCurve(*flatPath, *uciPath, *uciSkill, *puzzleDir, *puzzleLimit,
+			[]int64{10000, 25000, 60000, 150000, 250000})
 	case "self":
 		runSelfProbe(*flatPath, parseInts(*depthsFlag, []int{10, 12}), matchFENs)
 	default:
