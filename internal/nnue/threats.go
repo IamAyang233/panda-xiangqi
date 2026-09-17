@@ -108,31 +108,42 @@ func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 		diagStats.SlidingCalls++
 	}
 	occLo, occHi := occupied[0], occupied[1]
+	// 两个累加器拆成 lo/hi 四个 uint64：与 updateThreats 的 incoming 段同一理由
+	// （见那里的注释）── 16 字节的 bitboard 在四轮里要反复 load/store，
+	// 拆开后每半只占 1 个 GPR，能一直留在寄存器里。
+	var rookLo, rookHi, cannonLo, cannonHi uint64
 	for di := 0; di < 4; di++ {
 		ray := rayBB[sq][di]
+		rayLo, rayHi := ray[0], ray[1]
 		inc := di == 0 || di == 2 // 北/东格号递增，南/西递减
 
-		var fb bitboard
+		var fbLo, fbHi uint64
 		if inc {
-			fb = beyondInc[di][incIndex(ray[0]&occLo, ray[1]&occHi)]
+			fb := beyondInc[di][incIndex(rayLo&occLo, rayHi&occHi)]
+			fbLo, fbHi = fb[0], fb[1]
 		} else {
-			fb = beyondDec[di][decIndex(ray[0]&occLo, ray[1]&occHi)]
+			fb := beyondDec[di][decIndex(rayLo&occLo, rayHi&occHi)]
+			fbLo, fbHi = fb[0], fb[1]
 		}
 		// 射线表本身不含 sq，所以 ray 去掉 fb（阻挡之后的射线）剩下的正好是
 		// 「sq 到 fb（含 fb）」，不必再拼 bbOf(fb) 后取补。
-		rook = rook.or(ray.andNot(fb))
+		rookLo |= rayLo &^ fbLo
+		rookHi |= rayHi &^ fbHi
 
 		// 炮：炮架之前一格都不算（hurdle 未越过），越过 fb 之后一直算到下一个子（含）。
 		// fb 为空（本方向没有子）时下面整段自然产出空集。
-		var fb2 bitboard
+		var fb2Lo, fb2Hi uint64
 		if inc {
-			fb2 = beyondInc[di][incIndex(fb[0]&occLo, fb[1]&occHi)]
+			fb2 := beyondInc[di][incIndex(fbLo&occLo, fbHi&occHi)]
+			fb2Lo, fb2Hi = fb2[0], fb2[1]
 		} else {
-			fb2 = beyondDec[di][decIndex(fb[0]&occLo, fb[1]&occHi)]
+			fb2 := beyondDec[di][decIndex(fbLo&occLo, fbHi&occHi)]
+			fb2Lo, fb2Hi = fb2[0], fb2[1]
 		}
-		cannon = cannon.or(fb.andNot(fb2))
+		cannonLo |= fbLo &^ fb2Lo
+		cannonHi |= fbHi &^ fb2Hi
 	}
-	return rook, cannon
+	return bitboard{rookLo, rookHi}, bitboard{cannonLo, cannonHi}
 }
 
 // beyondOf 返回「沿方向 d 越过 set 中最近的那个子之后」的格子集合。
