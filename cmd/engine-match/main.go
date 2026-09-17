@@ -95,6 +95,7 @@ func main() {
 	mgBudget := flag.Int64("mgbudget", 100000, "对比用的节点预算（mode=mg）")
 	mgArbiter := flag.Int64("mgarbiter", 2000000, "仲裁者的节点预算（mode=mg / mode=agree）")
 	mTopK := flag.Int("mtopk", 3, "仲裁者取前几个候选着法（mode=agree）")
+	byLenLimit := flag.Int("bylenlimit", 400, "题目上限（mode=bylen）")
 	mGapMin := flag.Int("mgapmin", 50, "锋利度下界（分；mode=sharpen）")
 	mGapMax := flag.Int("mgapmax", 300, "锋利度上界（分；mode=sharpen。防的是近杀局被当成中局）")
 	mOut := flag.String("mout", "sharp_fens.txt", "筛选后的语料输出路径（mode=sharpen）")
@@ -162,6 +163,9 @@ func main() {
 	case "sharpen":
 		uci.Close()
 		sharpenCorpus(*uciPath, *corpusFlag, *mgLimit, *mgArbiter, *mTopK, *mOut, *mGapMin, *mGapMax)
+	case "bylen":
+		uci.Close()
+		byLength(*flatPath, *uciPath, *uciSkill, *puzzleDir, *byLenLimit, *mgBudget)
 	case "self":
 		runSelfProbe(*flatPath, parseInts(*depthsFlag, []int{10, 12}), matchFENs)
 	default:

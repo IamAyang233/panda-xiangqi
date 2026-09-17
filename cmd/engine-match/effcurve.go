@@ -111,10 +111,10 @@ func effCurve(flatPath, uciPath string, skill int, dir string, limit int, budget
 
 	fmt.Printf("=== 节点预算 → 残局命中率（两侧同为单线程 + 每题独立置换表 + 固定节点）===\n")
 	fmt.Printf("题目 %d 道（win 局、取正解首着）｜皮卡鱼 Skill %d\n\n", len(ps), skill)
-	fmt.Printf("%8s %14s %14s %7s %7s %9s %9s\n",
-		"节点预算", "内嵌 命中/均深", "皮卡鱼 命中/均深", "命中差", "节点比", "归一命中", "皮卡鱼原值")
-	fmt.Printf("  「节点比」= 内嵌实际节点 ÷ 皮卡鱼实际节点（我们的固定节点会超支）\n")
-	fmt.Printf("  「归一命中」= 命中数 ÷ 节点比，把我们多搜的节点折算掉之后的命中数\n\n")
+	fmt.Printf("%8s %14s %14s %7s %7s\n",
+		"名义预算", "内嵌 命中/均深", "皮卡鱼 命中/均深", "命中差", "节点比")
+	fmt.Printf("  皮卡鱼按**我们的实际节点数**给量（逐题），两侧工作量完全相同\n")
+	fmt.Printf("  「节点比」应为 1.00×，用来自检归一化真的生效了\n\n")
 
 	type point struct {
 		budget             int64
@@ -133,14 +133,15 @@ func effCurve(flatPath, uciPath string, skill int, dir string, limit int, budget
 				continue
 			}
 			res := search.New(w).SearchNodes(pos.Clone(), b)
-			ourHit += boolInt(res.Best.String() == pz.Solution[0])
-			ourDep += res.Depth
-			ourNodes += res.Nodes
-
-			best, d, un, uerr := sess.goNodesBest(pz.FEN, b, 180*time.Second)
+			// ⚠️ 关键：皮卡鱼用**我们这一步的实际节点数**，不是同一个名义预算
+			// —— 我们的 SearchNodes 停在结点边界上，实际会超支 1.3~1.7×。
+			best, d, un, uerr := sess.goNodesBest(pz.FEN, res.Nodes, 180*time.Second)
 			if uerr != nil {
 				continue
 			}
+			ourHit += boolInt(res.Best.String() == pz.Solution[0])
+			ourDep += res.Depth
+			ourNodes += res.Nodes
 			uciHit += boolInt(best == pz.Solution[0])
 			uciDep += d
 			uciNodes += un
@@ -150,34 +151,35 @@ func effCurve(flatPath, uciPath string, skill int, dir string, limit int, budget
 			continue
 		}
 		pts = append(pts, point{b, ourHit, uciHit, ourDep / ok, uciDep / ok, ourNodes, uciNodes})
-		ratio := float64(ourNodes) / float64(uciNodes)
-		fmt.Printf("%8d %14s %14s %6dpp %6.2fx %9.1f %9d\n", b,
+		fmt.Printf("%8d %14s %14s %6dpp %6.2fx\n", b,
 			fmt.Sprintf("%d/%d d%d", ourHit, ok, ourDep/ok),
 			fmt.Sprintf("%d/%d d%d", uciHit, ok, uciDep/ok),
-			100*(ourHit-uciHit)/ok, ratio,
-			float64(ourHit)/ratio, uciHit)
+			100*(ourHit-uciHit)/ok,
+			float64(ourNodes)/float64(uciNodes))
 	}
 
-	// 节点效率：同样多的实际节点下，我们的命中率是皮卡鱼的百分之多少。
-	// 换算倍率 = 1/效率比，即「要拿到同样的棋力，我们得搜多少倍节点」。
+	// 节点效率：同实际节点下的命中数之比。
 	//
-	// 用「归一命中」而不是原始命中：我们固定节点会超支（1.3~1.7×），
-	// 直接比原始命中会得出「我们在每个档位都赢」的假象 —— 第一次跑就踩了。
-	fmt.Printf("\n--- 节点效率（同样多的**实际**节点下）---\n")
+	// ⚠️⚠️ 这一节曾经算错，是值得单独记住的教训（2026-09-17 修正）：
+	// 原实现算出「归一命中 = 命中数 ÷ 节点比」，再除以皮卡鱼的命中数，得到
+	// 「我们每节点只值 **70%**」。**那个归一化是无效的。** 命中数是**有上限**的
+	// 量（≤ 题量）且随预算**饱和**：除以节点比等于按线性外推去惩罚多搜的节点，
+	// 惩罚远超真实影响。同一批数据用正确口径重算，两侧基本相同。
+	//
+	// 正确做法就是上面那个循环：**把皮卡鱼的预算设成我们的实际节点数**，然后
+	// 直接比命中数。这是唯一能在「有上限、会饱和」的指标上做的公平对比。
+	fmt.Printf("\n--- 节点效率（同实际节点）---\n")
 	var sumEff float64
-	for i, p := range pts {
-		ratio := float64(p.ourNodes) / float64(p.uciNodes)
-		norm := float64(p.ourHit) / ratio
-		eff := norm / float64(p.uciHit)
+	for _, p := range pts {
+		eff := float64(p.ourHit) / float64(p.uciHit)
 		sumEff += eff
-		fmt.Printf("%8d 节点：我们归一命中 %.1f vs 皮卡鱼 %d ⇒ 效率 %.0f%%，换算倍率 %.2f×（节点比 %.2f×）\n",
-			p.budget, norm, p.uciHit, 100*eff, 1/eff, ratio)
-		_ = i
+		fmt.Printf("%8d 名义（我们实际 %d 节点/题）：我们 %d vs 皮卡鱼 %d ⇒ %.0f%%\n",
+			p.budget, p.ourNodes/int64(len(ps)), p.ourHit, p.uciHit, 100*eff)
 	}
 	avg := sumEff / float64(len(pts))
-	fmt.Printf("\n平均：我们每节点约值皮卡鱼的 **%.0f%%**，即需要 **%.2f×** 的节点才能达到同样的残局命中率。\n", 100*avg, 1/avg)
+	fmt.Printf("\n平均：同实际节点下我们的命中数是皮卡鱼的 **%.0f%%**。\n", 100*avg)
+	fmt.Printf("⚠️ 「命中数之比」在接近满分时会饱和，绝对差只有几题，百分比波动大。\n")
+	fmt.Printf("   要下「谁更强」的结论请用 `-mode bylen`（按杀着长度分段 + 绝对差）。\n")
+	fmt.Printf("（命中率粒度 1/%d 题 ≈ %.1f 个百分点）\n", len(ps), 100.0/float64(len(ps)))
 	fmt.Printf("对照：8 线程的节点速度是皮卡鱼单线程的约 65%%（即需要 1.54× 时间）。\n")
-	fmt.Printf("      两者相乘 ≈ 我们同时间的有效算力占 %.0f%%。\n", 100*avg*0.65)
-	fmt.Printf("（命中率粒度 1/%d 题 ≈ %.1f 个百分点，故单档误差约 ±%.0f%%）\n",
-		len(ps), 100.0/float64(len(ps)), 100.0/float64(len(ps))/60*100)
 }

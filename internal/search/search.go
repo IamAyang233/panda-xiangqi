@@ -309,6 +309,9 @@ func (s *Searcher) clearHeuristics() {
 // 连续对弈时每步都该保留启发式经验（它们按着法/局面索引，跨步复用有效），
 // 但统计量要按次归零才能看清当前这一步的效率。
 func (s *Searcher) resetStats() {
+	if diagQ {
+		qdAbNodes, qdQNodes, qdInCheck, qdDeltaCut = 0, 0, 0, 0
+	}
 	s.ttHits = 0
 	s.nullMoves = 0
 	s.probeCnt = 0
@@ -564,6 +567,28 @@ func (s *Searcher) stopped() bool {
 // 保留它作为将来的机制指标：任何排序改动都应该先让这张表动起来。
 var diagTier = os.Getenv("QIJING_TIER") == "on"
 
+// diagQ 由 QIJING_QDIAG=on 启用静态搜索结构诊断（TestQuiesceStructure 打印）。
+//
+// 用来回答「战术弱项是不是出在静态搜索」这类问题 —— 靠读数，不靠对照源码猜。
+// 2026-09-17 实测（150 道残局题 × 10 万节点）：
+//
+//	qsearch 占全部节点 **21.5%**、其中被将结点仅 **0.5%**
+//	被 delta 剪枝整批返回的占 qsearch 结点 **93.4%**
+//
+// ⇒ 静态搜索已经很精简，且「被将展开全部着法」这条最贵的路径几乎没有量级。
+//
+//	靠改 qsearch 提升战术没有空间（SEE 坏吃子剪枝也早测过无收益）。
+//
+// ⚠️ 它**不是** EBF 的成因：qsearch 只占 21.5%，即使全部砍掉也换不到 0.3 层。
+var diagQ = os.Getenv("QIJING_QDIAG") == "on"
+
+var (
+	qdAbNodes  int64 // alphaBeta 节点数
+	qdQNodes   int64 // qsearch 节点数
+	qdInCheck  int64 // qsearch 中处于被将的节点
+	qdDeltaCut int64 // 被 delta 剪枝整批返回的次数
+)
+
 type tierStat struct{ cnt, idxSum int64 }
 
 var tierDiag [6]tierStat
@@ -631,6 +656,9 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	}
 	s.abCallCnt++
 	s.nodes++
+	if diagQ {
+		qdAbNodes++
+	}
 	if ply >= MaxPly-1 {
 		return s.evaluate(p)
 	}
@@ -1204,6 +1232,9 @@ func (s *Searcher) quiesce(p *game.Position, alpha, beta, ply int) int {
 		return 0
 	}
 	s.nodes++
+	if diagQ {
+		qdQNodes++
+	}
 	if ply >= MaxPly-1 || ply >= maxQuiescePly {
 		return s.evaluate(p)
 	}
@@ -1212,6 +1243,9 @@ func (s *Searcher) quiesce(p *game.Position, alpha, beta, ply int) int {
 	}
 
 	inCheck := p.InCheck(p.Turn)
+	if diagQ && inCheck {
+		qdInCheck++
+	}
 
 	best := -Infinity
 	if !inCheck {
@@ -1259,6 +1293,9 @@ func (s *Searcher) quiesce(p *game.Position, alpha, beta, ply int) int {
 		// 这一支就不可能优于已有选择，直接返回。这是静态搜索最便宜
 		// 也最有效的剪枝之一 —— 缺了它，大量毫无希望的吃子链会被展开。
 		if best+maxVictim+deltaMargin < alpha {
+			if diagQ {
+				qdDeltaCut++
+			}
 			return best
 		}
 	}
