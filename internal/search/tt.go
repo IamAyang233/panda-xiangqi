@@ -10,6 +10,23 @@ const (
 	ttUpper       // 上界：未超过 alpha，真实值 <= 存值
 )
 
+// flag 字段的低 2 位是上面这四种「界限」，第 2 位单独放 PV 标记。
+//
+// 这么塞是为了**不改变 ttEntry 的 16 字节布局**（一个缓存行正好 4 项，
+// 4 字节的 padding 换一个 bool 不划算）。代价是所有读 flag 的地方都要
+// 用 bound() 掩掉 PV 位 —— 直接拿 e.flag 去 switch 会全部落空。
+const (
+	ttFlagMask uint8 = 0x03
+	ttPVBit    uint8 = 0x04
+)
+
+// bound 返回不含附加位的「界限」。
+func (e ttEntry) bound() uint8 { return e.flag & ttFlagMask }
+
+// isPV 返回该表项是否来自 PV 结点。奇异延伸要用它判断「这棵子树是不是
+// 在主变例上」，从而决定触发深度门槛与验证余量。
+func (e ttEntry) isPV() bool { return e.flag&ttPVBit != 0 }
+
 // ttEntry 固定 16 字节（8+4+2+1+1），一个缓存行放 4 项。
 //
 // key 存完整 Zobrist 键而非只存高位：索引已经由低位决定，
@@ -57,7 +74,7 @@ func (t *TranspositionTable) Len() int { return len(t.entries) }
 // probe 查询命中项。
 func (t *TranspositionTable) probe(key uint64) (ttEntry, bool) {
 	e := t.entries[key&t.mask]
-	if e.flag != ttNone && e.key == key {
+	if e.bound() != ttNone && e.key == key {
 		return e, true
 	}
 	return ttEntry{}, false
@@ -73,15 +90,19 @@ func (t *TranspositionTable) probe(key uint64) (ttEntry, bool) {
 // 生产构建恒为 false。
 var ttAlwaysReplace = false
 
-func (t *TranspositionTable) store(key uint64, move game.Move, score int32, depth int, flag uint8) {
+func (t *TranspositionTable) store(key uint64, move game.Move, score int32, depth int, flag uint8, pv bool) {
 	idx := key & t.mask
+	stored := flag
+	if pv {
+		stored |= ttPVBit
+	}
 	if ttAlwaysReplace {
 		t.entries[idx] = ttEntry{
 			key:   key,
 			score: score,
 			move:  encodeMove(move),
 			depth: uint8(depth),
-			flag:  flag,
+			flag:  stored,
 		}
 		return
 	}
@@ -89,7 +110,7 @@ func (t *TranspositionTable) store(key uint64, move game.Move, score int32, dept
 	if old.key == key && old.depth > uint8(depth) && flag != ttExact {
 		return
 	}
-	if old.key != key && old.flag != ttNone && old.depth > uint8(depth) {
+	if old.key != key && old.bound() != ttNone && old.depth > uint8(depth) {
 		return
 	}
 	t.entries[idx] = ttEntry{
@@ -97,7 +118,7 @@ func (t *TranspositionTable) store(key uint64, move game.Move, score int32, dept
 		score: score,
 		move:  encodeMove(move),
 		depth: uint8(depth),
-		flag:  flag,
+		flag:  stored,
 	}
 }
 

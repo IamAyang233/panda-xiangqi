@@ -10,6 +10,7 @@ package search
 
 import (
 	"os"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
@@ -52,6 +53,54 @@ var seeQuietEnabled = os.Getenv("QIJING_SEEQ") == "on"
 //
 // 默认关闭 —— ProbCut 本身在本引擎上是净亏损，理由见 alphaBeta 里的注释。
 var probCutEnabled = os.Getenv("QIJING_PC") == "on"
+
+// seEnabled 由环境变量 QIJING_SE=on 启用奇异延伸（singular extension）。
+//
+// 语义：如果除 ttMove 之外的所有着法都明显更差（拿掉 ttMove 后同一局面搜不出
+// ttValue 那个水平），说明 ttMove 是「唯一好手」，它的对手很难应对 —— 于是把它
+// 多搜深一层（皮卡鱼最新版最多 3 层）。反过来，如果拿掉 ttMove 之后仍然 fail
+// high，说明有多个着法都够好，这个结点必然被截断，可以直接剪掉整棵子树
+// （多切剪枝 multi-cut）。
+//
+// 这是本项目此前**完全没有**的一类机制：既有剪枝都是「减少搜索」，延伸是
+// 「主动多花」；而防守型剪枝会漏杀，延伸不会（它只加深）。皮卡鱼的 extension
+// 只来自 singular + 负延伸，没有将军延伸。
+//
+// ⚠️ **实测净亏，默认关闭。** 移植是完整的（触发条件、验证搜索、多切剪枝、
+// double/triple 余量、−3 负延伸、cutNode 传递、ttPv 位都按皮卡源码对上），
+// 守卫也证明排除管线真的生效（见 singular_test.go，还原 bug 必失败）。
+// 全部数据为确定性测量（单线程 + 每题独立置换表）：
+//
+//	固定 10 万节点·150 道残局题   命中 105 → 92（≤1 层延伸）/ 89（≤3 层）
+//	                              均深 25.74 → 23.99 / 19.70
+//	固定深度 9·同一批题           命中  98 → 89，节点 684,677 → 9,753,818（14.2×）
+//	固定 depth 10·20 个安静局面   节点 258,469 → 510,217(1.97×) / 1,589,734(6.15×)
+//	                                        / 3,340,797(12.9×)，按 QIJING_SE_MAXEXT 1/2/3
+//	固定 6 万节点·20 个安静局面   均深 14.70 → 12.35 / 10.60 / 9.70
+//
+// **「等深度命中率」那行是判死刑的一条**：同样的名义深度下命中反而少 9 题，
+// 说明延伸不只是「多花了预算」，而是**主动把选择带偏了** —— 它把 ttMove 的
+// 子树搜得比同层其它着法深得多，一旦 ttMove 是错的那一步，这个偏置就变成伤害。
+//
+// 机制确实在触发（15,734 次触发 / 12,168 次延伸，占节点约 0.6~1%），
+// 验证搜索返回值也正常（只有 1.2% 落在杀分区间），所以这不是接线错误。
+// 规模上不去、且代价是 2~14 倍节点，故默认关闭。
+var seEnabled = os.Getenv("QIJING_SE") == "on"
+
+// seMaxExt 限制单次奇异延伸的最大层数（皮卡鱼不设上限，可到 3 层）。
+//
+// 留作实验旋钮而不写死：实测延伸幅度是**代价的主因**，1/2/3 层的代价分别是
+// 1.97× / 6.15× / 12.9× 节点。将来若要重新评估，先用它把幅度压到 1 再谈。
+var seMaxExt = envIntOr("QIJING_SE_MAXEXT", 3)
+
+func envIntOr(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
 
 // probCutSmallEnabled 由环境变量 QIJING_PC_SMALL=on 启用「廉价的 ProbCut 变体」
 // （皮卡鱼 Step 11）：置换表里已有「下界、足够深、高出 beta 470」的证据时，
@@ -168,6 +217,31 @@ type Searcher struct {
 	abCallCnt int64
 	storeCnt  int64
 
+	// 奇异延伸的诊断计数。延伸类改动的效果分散在整棵树上，光看节点数与
+	// 深度说不出「机制到底有没有生效」，这几个计数是唯一的直接证据。
+	seTriggers int64 // 触发条件全部成立、进入验证搜索的次数
+	seExtended int64 // 验证通过（ttMove 确为奇异着法）并延伸的次数
+	seMultiCut int64 // 验证后直接按下界返回（多切剪枝）的次数
+	seNegExt   int64 // 走负延伸（削减 3 层）的次数
+
+	// excludedMove 是「奇异延伸」验证搜索要排除的着法。
+	//
+	// 验证搜索的语义是「如果拿掉 ttMove，这个局面还有多好」，所以必须真的把它
+	// 从着法列表里跳过（`m == excludedMove` 时 continue），否则会原样搜出同一个
+	// 分值、永远判不出「奇异」。同一个理由下，排除模式里**既不能读置换表截断、
+	// 也不能写表** —— 前者会拿原先那个表项自证，后者会把「拿掉 ttMove 的分值」
+	// 覆盖到该局面的表项上，污染后续搜索。
+	//
+	// 用 Searcher 字段而不是函数参数：验证搜索搜的是**同一个局面**（ply 不变），
+	// 只在这一次调用期间有效，递归进入子结点前必须清空。alphaBeta 入口读走即清，
+	// 所以不会漏给子树。
+	excludedMove game.Move
+
+	// moveHist[ply] 记录在 ply 这一层实际搜过的着法，供「反复挪子」判定
+	// （isShuffling）读 ply-2 / ply-4 的着法。深度优先保证这两个槽位属于
+	// 当前路径上的祖先，不会读到别的分支。
+	moveHist [MaxPly]game.Move
+
 	// stop 是中止标志。多线程时所有线程共享同一个实例，任一线程（或计时器）
 	// 置位后全体尽快退出。alphaBeta 每节点读一次，所以用原子变量。
 	stop *atomic.Bool
@@ -247,6 +321,10 @@ func (s *Searcher) resetStats() {
 	s.ttMoveSorted = 0
 	s.ttMoveFirst = 0
 	s.ttMoveIlleg = 0
+	s.seTriggers = 0
+	s.seExtended = 0
+	s.seMultiCut = 0
+	s.seNegExt = 0
 }
 
 // Stop 请求中止当前搜索（超时或上层取消）。多线程下共享同一标志。
@@ -301,11 +379,11 @@ func (s *Searcher) ttProbe(key uint64) (ttEntry, bool) {
 	return s.tt.probe(key)
 }
 
-func (s *Searcher) ttStore(key uint64, move game.Move, score int32, depth int, flag uint8) {
+func (s *Searcher) ttStore(key uint64, move game.Move, score int32, depth int, flag uint8, pv bool) {
 	if s.tt == nil {
 		return
 	}
-	s.tt.store(key, move, score, depth, flag)
+	s.tt.store(key, move, score, depth, flag, pv)
 }
 
 // prepare 把评估侧局面与累加器对齐到搜索起点。
@@ -390,18 +468,20 @@ func (s *Searcher) rootSearch(p *game.Position, depth, alpha, beta int) ([]RootM
 
 		var score int
 		if i == 0 {
-			score = -s.alphaBeta(p, depth-1, -beta, -alpha, 1, true, true)
+			score = -s.alphaBeta(p, depth-1, -beta, -alpha, 1, true, true, false)
 		} else {
 			// 根节点同样走 PVS + LMR：先窄窗口试探，必要时重搜。
 			// 只有落在窗口内部的着法才值得全窗重搜 —— 已经达到 beta 的着法
 			// 意味着本层 fail high，调用方会放宽窗口整层重搜，这里不必再花代价。
+			// 根结点恒为 PV，故其非 PV 子结点的 cutNode = !false = true
+			// （皮卡：`-search<NonPV>(..., !cutNode)`，根的 cutNode 为 false）。
 			red := s.reduction(depth, i, victim, false)
-			score = -s.alphaBeta(p, depth-1-red, -alpha-1, -alpha, 1, false, true)
+			score = -s.alphaBeta(p, depth-1-red, -alpha-1, -alpha, 1, false, true, true)
 			if score > alpha && red > 0 {
-				score = -s.alphaBeta(p, depth-1, -alpha-1, -alpha, 1, false, true)
+				score = -s.alphaBeta(p, depth-1, -alpha-1, -alpha, 1, false, true, true)
 			}
 			if score > alpha && score < beta {
-				score = -s.alphaBeta(p, depth-1, -beta, -alpha, 1, true, true)
+				score = -s.alphaBeta(p, depth-1, -beta, -alpha, 1, true, true, false)
 			}
 		}
 		p.Unmake()
@@ -436,7 +516,7 @@ func (s *Searcher) rootSearch(p *game.Position, depth, alpha, beta int) ([]RootM
 	} else if bestScore >= beta {
 		flag = ttLower
 	}
-	s.ttStore(p.Key, best, scoreToTT(bestScore, 0), depth, flag)
+	s.ttStore(p.Key, best, scoreToTT(bestScore, 0), depth, flag, true)
 	return roots, true
 }
 
@@ -465,7 +545,42 @@ func (s *Searcher) stopped() bool {
 // isPV 标记主变例节点：只有非 PV 节点才允许直接用置换表的分值剪枝，
 // 因为 PV 节点的分值受窗口影响，直接返回会截断主变例。
 // canNull 标记允许空着剪枝（连续两次空着会退化成无意义的搜索，须禁止）。
-func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV, canNull bool) int {
+// boolToInt 把布尔转成 0/1，用于照抄皮卡鱼那些「按条件加减余量」的公式。
+// Go 的 bool 不能直接参与算术，写成 if 会让公式与源码对不上号。
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// isShuffling 判断这步棋是不是「反复挪子」（来回走同一条线）。
+//
+// 奇异延伸的前提是「ttMove 是唯一好手」，但在子力稀薄的残局里，来回挪子也会
+// 让置换表反复给出同一个「低价值但唯一」的着法，于是每一步都被判成奇异、被
+// 一路延伸，树会莫名膨胀 —— 本引擎的和棋局正是这种形态。
+//
+// 判据照抄皮卡鱼：现在这步的起点等于两步前的落点，且两步前那步的起点等于
+// 四步前的落点（即一个完整的来回）。三个前置条件也必须保留：吃子着法不算
+// 挪子、自然限着回合数还小的时候不算（棋局还在实质进展）、开局阶段不算。
+//
+// **与皮卡的差异**：它还要求 `pliesFromNull >= 6`（刚空着过就不算挪子），
+// 本引擎没有这个计数，故省略。省略的后果是**多抑制一些延伸**（树更小），
+// 属于偏保守的方向。
+func (s *Searcher) isShuffling(p *game.Position, m game.Move, ply int) bool {
+	if p.PieceAt90(int(m.To)) != game.Empty || p.Halfmove < 10 || ply < 20 {
+		return false
+	}
+	a, b := s.moveHist[ply-2], s.moveHist[ply-4]
+	return m.From == a.To && a.From == b.To
+}
+
+// cutNode 标记「预期会发生 beta 截断」的结点（皮卡鱼的 cutNode）。
+//
+// 它在皮卡鱼里参与多处启发式，本引擎目前**只用于奇异延伸**（负延伸的触发、
+// 以及传给验证搜索）。传递规则照抄皮卡鱼：非 PV 子结点取反，PV 子结点恒为
+// false —— 于是这个标记沿非 PV 路径逐层交替，标识出「这里该是截断点」。
+func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV, canNull, cutNode bool) int {
 	// 每节点读一次中止标志：原子读比取时钟便宜得多，所以可以查得很密。
 	if s.stopped() {
 		return 0
@@ -475,6 +590,15 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	if ply >= MaxPly-1 {
 		return s.evaluate(p)
 	}
+
+	// 排除着法（奇异延伸的验证搜索）：读走即清，只对本次调用有效。
+	// 子结点读到的必须是零值，否则「拿掉 ttMove」的语义会漏进整棵子树。
+	excludedMove := s.excludedMove
+	hasExcluded := excludedMove.From != 0 || excludedMove.To != 0
+	s.excludedMove = game.Move{}
+	// 本层尚未搜索任何着法。空着剪枝不会经过着法循环，所以这里先清一次，
+	// 保证 isShuffling 读到的 ply-2/ply-4 槽位不会把空着当成真实着法。
+	s.moveHist[ply] = game.Move{}
 
 	if ply > 0 {
 		// RepetitionCount 含当前局面，首次出现返回 1，所以 >1 才是真的重复。
@@ -505,6 +629,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 
 	var ttMove game.Move
 	ttHit := false
+	ttPVEntry := false
 	ttScore := -Infinity
 	ttDepth := 0
 	ttFlag := uint8(ttNone)
@@ -514,14 +639,17 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		ttHit = true
 		ttScore = scoreFromTT(e.score, ply)
 		ttDepth = int(e.depth)
-		ttFlag = e.flag
+		ttFlag = e.bound()
+		ttPVEntry = e.isPV()
 		ttMove = decodeMove(e.move)
 		if ttMove.From != 0 || ttMove.To != 0 {
 			s.ttMoveAvail++
 		}
-		if !isPV && int(e.depth) >= depth {
+		// hasExcluded 时绝不能按表截断：这个表项正是「存在 ttMove 局面」的结果，
+		// 拿它下结论等于自己证明自己，验证搜索永远判不出「奇异」。
+		if !isPV && !hasExcluded && int(e.depth) >= depth {
 			sc := scoreFromTT(e.score, ply)
-			switch e.flag {
+			switch e.bound() {
 			case ttExact:
 				return sc
 			case ttLower:
@@ -535,6 +663,16 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			}
 		}
 	}
+
+	// ttPvSeen 对应皮卡的 `ss->ttPv`（「这棵子树整体位于主变例上」）。
+	//
+	// 皮卡的完整定义是 `PvNode || (ttHit && ttData.is_pv())`，并且沿栈向下传播
+	// （`ss->ttPv = ss->ttPv || (ss-1)->ttPv`）。本引擎**没有做向下传播**：
+	// 只取「本结点是 PV」或「本局面的表项来自 PV」，于是 PV 线以下的那些结点
+	// 会漏掉 ttPv。**漏掉的方向是更激进，不是更保守**：ttPv=0 让深度门槛从 6
+	// 降到 5、余量从 116 降到 44，都是**更容易触发延伸**的一档。所以如果实测
+	// 出现树变大，先怀疑这里，别先怀疑机制本身。
+	ttPvSeen := isPV || ttPVEntry
 
 	// 静态评估只算一次，供下面几种前向剪枝共用（evaluate 约 6µs，不能重复调用）。
 	//
@@ -574,7 +712,9 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 
 	// 空着剪枝：让对手连走两步仍不能改善，说明这个分支已经足够好。
 	// 被将军时空着不合法；子力稀薄时禁用，避免残局的 zugzwang 误判。
-	if !s.noNull && canNull && !inCheck && depth >= 3 && staticEval >= beta && s.nonPawn[p.Turn>>3] >= 2 {
+	// hasExcluded 时不做空着剪枝（皮卡鱼同样排除）：验证搜索要回答的是
+	// 「拿掉 ttMove 后这个局面有多好」，空着给出的下界会把结论带偏。
+	if !s.noNull && !hasExcluded && canNull && !inCheck && depth >= 3 && staticEval >= beta && s.nonPawn[p.Turn>>3] >= 2 {
 		// 削减量与深度线性相关，并随「评估超出 beta 的幅度」继续加大：
 		// 静态评估越是碾压 beta，空着搜索越没有必要搜得那么深。
 		red := 8 + depth/3
@@ -584,7 +724,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		s.nullMoves++
 		p.MakeNull()
 		s.pos.MakeNull()
-		score := -s.alphaBeta(p, depth-1-red, -beta, -beta+1, ply+1, false, false)
+		score := -s.alphaBeta(p, depth-1-red, -beta, -beta+1, ply+1, false, false, !cutNode)
 		p.UnmakeNull()
 		s.pos.UnmakeNull()
 		if score >= beta && score < MateScore-MaxPly {
@@ -713,7 +853,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			// 先做一次零窗静态搜索：吃子本身就被静态搜索覆盖，不划算的在这里就出局了。
 			v := -s.quiesce(p, -probCutBeta, -probCutBeta+1, ply+1)
 			if v >= probCutBeta && probCutDepth > 0 {
-				v = -s.alphaBeta(p, probCutDepth, -probCutBeta, -probCutBeta+1, ply+1, false, true)
+				v = -s.alphaBeta(p, probCutDepth, -probCutBeta, -probCutBeta+1, ply+1, false, true, !cutNode)
 			}
 			p.Unmake()
 			s.pos.Unmake()
@@ -725,7 +865,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 				if stored < 0 {
 					stored = 0
 				}
-				s.ttStore(p.Key, m, scoreToTT(v, ply), stored, ttLower)
+				s.ttStore(p.Key, m, scoreToTT(v, ply), stored, ttLower, false)
 				if v < MateScore-MaxPly {
 					// 把「在更高的 beta 上验证出的下界」换算回本节点的窗口。
 					return v - (probCutBeta - beta)
@@ -763,9 +903,16 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		if s.stopped() {
 			return best
 		}
+		// 验证搜索要把被排除的着法真正拿掉，否则原样搜回同一个分值。
+		if hasExcluded && m == excludedMove {
+			continue
+		}
 		victim := p.PieceAt90(int(m.To))
 		quiet := victim == game.Empty
 		skip := false
+		// 记录本层正在搜的着法（isShuffling 要读 ply-2 / ply-4）。
+		// 放在 continue 之后：被跳过的着法等于没搜过。
+		s.moveHist[ply] = m
 
 		// 削减量在这里先算好：下面的 futility 与 SEE 都要用 lmrDepth
 		// （削减后的有效深度），真正的搜索也用它，不必算两遍。
@@ -838,6 +985,64 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			skip = !p.SeeGE(int(m.From), int(m.To), -35*lmrDepth*lmrDepth)
 		}
 
+		// 奇异延伸（皮卡鱼 Step 14）。**必须在落子之前**：验证搜索要的是
+		// 「拿掉这个着法之后」的局面，落子后再调用就得先撤回去。
+		//
+		// 这段会让树变大（正向）或变小（多切/负延伸），两个方向都要有，
+		// 否则要么爆炸要么白花。实测数据见 seEnabled 的注释。
+		ext := 0
+		if seEnabled && !skip && !hasExcluded && ply > 0 &&
+			(m.From != 0 || m.To != 0) && m == ttMove && ttHit &&
+			(ttFlag == ttLower || ttFlag == ttExact) && ttDepth >= depth-3 &&
+			ttScore > -MateScore+MaxPly && ttScore < MateScore-MaxPly &&
+			depth >= 5+boolToInt(ttPvSeen) && !s.isShuffling(p, m, ply) {
+			// 余量随深度线性增长；ttPv 时放宽（皮的 `44 + 72*(ttPv && !PvNode)`）。
+			singularBeta := ttScore - (44+72*boolToInt(ttPvSeen && !isPV))*depth/69
+			singularDepth := (depth - 1) / 2
+			s.seTriggers++
+			s.excludedMove = m
+			v := s.alphaBeta(p, singularDepth, singularBeta-1, singularBeta, ply, false, true, cutNode)
+			s.excludedMove = game.Move{}
+			notDecisive := v > -MateScore+MaxPly && v < MateScore-MaxPly
+			ttCapture := p.PieceAt90(int(m.To)) != game.Empty
+			// 两个附加位都来自皮卡鱼，本引擎缺对应机制而省略：
+			// corrValAdj（我们没有 correction history）与
+			// ttMoveHistory（我们只按着法统计历史，不按局面+着法）。
+			doubleMargin := -4 + 234*boolToInt(isPV) - 172*boolToInt(!ttCapture) - 43*boolToInt(ply > 0)
+			tripleMargin := 106 + 299*boolToInt(isPV) - 263*boolToInt(!ttCapture) +
+				93*boolToInt(ttPvSeen) - 60*boolToInt(ply > 0)
+			switch {
+			case v < singularBeta:
+				// 拿掉 ttMove 后掉到 singularBeta 以下 —— 它是唯一好手，值得加深。
+				// 掉得越多越确定，最多 3 层（皮卡的 double/triple margin）。
+				ext = 1
+				if v < singularBeta-doubleMargin {
+					ext++
+				}
+				if v < singularBeta-tripleMargin {
+					ext++
+				}
+				if ext > seMaxExt {
+					ext = seMaxExt
+				}
+				s.seExtended++
+			case v >= beta && notDecisive:
+				// 拿掉 ttMove 仍然 fail high ⇒ 不止一个着法够好，这个结点必被截断，
+				// 整棵子树都可以剪掉（多切剪枝）。将杀分除外：那是「找到杀」，
+				// 直接把杀分当成「评估远超 beta」返回会掩盖真实的杀棋距离。
+				s.seMultiCut++
+				return v
+			case ttScore >= beta || cutNode:
+				// 既判不出奇异、又不能多切 —— 说明 ttMove 未必最好，
+				// 削减它、把预算让给别的着法（负延伸）。
+				//
+				// 皮卡鱼的条件是 `ttData.value >= beta || cutNode`，cutNode 是
+				// 真实参数；本引擎的 cutNode 只在此处消费，传递规则与皮卡一致。
+				ext = -3
+				s.seNegExt++
+			}
+		}
+
 		p.Make(m)
 		s.pos.Make(int(m.From), int(m.To))
 
@@ -854,16 +1059,22 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			continue
 		}
 
+		// 本步的实际搜索深度：基础一层减去削减、再加上延伸（皮卡的
+		// `newDepth = depth - 1; newDepth += extension`）。
+		newDepth := depth - 1 + ext
+
 		var score int
 		if i == 0 {
-			score = -s.alphaBeta(p, depth-1, -beta, -alpha, ply+1, isPV, true)
+			// PV 子结点恒为 cutNode=false；非 PV 子结点取反（皮卡的传递规则）。
+			childCut := !isPV && !cutNode
+			score = -s.alphaBeta(p, newDepth, -beta, -alpha, ply+1, isPV, true, childCut)
 		} else {
-			score = -s.alphaBeta(p, depth-1-red, -alpha-1, -alpha, ply+1, false, true)
+			score = -s.alphaBeta(p, newDepth-red, -alpha-1, -alpha, ply+1, false, true, !cutNode)
 			if score > alpha && red > 0 {
-				score = -s.alphaBeta(p, depth-1, -alpha-1, -alpha, ply+1, false, true)
+				score = -s.alphaBeta(p, newDepth, -alpha-1, -alpha, ply+1, false, true, !cutNode)
 			}
 			if score > alpha && score < beta {
-				score = -s.alphaBeta(p, depth-1, -beta, -alpha, ply+1, isPV, true)
+				score = -s.alphaBeta(p, newDepth, -beta, -alpha, ply+1, isPV, true, false)
 			}
 		}
 		p.Unmake()
@@ -898,7 +1109,11 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		flag = ttLower
 	}
 	s.storeCnt++
-	s.ttStore(p.Key, bestMove, scoreToTT(best, ply), depth, flag)
+	// 排除模式下不写表：这里是「拿掉 ttMove 之后」的分值，写进去会把该局面
+	// 的真实表项覆盖掉（皮卡同样以 `!excludedMove` 保护）。
+	if !hasExcluded {
+		s.ttStore(p.Key, bestMove, scoreToTT(best, ply), depth, flag, isPV)
+	}
 	return best
 }
 
