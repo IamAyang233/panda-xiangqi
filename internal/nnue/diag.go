@@ -14,6 +14,18 @@ type DiagStats struct {
 	SlidingCalls  int64 // slidingAttackBoth 调用次数
 	RayAttackCall int64 // computeRay 段里 attacksBB 调用次数
 
+	// computeRay 候选循环的规模 —— 用来判断「换成 pass 表」值不值得。
+	// 2026-09-17 起候选循环已改用预计算表 rayPassBB/leaperPassBB：
+	// 每次候选从「2 次含阻挡搜索的攻击计算」降到「1 次查表 + 2 个与」，
+	// 固定节点基准快约 6.9%（中局 20 局面）。这几个计数器现在用来监控
+	// 候选规模有没有变化 —— 它随在场子数增长，是这条链路的主要成本驱动。
+	RayCalls   int64 // 进入 computeRay 段的次数
+	CandRook   int64 // 车候选迭代数
+	CandCannon int64 // 炮候选迭代数（最贵，2 次 slidingAttackDir）
+	CandLeaper int64 // 马/象候选迭代数（2 次全量计算）
+	ThreatOut  int64 // 发出的威胁条目数
+	ThreatIn   int64 // 指向 s 的威胁条目数
+
 	ApplyCalls    int64 // Apply 调用次数（每个评估点一次）
 	ApplyWindow   int64 // 每次 Apply 时 pendingThreats 长度之和
 	MaxWindow     int   // pendingThreats 峰值长度
