@@ -53,6 +53,13 @@ type uciSession struct {
 	stdin io.WriteCloser
 	rd    *bufio.Reader
 	cmd   *exec.Cmd
+	// nnueLine 是握手期间"顺手"捞到的权重加载行，通常为空。
+	//
+	// ⚠️ 别指望这里能拿到：皮卡鱼（同 SF）在 **`Engine::go()` 里才调
+	// `verify_network()`**（主源码 engine.cpp:130），所以那行
+	// 「info string NNUE evaluation using ...」是在**首次搜索**时打印的，
+	// `uci` 握手阶段没有。要核对权重得真跑一次搜索（见 agree.go 的 probeNNUE）。
+	nnueLine string
 }
 
 func newUCISession(path string, skill int) (*uciSession, error) {
@@ -70,6 +77,13 @@ func newUCISession(path string, skill int) (*uciSession, error) {
 	}
 	s := &uciSession{stdin: stdin, rd: bufio.NewReader(stdout), cmd: cmd}
 	s.send("uci")
+	// 先读到 uciok 并顺手捞走权重加载行，再设选项。
+	nnue, err := s.drainUntil("uciok", 20*time.Second, "NNUE evaluation")
+	if err != nil {
+		cmd.Process.Kill()
+		return nil, err
+	}
+	s.nnueLine = nnue
 	s.send(fmt.Sprintf("setoption name Skill Level value %d", skill))
 	s.send("isready")
 	if err = s.waitFor("readyok", 20*time.Second); err != nil {
@@ -77,6 +91,40 @@ func newUCISession(path string, skill int) (*uciSession, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// drainUntil 读到包含 stop 的行，返回途中第一行含 want 的内容（没有则空串）。
+func (s *uciSession) drainUntil(stop string, timeout time.Duration, want string) (string, error) {
+	deadline := time.Now().Add(timeout)
+	found := ""
+	for time.Now().Before(deadline) {
+		type res struct {
+			line string
+			err  error
+		}
+		ch := make(chan res, 1)
+		go func() {
+			l, rerr := s.rd.ReadString('\n')
+			ch <- res{l, rerr}
+		}()
+		var got res
+		select {
+		case got = <-ch:
+		case <-time.After(time.Until(deadline)):
+			return found, fmt.Errorf("等待 %q 超时", stop)
+		}
+		if got.err != nil {
+			return found, fmt.Errorf("引擎输出流关闭：%v", got.err)
+		}
+		line := strings.TrimSpace(got.line)
+		if found == "" && want != "" && strings.Contains(line, want) {
+			found = line
+		}
+		if line == stop || strings.Contains(line, stop) {
+			return found, nil
+		}
+	}
+	return found, fmt.Errorf("等待 %q 超时", stop)
 }
 
 func (s *uciSession) send(line string) { fmt.Fprintln(s.stdin, line) }

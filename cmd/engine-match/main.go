@@ -93,7 +93,13 @@ func main() {
 	corpusFlag := flag.String("corpus", "internal/search/testdata/quiet_fens.txt", "中局语料文件（mode=mg）")
 	mgLimit := flag.Int("mgl", 40, "语料取前几条（mode=mg）")
 	mgBudget := flag.Int64("mgbudget", 100000, "对比用的节点预算（mode=mg）")
-	mgArbiter := flag.Int64("mgarbiter", 2000000, "仲裁者的节点预算（mode=mg）")
+	mgArbiter := flag.Int64("mgarbiter", 2000000, "仲裁者的节点预算（mode=mg / mode=agree）")
+	mTopK := flag.Int("mtopk", 3, "仲裁者取前几个候选着法（mode=agree）")
+	mGapMin := flag.Int("mgapmin", 50, "锋利度下界（分；mode=sharpen）")
+	mGapMax := flag.Int("mgapmax", 300, "锋利度上界（分；mode=sharpen。防的是近杀局被当成中局）")
+	mOut := flag.String("mout", "sharp_fens.txt", "筛选后的语料输出路径（mode=sharpen）")
+	mCalib := flag.Int("mcalib", 0, "仲裁者自洽性校准的局面数（mode=agree；0=跳过。每个局面多花 4× 仲裁预算）")
+	mFair := flag.Bool("mfair", true, "把皮卡鱼的预算设为我们的**实际**节点数（mode=agree；关掉则按名义预算，我们会因超支占便宜）")
 	flag.StringVar(&mgDumpPath, "mgdump", "", "对局时导出中局局面到该文件（mode=games，供 mode=mg 用）")
 	flag.Parse()
 
@@ -150,6 +156,12 @@ func main() {
 	case "mg":
 		uci.Close()
 		mgQuality(*flatPath, *uciPath, *corpusFlag, *mgLimit, *mgBudget, *mgArbiter)
+	case "agree":
+		uci.Close()
+		moveAgreement(*flatPath, *uciPath, *corpusFlag, *mgLimit, *mgBudget, *mgArbiter, *mTopK, *mFair, *mCalib)
+	case "sharpen":
+		uci.Close()
+		sharpenCorpus(*uciPath, *corpusFlag, *mgLimit, *mgArbiter, *mTopK, *mOut, *mGapMin, *mGapMax)
 	case "self":
 		runSelfProbe(*flatPath, parseInts(*depthsFlag, []int{10, 12}), matchFENs)
 	default:
@@ -426,7 +438,7 @@ var (
 )
 
 func collectPosition(p *game.Position, ply int) {
-	if mgDumpPath == "" || ply < 12 || ply > 60 || len(mgDumpList) >= 300 {
+	if mgDumpPath == "" || ply < 12 || ply > 60 || len(mgDumpList) >= 1200 {
 		return
 	}
 	if countNonPawn(p, game.Red) < 3 || countNonPawn(p, game.Black) < 3 {
