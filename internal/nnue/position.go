@@ -400,6 +400,21 @@ func (p *Position) swapPiece(s int, pc byte) {
 
 // ---- 威胁增量（对应 Position::update_piece_threats<PutPiece, true>）----
 
+// lsbOf 返回 lo/hi 两半组成的最低置位格，空则返回 -1。
+//
+// 语义与 bitboard.lsb 相同，但输入是两个 uint64：热路径上把它们拆开后
+// 可以一直留在 GPR 里，不必为了查一下最低位就构造一个 16 字节的 bitboard
+// （本函数汇编里 MOVUPS 曾占 17.8%，见 updateThreats 的注释）。
+func lsbOf(lo, hi uint64) int {
+	if lo != 0 {
+		return trailingZeros64(lo)
+	}
+	if hi != 0 {
+		return 64 + trailingZeros64(hi)
+	}
+	return -1
+}
+
 // updateThreats 记录「pc 在 s 上」这一事实的加入（put）或移除（!put）
 // 所引起的全部攻击关系变化。
 //
@@ -507,6 +522,12 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 		diagStats.RayCalls++
 	}
 
+	// 三段共用的三个操作数拆成 lo/hi —— 与 incoming 段同一个理由（见那里）：
+	// 拆开后每半占 1 个 GPR，循环体里不必反复构造/搬运 16 字节值。
+	rLo, rHi := rAttacks[0], rAttacks[1]
+	cLo, cHi := cAttacks[0], cAttacks[1]
+	occLo, occHi := occupied[0], occupied[1]
+
 	// ① 攻击 s 的车：s 从空变占（或反之）会让它的射线停在 s 或继续越过 s，
 	//    于是「越过 s 之后那一格」上的关系随之反转。
 	if diagOn {
@@ -514,8 +535,8 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	}
 	for !rookAttackers.isEmpty() {
 		psq := rookAttackers.popLSB()
-		if t := rayPassBB[psq][s].and(rAttacks).and(occupied); !t.isEmpty() {
-			tq := t.popLSB()
+		pass := rayPassBB[psq][s]
+		if tq := lsbOf(pass[0]&rLo&occLo, pass[1]&rHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
 				dirtyThreat{p.board[psq], p.board[tq], psq, tq, !put})
 		}
@@ -527,8 +548,8 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	}
 	for !cannonAttackers.isEmpty() {
 		psq := cannonAttackers.popLSB()
-		if t := rayPassBB[psq][s].and(rAttacks).and(occupied); !t.isEmpty() {
-			tq := t.popLSB()
+		pass := rayPassBB[psq][s]
+		if tq := lsbOf(pass[0]&rLo&occLo, pass[1]&rHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
 				dirtyThreat{p.board[psq], p.board[tq], psq, tq, !put})
 		}
@@ -543,13 +564,12 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	}
 	for !cannonOnRookRay.isEmpty() {
 		psq := cannonOnRookRay.popLSB()
-		if t := rayPassBB[psq][s].and(rAttacks).and(occupied); !t.isEmpty() {
-			tq := t.popLSB()
+		pass := rayPassBB[psq][s]
+		if tq := lsbOf(pass[0]&rLo&occLo, pass[1]&rHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
 				dirtyThreat{p.board[psq], p.board[tq], psq, tq, put})
 		}
-		if t := rayPassBB[psq][s].and(cAttacks).and(occupied); !t.isEmpty() {
-			tq := t.popLSB()
+		if tq := lsbOf(pass[0]&cLo&occLo, pass[1]&cHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
 				dirtyThreat{p.board[psq], p.board[tq], psq, tq, !put})
 		}
