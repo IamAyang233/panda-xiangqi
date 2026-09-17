@@ -90,6 +90,11 @@ func main() {
 	maxDepthFlag := flag.Int("maxdepth", 7, "逐层诊断的最大深度（mode=profile）")
 	fenFlag := flag.String("fen", "", "只诊断这一个 FEN（mode=profile，留空则用内置局面集）")
 	depthsFlag := flag.String("depths", "10,12", "固定深度列表，逗号分隔（mode=self；调 LMR/剪枝时对比节点总数）")
+	corpusFlag := flag.String("corpus", "internal/search/testdata/quiet_fens.txt", "中局语料文件（mode=mg）")
+	mgLimit := flag.Int("mgl", 40, "语料取前几条（mode=mg）")
+	mgBudget := flag.Int64("mgbudget", 100000, "对比用的节点预算（mode=mg）")
+	mgArbiter := flag.Int64("mgarbiter", 2000000, "仲裁者的节点预算（mode=mg）")
+	flag.StringVar(&mgDumpPath, "mgdump", "", "对局时导出中局局面到该文件（mode=games，供 mode=mg 用）")
 	flag.Parse()
 
 	mt := time.Duration(*movetime) * time.Millisecond
@@ -142,6 +147,9 @@ func main() {
 		uci.Close()
 		effCurve(*flatPath, *uciPath, *uciSkill, *puzzleDir, *puzzleLimit,
 			[]int64{10000, 25000, 60000, 150000, 250000})
+	case "mg":
+		uci.Close()
+		mgQuality(*flatPath, *uciPath, *corpusFlag, *mgLimit, *mgBudget, *mgArbiter)
 	case "self":
 		runSelfProbe(*flatPath, parseInts(*depthsFlag, []int{10, 12}), matchFENs)
 	default:
@@ -325,6 +333,8 @@ func runGames(na, ua timedEngine, mt time.Duration, games, maxPly int, verbose b
 		}
 	}
 
+	flushDump()
+
 	fmt.Printf("\n=== 结果 ===\n")
 	fmt.Printf("内嵌引擎 %d 胜 / %d 负 / %d 和", win, loss, draw)
 	if errs > 0 {
@@ -364,6 +374,7 @@ func runGames(na, ua timedEngine, mt time.Duration, games, maxPly int, verbose b
 func playGame(na, ua timedEngine, mt time.Duration, maxPly int, nativeIsRed bool, verbose bool) (string, int, string) {
 	p := game.NewPosition()
 	for ply := 0; ply < maxPly; ply++ {
+		collectPosition(p, ply)
 		var eng timedEngine
 		if (p.Turn == game.Red) == nativeIsRed {
 			eng = na
@@ -399,6 +410,61 @@ func playGame(na, ua timedEngine, mt time.Duration, maxPly int, nativeIsRed bool
 		}
 	}
 	return "maxply", maxPly, "步数上限"
+}
+
+// 对局过程中的局面采集（-mgdump）：中局走子质量判据需要**真正紧张**的局面。
+//
+// 安静局面语料测不出东西 —— 实测 20 个里 17 个两引擎选同一着，因为双方都走
+// 「显然的一步」。真实对局产生的局面才有分歧，才有分辨力。
+//
+// 采集范围限定在中局：开局前 12 步太套路、残局子力太少。子力条件用
+// 「双方非兵非将的子各至少 3 个」把残局排除掉。
+var (
+	mgDumpPath string
+	mgDump     = map[string]bool{}
+	mgDumpList []string
+)
+
+func collectPosition(p *game.Position, ply int) {
+	if mgDumpPath == "" || ply < 12 || ply > 60 || len(mgDumpList) >= 300 {
+		return
+	}
+	if countNonPawn(p, game.Red) < 3 || countNonPawn(p, game.Black) < 3 {
+		return
+	}
+	f := p.FEN()
+	if mgDump[f] {
+		return
+	}
+	mgDump[f] = true
+	mgDumpList = append(mgDumpList, f)
+}
+
+// countNonPawn 数一方的非兵非将子力个数（用来把残局排除出中局语料）。
+func countNonPawn(p *game.Position, side int) int {
+	n := 0
+	for sq := 0; sq < 90; sq++ {
+		pc := p.PieceAt90(sq)
+		if pc == game.Empty || game.ColorOf(pc) != side {
+			continue
+		}
+		t := game.TypeOf(pc)
+		if t != game.Pawn && t != game.King {
+			n++
+		}
+	}
+	return n
+}
+
+func flushDump() {
+	if mgDumpPath == "" {
+		return
+	}
+	if err := os.WriteFile(mgDumpPath, []byte(strings.Join(mgDumpList, "\n")+"\n"), 0o644); err != nil {
+		fmt.Printf("写出局面语料失败：%v\n", err)
+		return
+	}
+	fmt.Printf("已写出 %d 个中局局面到 %s\n", len(mgDumpList), mgDumpPath)
 }
 
 // reasonText 把终局原因转成中文。
