@@ -53,7 +53,7 @@ func (b *BB) isAttackedAfter(sq, by, from, to int, captured byte) bool {
 
 	if !rooks.IsEmpty() || !kings.IsEmpty() || !cannons.IsEmpty() {
 		for d := 0; d < 4; d++ {
-			fb := firstBlockerAt(occ, sq, d)
+			fb := firstBlockerAt(occ, rayMask[sq][d], d)
 			if fb < 0 {
 				continue
 			}
@@ -64,7 +64,7 @@ func (b *BB) isAttackedAfter(sq, by, from, to int, captured byte) bool {
 				return true // 将帅照面
 			}
 			if !cannons.IsEmpty() {
-				if fb2 := firstBlockerAt(occ, fb, d); fb2 >= 0 && cannons.Test(fb2) {
+				if fb2 := firstBlockerAt(occ, rayMask[fb][d], d); fb2 >= 0 && cannons.Test(fb2) {
 					return true // 隔一子翻山
 				}
 			}

@@ -1,5 +1,7 @@
 package game
 
+import "math/bits"
+
 // 位棋盘攻击表与反向攻击探测（M1）。
 // 全部表在 init 中预计算，运行时只做位运算，不再按方向逐格步进。
 
@@ -228,31 +230,46 @@ func newBBFromBoard(board *[256]byte) *BB {
 }
 
 // firstBlockerAt 从 sq 沿 dir 遇到的第一个子；无子返回 -1。
-func firstBlockerAt(occ Bitboard, sq, dir int) int {
-	m := rayMask[sq][dir].And(occ)
-	if m.IsEmpty() {
+// ray 是 rayMask[sq][dir]，由调用方传入 —— 它本来就要用，省掉一次二维索引。
+//
+// 三点写法上的讲究，都是为了让本函数**能被内联**（它在 9 个调用点上都没进得去，
+// 而调用密度高达 44.65 次/节点，profile 里 flat 占比全项目第 4）：
+//  1. 不写 `if m.IsEmpty() { return -1 }`：lsb/msb 在空盘时本来就返回 -1；
+//  2. 手工展开 And，少一层中间变量；
+//  3. `(dir+1)&2 == 0` 一次比较顶替 `dir == dirUp || dir == dirRight`
+//     （dirUp=0/dirRight=3 为真，dirDown=1/dirLeft=2 为假）。
+func firstBlockerAt(occ, ray Bitboard, dir int) int {
+	lo, hi := ray[0]&occ[0], ray[1]&occ[1]
+	if (dir+1)&2 == 0 {
+		if lo != 0 {
+			return bits.TrailingZeros64(lo)
+		}
+		if hi != 0 {
+			return 64 + bits.TrailingZeros64(hi)
+		}
 		return -1
 	}
-	if dir == dirUp || dir == dirRight {
-		return m.lsb()
+	if hi != 0 {
+		return 127 - bits.LeadingZeros64(hi)
 	}
-	return m.msb()
+	return 63 - bits.LeadingZeros64(lo)
 }
 
 // firstBlocker 从 sq 沿 dir 遇到的第一个子；无子返回 -1。
-func (b *BB) firstBlocker(sq, dir int) int { return firstBlockerAt(b.occ, sq, dir) }
+func (b *BB) firstBlocker(sq, dir int) int { return firstBlockerAt(b.occ, rayMask[sq][dir], dir) }
 
 // rookAttacks 车从 sq 的攻击集（含可吃敌子，不含己方子）。
 func rookAttacks(sq int, occ, own Bitboard) Bitboard {
 	var out Bitboard
 	for d := 0; d < 4; d++ {
-		fb := firstBlockerAt(occ, sq, d)
+		ray := rayMask[sq][d]
+		fb := firstBlockerAt(occ, ray, d)
 		if fb < 0 {
-			out = out.Or(rayMask[sq][d])
+			out = out.Or(ray)
 			continue
 		}
 		// rayMask[fb][d] 不含 fb 本身，故还需显式排除 fb。
-		seg := rayMask[sq][d].AndNot(rayMask[fb][d])
+		seg := ray.AndNot(rayMask[fb][d])
 		seg.Clear(fb)
 		out = out.Or(seg)
 		if !own.Test(fb) {
@@ -265,15 +282,16 @@ func rookAttacks(sq int, occ, own Bitboard) Bitboard {
 // cannonAttacks 炮从 sq 的（平走空格集, 翻山可吃集）。
 func cannonAttacks(sq int, occ, own Bitboard) (quiet, capture Bitboard) {
 	for d := 0; d < 4; d++ {
-		fb := firstBlockerAt(occ, sq, d)
+		ray := rayMask[sq][d]
+		fb := firstBlockerAt(occ, ray, d)
 		if fb < 0 {
-			quiet = quiet.Or(rayMask[sq][d])
+			quiet = quiet.Or(ray)
 			continue
 		}
-		seg := rayMask[sq][d].AndNot(rayMask[fb][d])
+		seg := ray.AndNot(rayMask[fb][d])
 		seg.Clear(fb) // 炮架之前的空段，不含炮架本身
 		quiet = quiet.Or(seg)
-		if fb2 := firstBlockerAt(occ, fb, d); fb2 >= 0 && !own.Test(fb2) {
+		if fb2 := firstBlockerAt(occ, rayMask[fb][d], d); fb2 >= 0 && !own.Test(fb2) {
 			capture.Set(fb2) // 越炮架后第一个敌子
 		}
 	}
