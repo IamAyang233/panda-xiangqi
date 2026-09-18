@@ -255,9 +255,6 @@ func firstBlockerAt(occ, ray Bitboard, dir int) int {
 	return 63 - bits.LeadingZeros64(lo)
 }
 
-// firstBlocker 从 sq 沿 dir 遇到的第一个子；无子返回 -1。
-func (b *BB) firstBlocker(sq, dir int) int { return firstBlockerAt(b.occ, rayMask[sq][dir], dir) }
-
 // rookAttacks 车从 sq 的攻击集（含可吃敌子，不含己方子）。
 func rookAttacks(sq int, occ, own Bitboard) Bitboard {
 	var out Bitboard
@@ -310,7 +307,10 @@ func (b *BB) isAttackedBB(sq int, by int) bool {
 
 	if !rooks.IsEmpty() || !kings.IsEmpty() || !cannons.IsEmpty() {
 		for d := 0; d < 4; d++ {
-			fb := b.firstBlocker(sq, d)
+			// 直接调 firstBlockerAt（不要经包装函数）：包装函数会把 firstBlockerAt
+			// 内联进去从而自己超出内联预算（cost 88 > 80），那两处就又变成真调用了。
+			ray := rayMask[sq][d]
+			fb := firstBlockerAt(b.occ, ray, d)
 			if fb < 0 {
 				continue
 			}
@@ -321,7 +321,7 @@ func (b *BB) isAttackedBB(sq int, by int) bool {
 				return true // 将帅照面
 			}
 			if !cannons.IsEmpty() {
-				if fb2 := b.firstBlocker(fb, d); fb2 >= 0 && cannons.Test(fb2) {
+				if fb2 := firstBlockerAt(b.occ, rayMask[fb][d], d); fb2 >= 0 && cannons.Test(fb2) {
 					return true // 隔一子翻山
 				}
 			}
