@@ -415,6 +415,28 @@ func lsbOf(lo, hi uint64) int {
 	return -1
 }
 
+// drainBit 弹出 lo/hi 里的最低位置，返回其索引与剩余两字（已空时返回 -1）。
+//
+// 用返回值而不是传指针：取地址会让这两个变量被迫落回内存，把 lo/hi 的好处全丢掉。
+func drainBit(lo, hi uint64) (int, uint64, uint64) {
+	if lo != 0 {
+		return trailingZeros64(lo), lo & (lo - 1), hi
+	}
+	if hi != 0 {
+		return 64 + trailingZeros64(hi), 0, hi & (hi - 1)
+	}
+	return -1, 0, 0
+}
+
+// testLoHi 测试 sq 是否在 lo/hi 位集里 —— 等价于 bitboard.test，
+// 但不构造 16 字节的值（热路径上用它代替 b.test(sq)）。
+func testLoHi(lo, hi uint64, sq int) bool {
+	if sq >= 64 {
+		return hi&(1<<uint(sq-64)) != 0
+	}
+	return lo&(1<<uint(sq)) != 0
+}
+
 // updateThreats 记录「pc 在 s 上」这一事实的加入（put）或移除（!put）
 // 所引起的全部攻击关系变化。
 //
@@ -447,8 +469,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if diagOn {
 		diagStats.ThreatOut += int64(threatened.count())
 	}
-	for !threatened.isEmpty() {
-		t := threatened.popLSB()
+	for tLo, tHi := threatened[0], threatened[1]; tLo|tHi != 0; {
+		var t int
+		t, tLo, tHi = drainBit(tLo, tHi)
 		p.pendingThreats = append(p.pendingThreats,
 			dirtyThreat{pc, p.board[t], s, t, put})
 	}
@@ -493,8 +516,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if diagOn {
 		diagStats.ThreatIn += int64(incoming.count())
 	}
-	for !incoming.isEmpty() {
-		src := incoming.popLSB()
+	for inLo|inHi != 0 {
+		var src int
+		src, inLo, inHi = drainBit(inLo, inHi)
 		p.pendingThreats = append(p.pendingThreats,
 			dirtyThreat{p.board[src], pc, src, s, put})
 	}
@@ -533,8 +557,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if diagOn {
 		diagStats.CandRook += int64(rookAttackers.count())
 	}
-	for !rookAttackers.isEmpty() {
-		psq := rookAttackers.popLSB()
+	for raLo, raHi := rookAttackers[0], rookAttackers[1]; raLo|raHi != 0; {
+		var psq int
+		psq, raLo, raHi = drainBit(raLo, raHi)
 		pass := rayPassBB[psq][s]
 		if tq := lsbOf(pass[0]&rLo&occLo, pass[1]&rHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
@@ -546,8 +571,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if diagOn {
 		diagStats.CandCannon += int64(cannonAttackers.count())
 	}
-	for !cannonAttackers.isEmpty() {
-		psq := cannonAttackers.popLSB()
+	for caLo, caHi := cannonAttackers[0], cannonAttackers[1]; caLo|caHi != 0; {
+		var psq int
+		psq, caLo, caHi = drainBit(caLo, caHi)
 		pass := rayPassBB[psq][s]
 		if tq := lsbOf(pass[0]&rLo&occLo, pass[1]&rHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
@@ -562,8 +588,9 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if diagOn {
 		diagStats.CandCannon += int64(cannonOnRookRay.count())
 	}
-	for !cannonOnRookRay.isEmpty() {
-		psq := cannonOnRookRay.popLSB()
+	for corLo, corHi := cannonOnRookRay[0], cannonOnRookRay[1]; corLo|corHi != 0; {
+		var psq int
+		psq, corLo, corHi = drainBit(corLo, corHi)
 		pass := rayPassBB[psq][s]
 		if tq := lsbOf(pass[0]&rLo&occLo, pass[1]&rHi&occHi); tq >= 0 {
 			p.pendingThreats = append(p.pendingThreats,
@@ -581,10 +608,13 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if diagOn {
 		diagStats.CandLeaper += int64(leapers.count())
 	}
-	for !leapers.isEmpty() {
-		psq := leapers.popLSB()
-		for t := leaperPassBB[psq][s].and(occupied); !t.isEmpty(); {
-			tq := t.popLSB()
+	for lpLo, lpHi := leapers[0], leapers[1]; lpLo|lpHi != 0; {
+		var psq int
+		psq, lpLo, lpHi = drainBit(lpLo, lpHi)
+		pass := leaperPassBB[psq][s]
+		for tLo, tHi := pass[0]&occLo, pass[1]&occHi; tLo|tHi != 0; {
+			var tq int
+			tq, tLo, tHi = drainBit(tLo, tHi)
 			p.pendingThreats = append(p.pendingThreats,
 				dirtyThreat{p.board[psq], p.board[tq], psq, tq, !put})
 		}
@@ -594,26 +624,34 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 // knightAttackers 返回「能马步攻击 s 且腿位为空」的马所在格。
 // 对应 bitboard.h 的 attacks_bb<KNIGHT_TO>(s, occupied)。
 func (p *Position) knightAttackers(s int) bitboard {
-	var b bitboard
+	occLo, occHi := p.occ[0], p.occ[1]
+	var lo, hi uint64
 	for i := 0; i < 8; i++ {
 		from := knightToFrom[s][i]
 		if from < 0 {
 			break
 		}
-		if !p.occ.test(knightToLeg[s][i]) {
-			b.set(from)
+		if testLoHi(occLo, occHi, knightToLeg[s][i]) {
+			continue
+		}
+		if from >= 64 {
+			hi |= 1 << uint(from-64)
+		} else {
+			lo |= 1 << uint(from)
 		}
 	}
-	return b
+	return bitboard{lo, hi}
 }
 
 // leaperThroughS 返回「以 s 为腿（马）或象眼（象）」的己方子所在格。
 // 对应 update_piece_threats 里的
 // (unconstrained_attacks_bb<KING>(s) & KNIGHT) | (unconstrained_attacks_bb<ADVISOR>(s) & BISHOP)。
 func (p *Position) leaperThroughS(s int) bitboard {
-	k := pseudoAttacks[paKingUnc][s].and(p.byType[ptKnight])
-	b := pseudoAttacks[paAdvisorUnc][s].and(p.byType[ptBishop])
-	return k.or(b)
+	k := pseudoAttacks[paKingUnc][s]
+	b := pseudoAttacks[paAdvisorUnc][s]
+	kl, kh := p.byType[ptKnight][0], p.byType[ptKnight][1]
+	bl, bh := p.byType[ptBishop][0], p.byType[ptBishop][1]
+	return bitboard{k[0]&kl | b[0]&bl, k[1]&kh | b[1]&bh}
 }
 
 // ---- 攻击辅助表（bitboard.h 的 RayPassBB / LeaperPassBB）----
