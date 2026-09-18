@@ -9,6 +9,7 @@
 package search
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -145,6 +146,87 @@ var probCutSmallEnabled = os.Getenv("QIJING_PC_SMALL") == "on"
 //	并把「等走子量」的质量判据先建起来。
 var lmrBound = os.Getenv("QIJING_LMRBOUND") == "on"
 
+// lmr2 启用**整块移植**皮卡鱼 Step 16/17 的削减结构：
+// 1/1024 缩放量 + 与它同形的 r 公式 + 有界重搜 + 追加削减项。
+//
+// ⚠️ 为什么必须整块换而不是单件搬：2026-09-18 只搬「有界重搜」这一件（`lmrBound`），
+// 实测**方向不一致** —— 初始局面 d12 走子 −23%、中局（子力互缠）d12 +180%、
+// search 套件 109s → >18min 未跑完。根因是我们的 `red` 是**整数层**、后期着法最多
+// 削到 depth−2，削减量本身没有随「深度 × 序号」平滑加大；换成有界重搜之后，
+// 浅层试探的通过率暴涨而有界重搜收不回来。皮卡能把两者配对，靠的是它的 r 是
+// `reductions[d]*reductions[mn]` 这种「两个对数相乘」的平滑量。
+//
+// ⚠️ **有意省略的两项**（照抄系数只会得到随机偏置）：
+//   - `r -= statScore * 946 / 8192`：皮卡的 statScore 是「主历史 + 两层延续历史」的
+//     合成分；本项目没有延续历史，唯一的主历史表上限是 `historyMax = 1<<18`，
+//     量纲差几十倍。
+//   - `r -= abs(correctionValue) / 30558`：本项目没有修正历史。
+//   - `(ss+1)->cutoffCnt`：本项目不统计「下一层已发生的截断次数」。
+//
+// ⚠️⚠️ **实测（2026-09-18）：净亏，默认关闭。** 8 个局面、固定深度：
+//
+//	d6  +44.2% ｜ d8 +48.1% ｜ d10 +18.8% ｜ d12 +27.9%（合计节点）
+//	d12 逐局面：初始 −0.1% ｜ 开局 +36.4% ｜ 中局(子力互缠) +67.0%
+//	            残局(车兵) −48.2% ｜ 残局(炮兵) +4.6%
+//
+// 两条被量出来的机制：
+//
+//  1. ⚠️ **必须保留「只削安静着法」的门**（下面的 `if lmr2 && red > 0`）。皮卡鱼 Step 16
+//     对吃子/将军一视同仁，但它 Step 13 先有「吃子 futility + 吃子/将军 SEE 剪枝」
+//     把坏吃子清掉。本项目那两处只作用于安静着法 ⇒ 去掉门会让坏吃子被削到 1 层，
+//     频繁 fail high 触发重搜：同一个中局局面 d12 节点 **35,308 → 806,245（22.8×）**。
+//  2. ⚠️ 即便带门，**r 的形状本身在我们这儿也不划算**：`reductions[d]*reductions[mn]`
+//     是两个对数相乘，在 `moveCount` 小（2~10）时比我们的 `1+index/8` 削得**更深**，
+//     而在高位反而更浅；实测削减搜索的平均 `newDepth` 只有 1.23、平均只少搜 0.6 层
+//     —— 也就是说这套公式的收益主要落在「已经很浅」的地方，而重搜链的成本照付。
+//
+// ⇒ **结论：LMR 块不能单独移植。** 它至少还依赖 Step 13 的吃子剪枝（下一条待做），
+//
+//	以及本项目有意省略的历史/修正历史项。要再试，先把吃子剪枝补上再整块量。
+var lmr2 = os.Getenv("QIJING_LMR2") == "on"
+
+// lmrTable[i] = int(17.4 * ln(i))，与皮卡鱼初始化循环里的
+// `reductions[i] = int(1740 / 100.0 * std::log(i))`（src/search.cpp:683）逐位同形。
+var lmrTable = func() [MaxPly]int {
+	var t [MaxPly]int
+	for i := 1; i < len(t); i++ {
+		t[i] = int(17.4 * math.Log(float64(i)))
+	}
+	return t
+}()
+
+// lmrRated 返回削减量，**单位是 1/1024 层**（皮卡鱼 src/search.cpp::reduction）。
+//
+//	reductionScale = reductions[d] * reductions[mn]
+//	r = reductionScale - delta*1138/rootDelta + !improving*reductionScale*166/512 + 1934
+//
+// delta 是本节点的窗口宽度、rootDelta 是根窗口宽度：全窗 PV 节点几乎不额外削减，
+// 零窗非 PV 节点（delta=1）拿到完整的削减量。
+func lmrRated(improving bool, depth, moveCount, delta, rootDelta int) int {
+	d, mn := depth, moveCount
+	if d < 1 {
+		d = 1
+	}
+	if d >= MaxPly {
+		d = MaxPly - 1
+	}
+	if mn < 1 {
+		mn = 1
+	}
+	if mn >= MaxPly {
+		mn = MaxPly - 1
+	}
+	if rootDelta < 1 {
+		rootDelta = 1
+	}
+	scale := lmrTable[d] * lmrTable[mn]
+	r := scale - delta*1138/rootDelta + 1934
+	if !improving {
+		r += scale * 166 / 512
+	}
+	return r
+}
+
 // 分值常量。单位与 C++ 的 Value 一致。
 const (
 	// Infinity 大于任何真实评估值，用于 alpha-beta 的初始窗口。
@@ -196,6 +278,17 @@ func absInt(v int) int {
 	return v
 }
 
+// clampInt 把 v 限制在 [lo, hi]。皮卡鱼的削减公式里有 `std::clamp(alpha-eval,-64,96)`。
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 // diagMoveOrder 为真时额外统计「TT 着法是否出现在当前局面的合法着法列表中」。
 // 该检查是 O(着法数) 的线性扫描，只在诊断时开启，生产路径保持零额外开销。
 var diagMoveOrder = false
@@ -233,8 +326,12 @@ type Searcher struct {
 	// 皮卡鱼的 `++nodes` 记在 `do_move` 里（src/search.cpp:628），即走子次数；
 	// 我们记的是结点进入次数。拿这两个数直接相比，等于把我们的工作量报少了
 	// 一倍多 —— 这正是 2026-09-18 之前所有「等节点」跨引擎结论失真的原因。
-	makes     int64
-	ttHits    int64
+	makes  int64
+	ttHits int64
+	// rootDelta 是根节点的搜索窗口宽度（皮卡鱼：`rootDelta = beta - alpha`）。
+	// 只被 LMR 的缩放公式用来归一化「当前节点的窗口相对根窗口有多宽」——
+	// 全窗 PV 节点的 delta 大、零窗非 PV 节点的 delta 就是 1。
+	rootDelta int
 	nullMoves int64
 	noNull    bool
 	noForward bool // 关闭前向剪枝（reverse futility / futility / LMP），供对照实验
@@ -506,6 +603,13 @@ func (s *Searcher) TTLen() int {
 // 未超过 alpha 的着法返回的是其子树实际搜到的最大值（真实值的上界），
 // 用于排序足够。
 func (s *Searcher) rootSearch(p *game.Position, depth, alpha, beta int) ([]RootMove, bool) {
+	// 记录根窗口宽度供 LMR 的缩放公式使用（皮卡鱼：`rootDelta = beta - alpha`）。
+	// 全窗（±Infinity）不是有意义的宽度，退回期望窗口的默认半宽两倍。
+	if w := beta - alpha; w > 0 && w < 1<<16 {
+		s.rootDelta = w
+	} else {
+		s.rootDelta = 2 * aspirationDelta
+	}
 	moves := p.LegalMoves(p.Turn)
 	if len(moves) == 0 {
 		return nil, false
@@ -1051,7 +1155,52 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		// 削减量在这里先算好：下面的 futility 与 SEE 都要用 lmrDepth
 		// （削减后的有效深度），真正的搜索也用它，不必算两遍。
 		red := s.reduction(depth, i, victim, inCheck)
+		r1024 := red * 1024
+		// ⚠️ 只在基础削减本就生效时才用缩放公式（即「安静着法 && 非将军 && depth>=3 &&
+		// index>=4」）。皮卡鱼对吃子/将军也套 Step 16，但它 Step 13 先有「吃子 futility +
+		// 吃子/将军 SEE 剪枝」把坏吃子拿掉；我们那两处只作用于安静着法 ⇒ 去掉这个门会让
+		// 坏吃子被削到 1 层、频繁 fail high 触发重搜（实测中局 d12 节点 +378%）。
+		if lmr2 && red > 0 {
+			// ⚠️ delta 必须夹到 rootDelta 以内。皮卡鱼的根窗口恒是期望窗口，所以
+			// `delta = beta - alpha` 天然 ≤ rootDelta；而我们的固定深度搜索用全窗
+			// 根节点（`±Infinity`），根的子结点会拿到 `delta = 2×Infinity` ——
+			// 代进公式会让 r 剧烈为负、`d` 被抬到 `newDepth+2`，等于**全树白送两层
+			// 延伸**（实测中局局面节点 +378%）。夹一下即回到皮卡的语义。
+			delta := beta - alpha
+			if delta > s.rootDelta {
+				delta = s.rootDelta
+			}
+			r1024 = lmrRated(improving, depth, i+1, delta, s.rootDelta)
+			// 追加削减项（只搬本项目有对应信号的；详见 lmr2 的注释）。
+			if ttPvSeen {
+				r1024 += 931
+			}
+			if cutNode {
+				r1024 += 3251
+				if !ttHit {
+					r1024 += 1048
+				}
+			}
+			ttCapture := ttHit && p.PieceAt90(int(ttMove.To)) != game.Empty
+			if ttCapture {
+				r1024 += 1571
+			}
+			if ttHit && m == ttMove {
+				r1024 -= 2730
+			}
+			if victim == game.Empty && absInt(alpha) < MateScore-MaxPly {
+				r1024 += 3 * clampInt(alpha-staticEval, -64, 96)
+			}
+			if !isPV && !cutNode { // 皮卡的 allNode
+				r1024 += r1024 * 256 / (256*depth + 256)
+			}
+			red = r1024 / 1024
+		}
 		lmrDepth := depth - 1 - red
+		if lmr2 {
+			// 皮卡这一步用的是 /1005（不是 /1024），照抄。
+			lmrDepth = depth - 1 - r1024/1005
+		}
 		if lmrDepth < 0 {
 			lmrDepth = 0
 		}
@@ -1203,17 +1352,34 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			// PV 子结点恒为 cutNode=false；非 PV 子结点取反（皮卡的传递规则）。
 			childCut := !isPV && !cutNode
 			score = -s.alphaBeta(p, newDepth, -beta, -alpha, ply+1, isPV, true, childCut)
-		} else if lmrBound {
+		} else if lmrBound || lmr2 {
 			// 有界重搜：削减搜索之后**不跳回全深**，只在 newDepth 上下浮动一层。
 			d := newDepth - red
-			if d < 1 {
-				d = 1
+			childCut := !cutNode
+			if lmr2 {
+				// 皮卡：`max(1, min(newDepth - r/1024, newDepth + 2)) + PvNode`
+				d = newDepth - r1024/1024
+				if d < 1 {
+					d = 1
+				}
+				if d > newDepth+2 {
+					d = newDepth + 2
+				}
+				if isPV {
+					d++
+				}
+				// 皮卡的削减搜索恒以 cutNode=true 进入（`search<NonPV>(..., d, true)`）。
+				childCut = true
+			} else {
+				if d < 1 {
+					d = 1
+				}
+				if d > newDepth+2 {
+					d = newDepth + 2
+				}
 			}
-			if d > newDepth+2 {
-				d = newDepth + 2
-			}
-			score = -s.alphaBeta(p, d, -alpha-1, -alpha, ply+1, false, true, !cutNode)
-			if score > alpha && red > 0 {
+			score = -s.alphaBeta(p, d, -alpha-1, -alpha, ply+1, false, true, childCut)
+			if score > alpha && (red > 0 || r1024 > 0) {
 				// 60 / 9 两个阈值照抄皮卡鱼：明显更好才加深一层，不够好就减一层。
 				nd := newDepth
 				if d < newDepth && score > best+60 {
