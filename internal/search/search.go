@@ -1402,7 +1402,6 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		}
 
 		p.Make(m)
-		s.makes++
 		s.pos.Make(int(m.From), int(m.To))
 
 		// 将军豁免对 SEE 与前向剪枝都生效：令对手被将的安静着法常含杀机，
@@ -1434,6 +1433,11 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			s.pos.Unmake()
 			continue
 		}
+		// ⚠️ makes 记在**剪枝检查之后**：被剪的着法只是「试走即回滚」，
+		// 并未真正搜索。皮卡鱼的 ++nodes 也在 do_move 之前、即剪枝之后
+		// （src/search.cpp:628），口径必须对齐。实测本项目 d12 中局局面：
+		// 真搜 102,082 ／ 被剪回滚 261,690 —— 记在 Make 之后会把工作量虚报 3 倍。
+		s.makes++
 
 		// 本步的实际搜索深度：基础一层减去削减、再加上延伸（皮卡的
 		// `newDepth = depth - 1; newDepth += extension`）。
