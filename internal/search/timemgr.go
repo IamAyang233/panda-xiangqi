@@ -33,7 +33,7 @@ func (s *Searcher) searchLoopNodes(p *game.Position, maxNodes int64) Result {
 
 	roots, ok := s.rootSearch(p, 1, -Infinity, Infinity)
 	if !ok || len(roots) == 0 {
-		return Result{Nodes: s.nodes}
+		return Result{Nodes: s.nodes, Makes: s.makes}
 	}
 	res := Result{Best: roots[0].Move, Score: roots[0].Score, Depth: 1, Roots: roots}
 	s.ageHistory()
@@ -52,6 +52,7 @@ func (s *Searcher) searchLoopNodes(p *game.Position, maxNodes int64) Result {
 		s.ageHistory()
 	}
 	res.Nodes = s.nodes
+	res.Makes = s.makes
 	return res
 }
 
@@ -91,13 +92,14 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 	// 第 1 层不计时：代价极小，但没有它调用方可能拿不到任何着法。
 	roots, ok := s.rootSearch(p, 1, -Infinity, Infinity)
 	if !ok || len(roots) == 0 {
-		return Result{Nodes: s.nodes}
+		return Result{Nodes: s.nodes, Makes: s.makes}
 	}
 	res := Result{Best: roots[0].Move, Score: roots[0].Score, Depth: 1, Roots: roots}
 	s.ageHistory()
 
 	if maxDepth == 1 {
 		res.Nodes = s.nodes
+		res.Makes = s.makes
 		return res
 	}
 
@@ -132,5 +134,6 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 		s.ageHistory()
 	}
 	res.Nodes = s.nodes
+	res.Makes = s.makes
 	return res
 }

@@ -297,7 +297,14 @@ type Result struct {
 	Best  game.Move
 	Score int
 	Depth int
+	// Nodes 是结点进入次数（本引擎的内部口径）；Makes 是走子次数。
+	//
+	// ⚠️ 跨引擎比较工作量只能用 Makes：皮卡鱼的 `++nodes` 记在 `do_move` 里
+	// （src/search.cpp:628），即走子次数。两者比值随深度变化（中局 d12 实测
+	// Nodes:Makes ≈ 1:2.3、d1 反而 >1），拿 Nodes 去比会让我们的工作量
+	// 少报一倍多 —— 这正是 2026-09-18 之前所有「等节点」跨引擎结论失真的原因。
 	Nodes int64
+	Makes int64
 	// Roots 是根节点各着法及其分值，按分值降序。
 	// 低档位用它在前几个着法里随机挑，以制造「人味失误」。
 	Roots []RootMove
@@ -463,13 +470,14 @@ func (s *Searcher) SearchDepth(p *game.Position, depth int) Result {
 	s.prepare(p)
 	roots, ok := s.rootSearch(p, depth, -Infinity, Infinity)
 	if !ok || len(roots) == 0 {
-		return Result{Nodes: s.nodes}
+		return Result{Nodes: s.nodes, Makes: s.makes}
 	}
 	return Result{
 		Best:  roots[0].Move,
 		Score: roots[0].Score,
 		Depth: depth,
 		Nodes: s.nodes,
+		Makes: s.makes,
 		Roots: roots,
 	}
 }

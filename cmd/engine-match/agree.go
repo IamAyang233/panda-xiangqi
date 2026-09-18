@@ -96,6 +96,32 @@ package main
 //     ⇒ **我们的差距集中在战术/深算，不在中局判断。** 这解释了实战「能守不能攻」：
 //       守得住（判断不吃亏），攻不进（需要深算时不如人）。
 //
+// ---------------------------------------------------------------------------
+// ⚠️⚠️ **2026-09-18 口径纠正：公平归一化从「等节点」改为「等走子量」。**
+//
+// 上面那次正式测量的 `fair` 是把皮卡鱼的预算设成**我们的实际节点数**
+// （`oursRes.Nodes`）。核对源码后发现两边数的不是同一个量：
+//
+//	皮卡鱼 `++nodes`  记在 `do_move` 里（src/search.cpp:628）＝ **走子次数**
+//	我们   `Nodes`     记的是 **结点进入次数**（一次进入里往往走好几步）
+//
+// 比值随深度变化（同一中局局面固定深度迭代加深）：
+//
+//	depth    我们结点     我们走子     结点:走子
+//	d1           82          37         2.22
+//	d6         8414       13462         0.63
+//	d12      170483      393067         0.43
+//
+// ⇒ 旧口径下皮卡鱼**只拿到我们一半多一点的算力**，两边根本不是等工作量。
+//   已加 `Searcher.Makes()`（走子次数）并在 `Result` 里带出，本模式的 `fair`
+//   现在设为 `oursRes.Makes`。**重新在那套语料上跑之前，别引用上面 92.5% vs
+//   93.5% 那个数字** —— 它是在错误的归一化下测的（方向：对手拿得少 ⇒ 我们被高估）。
+//
+// 同时记下同工具的第二个偏差：`goNodes*` 取对手最后一条 info，而皮卡鱼被节点
+// 限制打断时 depth 是**未完成迭代**的层号，我们返回的是最后**完整跑完**的一层
+// ⇒ 报 depth 时对手被系统性 +1 层。要看 depth 请用固定 depth（`-mode profile`）。
+//
+// ---------------------------------------------------------------------------
 // 复现命令：
 //
 //	go build -o em.exe ./cmd/engine-match
@@ -325,7 +351,7 @@ func (s sharpStat) report(topK int, budget int64) {
 	if s.n == 0 {
 		return
 	}
-	fmt.Printf("\n--- 仲裁决定的锋利度（%d 个局面，%d 节点，MultiPV=%d）---\n", s.n, topK, topK)
+	fmt.Printf("\n--- 仲裁决定的锋利度（%d 个局面，%d 节点，MultiPV=%d）---\n", s.n, budget, topK)
 	fmt.Printf("  首选与次选的平均分差 %.1f 分；与末选的平均分差 %.1f 分\n",
 		float64(s.gap1Sum)/float64(s.n), float64(s.gapKSum)/float64(s.n))
 	fmt.Printf("  次选已在 20 分内的局面 %d/%d = %.0f%%\n",
@@ -420,16 +446,25 @@ func moveAgreement(flatPath, uciPath, corpus string, limit int, compareBudget, a
 	fmt.Printf("仲裁者自报：%s\n\n", probeNNUE(sess))
 
 	fmt.Printf("=== 着法级一致率（与超深仲裁比）===\n")
-	fmt.Printf("语料 %s｜%d 个局面｜对比预算 %d 节点｜仲裁预算 %d 节点（%.0f×，MultiPV=%d）\n\n",
-		corpus, len(fens), compareBudget, arbiterBudget,
-		float64(arbiterBudget)/float64(compareBudget), topK)
+	if fair {
+		fmt.Printf("语料 %s｜%d 个局面｜我们 %d **结点**｜仲裁 %d 结点（%.0f×，MultiPV=%d）\n",
+			corpus, len(fens), compareBudget, arbiterBudget,
+			float64(arbiterBudget)/float64(compareBudget), topK)
+		fmt.Printf("⚠️ 皮卡鱼按**我们的实际走子数**给量（同口径）—— 它报的 nodes 就是走子次数，\n")
+		fmt.Printf("   而我们的预算是结点数，两者比值随深度变化（中局 ≈1:2.3）。\n\n")
+	} else {
+		fmt.Printf("语料 %s｜%d 个局面｜对比预算 %d 结点｜仲裁预算 %d 结点（%.0f×，MultiPV=%d）\n",
+			corpus, len(fens), compareBudget, arbiterBudget,
+			float64(arbiterBudget)/float64(compareBudget), topK)
+		fmt.Printf("⚠️ 未做归一化：我们超支（计数停在结点边界），这个模式只作对照。\n\n")
+	}
 
 	var ours, pik, weak agreeStat
 	var ctrlPair, expPair pairDiff
 	var sharp sharpStat
 	var usedFens, arbTop1 []string
 	sameAsPik, skipped := 0, 0
-	var ourNodes, pikNodes int64
+	var ourNodes, ourMakes, pikNodes int64
 	for i, fen := range fens {
 		pos, perr := game.ParseFEN(fen)
 		if perr != nil {
@@ -440,12 +475,19 @@ func moveAgreement(flatPath, uciPath, corpus string, limit int, compareBudget, a
 		oursMV := oursRes.Best.String()
 		weakMV := search.New(w).SearchNodes(pos.Clone(), compareBudget/8).Best.String()
 
-		// ⚠️ 我们的固定节点会**超支**（计数停在结点边界上，实测 1.3~1.7×）。
-		// 直接和皮卡鱼的「名义同预算」比 = 我们白拿 1.5 倍算力。
-		// 所以给皮卡鱼**等量的实际节点**，让两边工作量真的相同。
-		pikBudget := compareBudget
+		// ⚠️⚠️ 公平归一化必须用**走子数（Makes）**，不能用节点数（Nodes）。
+		//
+		// 皮卡鱼的 `go nodes N` 数的是 `do_move` 的调用次数（src/search.cpp:628），
+		// 即**走子次数**；我们的 `Nodes` 是**结点进入次数**（一次进入里往往走好几步）。
+		// 两者比值随深度变化（中局固定深度实测 d12 ≈ 1:2.3），所以拿 Nodes 当预算
+		// 等于给皮卡鱼**一倍多**的算力 —— 这正是 2026-09-18 之前所有「等节点」
+		// 跨引擎结论失真的根因（详见 `-mode nodes` 的对照表）。
+		//
+		// `Makes` 与皮卡鱼同口径，所以「我们做 M 次走子 ⇒ 皮卡鱼也做 M 次」才是
+		// 真正的等工作量。
+		pikBudget := compareBudget // -公平归一化时的名义值（皮卡鱼按它自己的节点数算）
 		if fair {
-			pikBudget = oursRes.Nodes
+			pikBudget = oursRes.Makes
 		}
 		pikMV, _, pikUsed, uerr := sess.goNodesBest(fen, pikBudget, 300*time.Second)
 		if uerr != nil {
@@ -487,6 +529,7 @@ func moveAgreement(flatPath, uciPath, corpus string, limit int, compareBudget, a
 		usedFens = append(usedFens, fen)
 		arbTop1 = append(arbTop1, arb[0])
 		ourNodes += oursRes.Nodes
+		ourMakes += oursRes.Makes
 		pikNodes += pikUsed
 		if oursMV == pikMV {
 			sameAsPik++
@@ -499,11 +542,20 @@ func moveAgreement(flatPath, uciPath, corpus string, limit int, compareBudget, a
 	fmt.Printf("\n有效局面 %d（跳过 %d）｜我们与皮卡鱼着法相同 %d/%d = %.0f%%\n",
 		len(fens)-skipped, skipped, sameAsPik, ours.n,
 		100*float64(sameAsPik)/float64(maxInt(ours.n, 1)))
+	fmt.Printf("\n工作量口径：%s\n", map[bool]string{
+		true:  "**已归一化 —— 皮卡鱼的预算 = 我们的实际走子数（同口径）**",
+		false: "按名义预算（我们超支，占皮卡鱼便宜）",
+	}[fair])
+	if ourMakes > 0 {
+		fmt.Printf("  我们：结点 %d ｜ **走子 %d**（结点:走子 = %.2f）\n",
+			ourNodes, ourMakes, float64(ourNodes)/float64(ourMakes))
+	}
 	if pikNodes > 0 {
-		fmt.Printf("节点口径：%s（我们实际 %d ÷ 皮卡鱼实际 %d = %.2f×）\n",
-			map[bool]string{true: "已归一化（皮卡鱼按我们的实际节点给量）",
-				false: "按名义预算（我们超支，占便宜）"}[fair],
-			ourNodes, pikNodes, float64(ourNodes)/float64(pikNodes))
+		fmt.Printf("  皮卡鱼：走子 %d（它的 `go nodes N` 数的就是走子次数）\n", pikNodes)
+	}
+	if ourMakes > 0 && pikNodes > 0 {
+		fmt.Printf("  ⇒ 走子口径之比 = **%.2f×**（越接近 1.00 越接近真等工作量）\n",
+			float64(ourMakes)/float64(pikNodes))
 	}
 
 	ours.report("实验组 我们@"+fmt.Sprint(compareBudget), "")
@@ -522,7 +574,7 @@ func moveAgreement(flatPath, uciPath, corpus string, limit int, compareBudget, a
 	fmt.Printf("  ⇒ 分歧子集内 top-1 %+.1fpp，top-K %+.1fpp（**应当为正且明显**）\n", d1, dK)
 
 	fmt.Printf("\n--- 实验组的分歧子集（同样只看两档不同着的局面）---\n")
-	expPair.reportDiff("我们@"+fmt.Sprint(compareBudget), "皮卡鱼@同实际节点")
+	expPair.reportDiff("我们@"+fmt.Sprint(compareBudget), "皮卡鱼@同走子量")
 
 	dP1 := 100 * float64(ours.hit1-pik.hit1) / float64(ours.n)
 	dPK := 100 * float64(ours.hitK-pik.hitK) / float64(ours.n)
@@ -552,9 +604,9 @@ func moveAgreement(flatPath, uciPath, corpus string, limit int, compareBudget, a
 		if done > 0 {
 			fmt.Printf("  同着法 %d/%d = %.1f%% ⇒ 这是本度量的**分辨力天花板**\n",
 				agree, done, 100*float64(agree)/float64(done))
-			fmt.Printf("  与它比：我们 %.1f%%、皮卡鱼 %.1f%%（都相对 8M 仲裁）\n",
+			fmt.Printf("  与它比：我们 %.1f%%、皮卡鱼 %.1f%%（都相对 %d 节点仲裁）\n",
 				100*float64(ours.hit1)/float64(maxInt(ours.n, 1)),
-				100*float64(pik.hit1)/float64(maxInt(pik.n, 1)))
+				100*float64(pik.hit1)/float64(maxInt(pik.n, 1)), arbiterBudget)
 		}
 	}
 }

@@ -100,7 +100,7 @@ func main() {
 	mGapMax := flag.Int("mgapmax", 300, "锋利度上界（分；mode=sharpen。防的是近杀局被当成中局）")
 	mOut := flag.String("mout", "sharp_fens.txt", "筛选后的语料输出路径（mode=sharpen）")
 	mCalib := flag.Int("mcalib", 0, "仲裁者自洽性校准的局面数（mode=agree；0=跳过。每个局面多花 4× 仲裁预算）")
-	mFair := flag.Bool("mfair", true, "把皮卡鱼的预算设为我们的**实际**节点数（mode=agree；关掉则按名义预算，我们会因超支占便宜）")
+	mFair := flag.Bool("mfair", true, "把皮卡鱼的预算设为我们的**实际走子数**（mode=agree；同口径等工作量。关掉则按名义预算，我们会因超支占便宜）")
 	flag.StringVar(&mgDumpPath, "mgdump", "", "对局时导出中局局面到该文件（mode=games，供 mode=mg 用）")
 	flag.Parse()
 
