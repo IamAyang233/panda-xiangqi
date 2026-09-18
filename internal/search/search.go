@@ -188,7 +188,15 @@ type Searcher struct {
 
 	scoreBuf [MaxPly][]int
 
-	nodes     int64
+	nodes int64
+	// makes 是**走子次数**，也就是「走一步算一个」的口径。
+	//
+	// ⚠️ 这不是 nodes 的另一种写法，两者比值随深度变化（本项目实测 d12 时
+	// nodes:makes ≈ 1:2.3，d1 时反而 >1）。**它存在的唯一理由是跨引擎比对**：
+	// 皮卡鱼的 `++nodes` 记在 `do_move` 里（src/search.cpp:628），即走子次数；
+	// 我们记的是结点进入次数。拿这两个数直接相比，等于把我们的工作量报少了
+	// 一倍多 —— 这正是 2026-09-18 之前所有「等节点」跨引擎结论失真的原因。
+	makes     int64
 	ttHits    int64
 	nullMoves int64
 	noNull    bool
@@ -313,6 +321,7 @@ func (s *Searcher) resetStats() {
 		qdAbNodes, qdQNodes, qdInCheck, qdDeltaCut = 0, 0, 0, 0
 	}
 	s.ttHits = 0
+	s.makes = 0
 	s.nullMoves = 0
 	s.probeCnt = 0
 	s.abCallCnt = 0
@@ -428,8 +437,14 @@ func (s *Searcher) SearchDepth(p *game.Position, depth int) Result {
 	}
 }
 
-// Nodes 返回已搜索的节点数。
+// Nodes 返回已搜索的节点数（**结点进入次数**，本引擎的内部口径）。
 func (s *Searcher) Nodes() int64 { return s.nodes }
+
+// Makes 返回走子次数，即「走一步算一个」的口径 —— **与皮卡鱼的 nodes 同口径**。
+//
+// 跨引擎比较搜索工作量只能用这个，不能用 Nodes()：两者的比值随深度变化
+// （d12 时 nodes:makes ≈ 1:2.3），直接比会把我们的工作量报少一倍多。
+func (s *Searcher) Makes() int64 { return s.makes }
 
 // TTLen 返回置换表容量（项数）；表被禁用时返回 0。
 func (s *Searcher) TTLen() int {
@@ -467,6 +482,7 @@ func (s *Searcher) rootSearch(p *game.Position, depth, alpha, beta int) ([]RootM
 		}
 		victim := p.PieceAt90(int(m.To))
 		p.Make(m)
+		s.makes++
 		s.pos.Make(int(m.From), int(m.To))
 
 		var score int
@@ -921,6 +937,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 				continue
 			}
 			p.Make(m)
+			s.makes++
 			s.pos.Make(int(m.From), int(m.To))
 			// 先做一次零窗静态搜索：吃子本身就被静态搜索覆盖，不划算的在这里就出局了。
 			v := -s.quiesce(p, -probCutBeta, -probCutBeta+1, ply+1)
@@ -1116,6 +1133,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		}
 
 		p.Make(m)
+		s.makes++
 		s.pos.Make(int(m.From), int(m.To))
 
 		// 将军豁免对 SEE 与前向剪枝都生效：令对手被将的安静着法常含杀机，
@@ -1304,6 +1322,7 @@ func (s *Searcher) quiesce(p *game.Position, alpha, beta, ply int) int {
 
 	for _, m := range moves {
 		p.Make(m)
+		s.makes++
 		s.pos.Make(int(m.From), int(m.To))
 		score := -s.quiesce(p, -beta, -alpha, ply+1)
 		p.Unmake()
