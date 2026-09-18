@@ -108,6 +108,43 @@ func envIntOr(k string, def int) int {
 // 实测同样净亏损，默认关闭（理由见 alphaBeta 里的注释）。
 var probCutSmallEnabled = os.Getenv("QIJING_PC_SMALL") == "on"
 
+// lmrBound 由环境变量 QIJING_LMRBOUND=on 启用**有界重搜**（皮卡鱼 Step 16 的模型）。
+//
+// 背景：我们的削减搜索一旦「比 alpha 略好」就**直接跳回全深重搜**，于是削减必须
+// 保守 —— 代码里那条实测记录（线性 1.79 / 对数 1.85 / max 2.44）说的就是这个
+// 代价：削得越狠，越多着法在浅层通过、触发越多全深重搜，多出来的节点超过省下的。
+//
+// 皮卡鱼的模型不同：削减搜索之后**只在新深度上下浮动一层**
+//
+//	doDeeperSearch    = d < newDepth && value > bestValue + 60
+//	doShallowerSearch = value < bestValue + 9
+//	newDepth += doDeeperSearch - doShallowerSearch
+//	if newDepth > d { 重搜 }        // 从不跳回全深
+//
+// 所以它敢把后期着法削 4~5 层。实测（2026-09-18，同局面固定深度迭代加深、
+// 「走子次数」口径）：固定名义深度 d12 我们要 39.3 万次走子、皮卡鱼只要 2.0 万
+// （19.6×），每层树规模倍增率我们 2.32 vs 它 1.75 —— 差异的根源就在这里。
+//
+// 默认关闭：本开关只改「削减之后怎么重搜」，削减量本身仍用既有公式，
+// 这样能单独量出重搜策略的贡献（单变量）。
+//
+// ⚠️ **实测（2026-09-18）：单变量版本方向不一致，不能直接采纳。**
+//
+//	固定 6 万节点·20 个安静局面：平均深度 14.70 → **14.90**（略好）
+//	中局（子力互亏）固定深度 d12：结点 170k → 414k（**+143%**）、走子 +180%、耗时 +164%
+//	初始局面固定深度 d12：结点 120k → 78k（−35%）、走子 −23%、耗时 −25%（明显更好）
+//	search 包全套测试：基线 109s → **跑 18m37s 仍未结束**（那些固定节点/深度的场景树规模爆炸）
+//
+// 方向取决于局面 ⇒ 说明它不是「免费的效率」，而是换了一种树形。
+// 原因大概率在于：我们的 `red` 是整数层、且后期着法可削到 depth−2，
+// 一旦在深度 1 上失败高，`nd = newDepth±1` 相对 `d` 仍是**接近全深**的一跳，
+// 于是既没省下重搜、又让「削减搜索本身」变得不可信 —— 皮卡鱼能把两者配对，
+// 靠的是它整套 1/1024 缩放的 r 公式 + Step 17 的追加削减 + 修正历史项一起作用。
+// ⇒ 真要移植，必须整块做（公式 + 重搜深度 + Step 17 + 需要的辅助结构），
+//
+//	并把「等走子量」的质量判据先建起来。
+var lmrBound = os.Getenv("QIJING_LMRBOUND") == "on"
+
 // 分值常量。单位与 C++ 的 Value 一致。
 const (
 	// Infinity 大于任何真实评估值，用于 alpha-beta 的初始窗口。
@@ -1158,6 +1195,32 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			// PV 子结点恒为 cutNode=false；非 PV 子结点取反（皮卡的传递规则）。
 			childCut := !isPV && !cutNode
 			score = -s.alphaBeta(p, newDepth, -beta, -alpha, ply+1, isPV, true, childCut)
+		} else if lmrBound {
+			// 有界重搜：削减搜索之后**不跳回全深**，只在 newDepth 上下浮动一层。
+			d := newDepth - red
+			if d < 1 {
+				d = 1
+			}
+			if d > newDepth+2 {
+				d = newDepth + 2
+			}
+			score = -s.alphaBeta(p, d, -alpha-1, -alpha, ply+1, false, true, !cutNode)
+			if score > alpha && red > 0 {
+				// 60 / 9 两个阈值照抄皮卡鱼：明显更好才加深一层，不够好就减一层。
+				nd := newDepth
+				if d < newDepth && score > best+60 {
+					nd++
+				}
+				if score < best+9 {
+					nd--
+				}
+				if nd > d {
+					score = -s.alphaBeta(p, nd, -alpha-1, -alpha, ply+1, false, true, !cutNode)
+				}
+			}
+			if score > alpha && score < beta {
+				score = -s.alphaBeta(p, newDepth, -beta, -alpha, ply+1, isPV, true, false)
+			}
 		} else {
 			score = -s.alphaBeta(p, newDepth-red, -alpha-1, -alpha, ply+1, false, true, !cutNode)
 			if score > alpha && red > 0 {
