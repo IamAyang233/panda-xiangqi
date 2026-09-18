@@ -94,6 +94,19 @@ func (p *Pool) SearchAtLevel(pos *game.Position, level int, rng *rand.Rand) (gam
 	return PickMove(res, lp, rng), res
 }
 
+// SearchAtLevelObserve 是 SearchAtLevel 带「迭代观察器」的版本，语义完全相同
+// （同样过 PickMove，所以回调里看到的 Best 就是最终选中的着法）。
+//
+// 观察者只在本次搜索期间挂在主线程上，结束后摘掉 —— 池是共享的，
+// 不摘会污染下一次调用。
+func (p *Pool) SearchAtLevelObserve(pos *game.Position, level int, rng *rand.Rand, obs func(Result)) (game.Move, Result) {
+	lp := Level(level)
+	p.SetIterObserver(obs)
+	defer p.SetIterObserver(nil)
+	res := p.SearchTime(pos, TimeLimit{Soft: lp.Time * 6 / 10, Hard: lp.Time}, lp.MaxDepth)
+	return PickMove(res, lp, rng), res
+}
+
 // SearchAtLevel 是单线程版本，语义同上（不含并行，结果确定）。
 func (s *Searcher) SearchAtLevel(pos *game.Position, level int, rng *rand.Rand) (game.Move, Result) {
 	lp := Level(level)

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
+	"github.com/IamAyang233/panda-xiangqi/internal/search"
 )
 
 // Manager 引擎管理器。
@@ -228,6 +229,28 @@ func (m *Manager) BestMove(ctx context.Context, pos *game.Position, level int) (
 		return game.Move{}, err
 	}
 	return m.simple.BestMove(ctx, pos, level)
+}
+
+// BestMoveObserve 是 BestMove 带「迭代观察器」的版本。
+//
+// ⚠️ **观察器只有内嵌引擎支持**：皮卡鱼走 UCI 协议（它的逐层信息要解析 info 行），
+// 自研简易引擎没有迭代加深。走这两条降级路径时 obs **不会被调用** ——
+// 调用方只能把回调当增强信息，不能依赖「一定会收到」。
+func (m *Manager) BestMoveObserve(ctx context.Context, pos *game.Position, level int, obs func(search.Result)) (game.Move, error) {
+	if err := ctxErr(ctx); err != nil {
+		return game.Move{}, err
+	}
+	if m.HasNative() && obs != nil {
+		mv, err := m.native.BestMoveObserve(ctx, pos, level, obs)
+		if err == nil {
+			return mv, nil
+		}
+		if ctxErr(ctx) != nil {
+			return game.Move{}, err
+		}
+		m.noteDiag("内嵌 Go 引擎搜索失败，降级: " + err.Error())
+	}
+	return m.BestMove(ctx, pos, level)
 }
 
 // Hint 提示：中档位计算（T5.4）。

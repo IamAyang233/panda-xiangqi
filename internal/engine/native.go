@@ -198,6 +198,36 @@ func (e *NativeEngine) BestMove(ctx context.Context, pos *game.Position, level i
 // 只有固定思考时间才是可比的口径。
 //
 // 与 BestMove 一样保留置换表 —— 跨步复用本身就是棋力的一部分，皮卡鱼也这么做。
+// BestMoveObserve 是 BestMove 带「迭代观察器」的版本：每次完整迭代完成后回调
+// 一次（obs 为 nil 时与 BestMove 完全等价）。
+//
+// ⚠️ 回调在**搜索线程**上执行：必须自己保证并发安全，且不能反过来调用本引擎。
+// 典型用法是把深度/分值/节点数发给 UI，不要在回调里做重活。
+func (e *NativeEngine) BestMoveObserve(ctx context.Context, pos *game.Position, level int, obs func(search.Result)) (game.Move, error) {
+	if err := e.load(); err != nil {
+		return game.Move{}, err
+	}
+	if err := ctxErr(ctx); err != nil {
+		return game.Move{}, err
+	}
+	p := pos.Clone()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	stop := e.watchCancel(ctx)
+	defer stop()
+
+	mv, _ := e.pool.SearchAtLevelObserve(p, level, e.rng, obs)
+	if err := ctxErr(ctx); err != nil {
+		return game.Move{}, err
+	}
+	if mv == (game.Move{}) {
+		return game.Move{}, fmt.Errorf("引擎未给出着法")
+	}
+	return mv, nil
+}
+
 func (e *NativeEngine) BestMoveTimed(ctx context.Context, pos *game.Position, movetime time.Duration) (game.Move, error) {
 	res, err := e.SearchTimed(ctx, pos, movetime)
 	return res.Best, err
@@ -206,6 +236,15 @@ func (e *NativeEngine) BestMoveTimed(ctx context.Context, pos *game.Position, mo
 // SearchTimed 是 BestMoveTimed 的完整结果版，额外给出搜索深度与节点数，
 // 供对拍工具量化「同等时间下能搜多深」以及上层做诊断展示。
 func (e *NativeEngine) SearchTimed(ctx context.Context, pos *game.Position, movetime time.Duration) (search.Result, error) {
+	return e.SearchTimedObserve(ctx, pos, movetime, nil)
+}
+
+// SearchTimedObserve 是 SearchTimed 带「迭代观察器」的版本：每次完整迭代完成后
+// 回调一次（obs 为 nil 时与 SearchTimed 完全等价）。
+//
+// ⚠️ 回调在**搜索线程**上执行：它必须自己保证并发安全，且不能反过来调用本引擎
+// （会破坏搜索状态）。典型用法是把结果发给 UI，不要在回调里做重活。
+func (e *NativeEngine) SearchTimedObserve(ctx context.Context, pos *game.Position, movetime time.Duration, obs func(search.Result)) (search.Result, error) {
 	if err := e.load(); err != nil {
 		return search.Result{}, err
 	}
@@ -219,6 +258,10 @@ func (e *NativeEngine) SearchTimed(ctx context.Context, pos *game.Position, move
 
 	stop := e.watchCancel(ctx)
 	defer stop()
+
+	// 观察器只在这次搜索期间挂上：池是共享的，不摘掉会污染下一次调用。
+	e.pool.SetIterObserver(obs)
+	defer e.pool.SetIterObserver(nil)
 
 	res := e.pool.SearchTime(p, search.TimeLimit{Soft: movetime * 6 / 10, Hard: movetime}, 0)
 	if err := ctxErr(ctx); err != nil {
