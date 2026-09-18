@@ -113,17 +113,19 @@ func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 	// 拆开后每半只占 1 个 GPR，能一直留在寄存器里。
 	var rookLo, rookHi, cannonLo, cannonHi uint64
 	for di := 0; di < 4; di++ {
-		ray := rayBB[sq][di]
-		rayLo, rayHi := ray[0], ray[1]
+		// 表的每一半单独取，不先构造 16 字节的 ray/fb 值再拆 —— 与累加器拆 lo/hi
+		// 同一个理由：多一个 16 字节中间值就多一次栈溢出。四轮 × 三张表 = 12 处
+		// （即汇编里那 12 条 MOVUPS）。索引表达式只算一次、两半各取一条 8 字节加载。
+		rayLo, rayHi := rayBB[sq][di][0], rayBB[sq][di][1]
 		inc := di == 0 || di == 2 // 北/东格号递增，南/西递减
 
 		var fbLo, fbHi uint64
 		if inc {
-			fb := beyondInc[di][incIndex(rayLo&occLo, rayHi&occHi)]
-			fbLo, fbHi = fb[0], fb[1]
+			k := incIndex(rayLo&occLo, rayHi&occHi)
+			fbLo, fbHi = beyondInc[di][k][0], beyondInc[di][k][1]
 		} else {
-			fb := beyondDec[di][decIndex(rayLo&occLo, rayHi&occHi)]
-			fbLo, fbHi = fb[0], fb[1]
+			k := decIndex(rayLo&occLo, rayHi&occHi)
+			fbLo, fbHi = beyondDec[di][k][0], beyondDec[di][k][1]
 		}
 		// 射线表本身不含 sq，所以 ray 去掉 fb（阻挡之后的射线）剩下的正好是
 		// 「sq 到 fb（含 fb）」，不必再拼 bbOf(fb) 后取补。
@@ -134,11 +136,11 @@ func slidingAttackBoth(sq int, occupied bitboard) (rook, cannon bitboard) {
 		// fb 为空（本方向没有子）时下面整段自然产出空集。
 		var fb2Lo, fb2Hi uint64
 		if inc {
-			fb2 := beyondInc[di][incIndex(fbLo&occLo, fbHi&occHi)]
-			fb2Lo, fb2Hi = fb2[0], fb2[1]
+			k := incIndex(fbLo&occLo, fbHi&occHi)
+			fb2Lo, fb2Hi = beyondInc[di][k][0], beyondInc[di][k][1]
 		} else {
-			fb2 := beyondDec[di][decIndex(fbLo&occLo, fbHi&occHi)]
-			fb2Lo, fb2Hi = fb2[0], fb2[1]
+			k := decIndex(fbLo&occLo, fbHi&occHi)
+			fb2Lo, fb2Hi = beyondDec[di][k][0], beyondDec[di][k][1]
 		}
 		cannonLo |= fbLo &^ fb2Lo
 		cannonHi |= fbHi &^ fb2Hi
@@ -300,6 +302,12 @@ func lameLeaperPath(pt, d, s int) int {
 // 落点与象眼/腿位都取自预计算表（见 bishopTo / knightTo 的说明），热路径上
 // 只剩「查表 + 判腿位是否被占 + 置位」。原实现每个方向现算 lameLeaperPath，
 // 是这段的主要开销。
+//
+// ⚠️ 试过改写成 lo/hi 累加，**指令数 134 → 176（+31%）**，按「改完指令数上涨
+// 大概率净亏」这条判据直接回退（未做端到端 A/B）。形状原因：它只有 4（象）/
+// 8（马）个方向、每个方向都要在「置高位还是低位」上分支，而 `b.set(to)` 编译
+// 出来是无分支的 `orq R, (b+R*8)` —— 换成显式 `if to >= 64` 反而多出 12 处分支。
+// **多迭代本身不够，循环体里还得没有「用分支换 16 字节」的内在代价。**
 func lameLeaperAttack(pt, s int, occupied bitboard) bitboard {
 	var b bitboard
 	if pt == ptBishop {
