@@ -282,6 +282,8 @@ export class GameScreen {
       case 'state': return this._onState(m);
       case 'move': case 'engine_move': case 'llm_move': return this._onMove(m);
       case 'engine_thinking': return this._onThinking(m);
+      // 思考信息流：内嵌引擎每完成一层迭代推一条（降级到皮卡鱼/简易引擎时不会有）
+      case 'analysis': return this._onAnalysis(m);
       case 'check': return this._onCheck(m);
       case 'game_over': return this._onGameOver(m);
       case 'hint_result': return this._onHint(m);
@@ -364,6 +366,7 @@ export class GameScreen {
   }
 
   _onMove(m) {
+    this._hideAnalysis(); // 落子后上一次的分析已过期，别留在屏幕上
     // 先探明落点是否已有子（即是否吃子）：animateMove 会立即从 board 中移除，
     // 故必须在调用前读取，否则无法据此播放“吃子”音效。
     const to = parseSq(m.to);
@@ -397,6 +400,32 @@ export class GameScreen {
     $('opp-state').textContent = '思考中';
     $('opp-state').className = 'player-state thinking';
     $('btn-undo').disabled = true;
+    this._hideAnalysis();
+  }
+
+  // _onAnalysis 显示引擎「正在想到第几层」。
+  //
+  // 这是**增强信息**：只有内嵌引擎支持（皮卡鱼走 UCI、简易引擎没有迭代加深），
+  // 所以收不到时什么都不显示，而不是显示一个假数字。
+  _onAnalysis(m) {
+    const el = $('engine-analysis');
+    if (!el) return;
+    const n = (v) => (typeof v === 'number' ? v.toLocaleString('zh-CN') : '');
+    const parts = [];
+    if (m.depth) parts.push('深度 ' + m.depth);
+    if (typeof m.score === 'number') {
+      parts.push('分值 ' + (m.score > 0 ? '+' : '') + m.score);
+    }
+    if (m.best) parts.push('最佳 ' + m.best);
+    if (m.makes) parts.push('走子 ' + n(m.makes));
+    if (m.nodes) parts.push('结点 ' + n(m.nodes));
+    el.textContent = parts.join(' · ');
+    el.hidden = false;
+  }
+
+  _hideAnalysis() {
+    const el = $('engine-analysis');
+    if (el) el.hidden = true;
   }
 
   _onCheck(m) {
