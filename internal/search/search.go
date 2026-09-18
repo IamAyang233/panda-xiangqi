@@ -373,6 +373,15 @@ type Searcher struct {
 	makes  int64
 	ttHits int64
 	// rootDelta 是根节点的搜索窗口宽度（皮卡鱼：`rootDelta = beta - alpha`）。
+	// onIter 若非 nil，会在**每次完整迭代完成后**被调用一次。
+	//
+	// 用途是「思考信息流」：UI 想实时显示深度/分值/节点数，就必须拿到每一次
+	// 迭代加深的结果，而不是等搜索结束。默认 nil ⇒ 生产路径零开销（只是一次
+	// 接口判空）。
+	//
+	// ⚠️ 只在**主线程**（p.searchers[0]）上生效：辅助线程跑的是同一深度的另一棵
+	// 树，它们的结果不代表本线程选定的着法，混进来会让 UI 显示跳变。
+	onIter func(Result)
 	// 只被 LMR 的缩放公式用来归一化「当前节点的窗口相对根窗口有多宽」——
 	// 全窗 PV 节点的 delta 大、零窗非 PV 节点的 delta 就是 1。
 	rootDelta int
@@ -624,7 +633,14 @@ func (s *Searcher) SearchDepth(p *game.Position, depth int) Result {
 }
 
 // Nodes 返回已搜索的节点数（**结点进入次数**，本引擎的内部口径）。
-func (s *Searcher) Nodes() int64 { return s.nodes }
+
+// SetIterObserver 设置「每次完整迭代完成后」的回调；传 nil 取消。
+//
+// 回调里给的 Result 是**该次迭代结束时的快照**（Depth/Score/Best/Nodes/Makes
+// 都是当时的累计值）。它在搜索线程上被调用，所以回调体必须自己保证并发安全，
+// 且不能反过来调用本 Searcher（会破坏搜索状态）。
+func (s *Searcher) SetIterObserver(f func(Result)) { s.onIter = f }
+func (s *Searcher) Nodes() int64                   { return s.nodes }
 
 // Makes 返回走子次数，即「走一步算一个」的口径 —— **与皮卡鱼的 nodes 同口径**。
 //

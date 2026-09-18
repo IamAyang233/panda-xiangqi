@@ -50,6 +50,12 @@ func (s *Searcher) searchLoopNodes(p *game.Position, maxNodes int64) Result {
 		}
 		res.Score, res.Best, res.Depth, res.Roots = roots[0].Score, roots[0].Move, d, roots
 		s.ageHistory()
+		if s.onIter != nil {
+			// ⚠️ Nodes/Makes 平时是循环结束后才赋的 —— 回调要的是「当时」的累计值，
+			// 必须先补上再报，否则 UI 看到的节点数恒为 0。
+			res.Nodes, res.Makes = s.nodes, s.makes
+			s.onIter(res)
+		}
 	}
 	res.Nodes = s.nodes
 	res.Makes = s.makes
@@ -96,6 +102,10 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 	}
 	res := Result{Best: roots[0].Move, Score: roots[0].Score, Depth: 1, Roots: roots}
 	s.ageHistory()
+	if s.onIter != nil {
+		// 第 1 层也要报：UI 才有「已经在思考」的即时反馈。
+		s.onIter(Result{Best: res.Best, Score: res.Score, Depth: 1, Nodes: s.nodes, Makes: s.makes})
+	}
 
 	if maxDepth == 1 {
 		res.Nodes = s.nodes
@@ -132,6 +142,12 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 		}
 		res.Score, res.Best, res.Depth, res.Roots = roots[0].Score, roots[0].Move, d, roots
 		s.ageHistory()
+		if s.onIter != nil {
+			// ⚠️ Nodes/Makes 平时是循环结束后才赋的 —— 回调要的是「当时」的累计值，
+			// 必须先补上再报，否则 UI 看到的节点数恒为 0。
+			res.Nodes, res.Makes = s.nodes, s.makes
+			s.onIter(res)
+		}
 	}
 	res.Nodes = s.nodes
 	res.Makes = s.makes

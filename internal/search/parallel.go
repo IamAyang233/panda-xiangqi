@@ -50,6 +50,8 @@ type Pool struct {
 	stop      atomic.Bool
 	searchers []*Searcher
 	threads   int
+	// onIter 见 SetIterObserver；每次 run 时挂到主线程上、结束后摘掉。
+	onIter func(Result)
 }
 
 // NewPool 构造线程池；threads <= 0 时自动探测，ttSizeMB <= 0 用默认值。
@@ -95,6 +97,12 @@ func (p *Pool) SearchTime(pos *game.Position, limit TimeLimit, maxDepth int) Res
 	return p.run(pos, limit, maxDepth)
 }
 
+// SetIterObserver 设置「每次完整迭代完成后」的回调（给 UI 的思考信息流用）。
+//
+// 只挂在主线程上：辅助线程跑的是同一深度的另一棵树，把它们的结果也报出来
+// 会让显示跳变。传 nil 取消。
+func (p *Pool) SetIterObserver(f func(Result)) { p.onIter = f }
+
 // SearchIn 是 SearchTime 的便捷形式（按毫秒）。
 func (p *Pool) SearchIn(pos *game.Position, ms int, maxDepth int) Result {
 	d := time.Duration(ms) * time.Millisecond
@@ -125,6 +133,8 @@ func (p *Pool) Clear() {
 // 都是正确的，且能显著提升棋力。需要重置时显式调 Clear()。
 func (p *Pool) run(pos *game.Position, limit TimeLimit, maxDepth int) Result {
 	p.stop.Store(false)
+	p.searchers[0].onIter = p.onIter
+	defer func() { p.searchers[0].onIter = nil }()
 	for _, s := range p.searchers {
 		s.resetStats()
 		s.nodes = 0
