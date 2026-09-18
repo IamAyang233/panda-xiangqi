@@ -185,6 +185,40 @@ var lmrBound = os.Getenv("QIJING_LMRBOUND") == "on"
 //	以及本项目有意省略的历史/修正历史项。要再试，先把吃子剪枝补上再整块量。
 var lmr2 = os.Getenv("QIJING_LMR2") == "on"
 
+// capPrune 启用皮卡鱼 Step 13 里**吃子/将军**那一半剪枝（吃子 futility +
+// 吃子的 SEE 剪枝）。默认关闭，因为要单独量它的收益。
+//
+// 为什么值得单独立项：我们原来的前向剪枝（futility / LMP / SEE）**只作用于安静
+// 着法**，而皮卡鱼 Step 13 对吃子和将军同样剪 —— 这正是它能把 Step 16（LMR）
+// 对吃子一视同仁地削减的前提（详见 `lmr2` 的注释：去掉「只削安静着法」的门会
+// 让坏吃子被削到 1 层、节点 +22.8×）。也就是说：**这两处剪枝是 LMR 整块移植
+// 的前置条件**，而它本身也是我们剪枝链里缺的一块。
+//
+// ⚠️⚠️ **实测（2026-09-18）：净亏，默认关闭；而且两半各自都亏。**
+//
+//	8 个局面固定深度合计（基线 → 只开 futility → 连吃子 SEE 一起开）：
+//	  d6  −7.7% → −7.7%
+//	  d8  +6.4% → +5.4%
+//	  d10 +4.0% → +0.5%
+//	  d12 **+22.4%** → +28.0%
+//
+// 逐局面看，两个版本各自只炸**一个**局面、而且不是同一个：
+//
+//	吃子 futility → 中局（子力互缠）170,483 → **263,483（+55%）**，其余逐位不变
+//	吃子 SEE     → 初始局面      120,833 → **170,435（+41%）**，其余逐位不变
+//
+// ⇒ 两个解释（都是「这套剪枝需要配套」的同一件事）：
+//
+//	① 我们的搜索对「静态评估 + 余量」的依赖比皮卡鱼弱：被剪掉的吃子里有不少
+//	   其实是**能给出 beta 截断的那一步**，剪掉它之后后面的着法反而全都要搜。
+//	② SEE「每个吃子都算一遍」的成本在本项目早已实测大于收益（见 `seeQuietEnabled`
+//	   处的记录），而这里比静的那一处更贵（吃子在排序里靠前，先被问到）。
+//
+// ⚠️ 另：`TestForwardPruningFidelity` 在这个改动上**先抓到一个越界 panic** ——
+// `PieceAt90` 返回的是带颜色位的编码（0..15），必须过 `game.TypeOf` 才能当
+// `capPieceValue` 的下标。**剪枝类改动第一件事就是跑保真度测试。**
+var capPrune = os.Getenv("QIJING_CAPP") == "on"
+
 // lmrTable[i] = int(17.4 * ln(i))，与皮卡鱼初始化循环里的
 // `reductions[i] = int(1740 / 100.0 * std::log(i))`（src/search.cpp:683）逐位同形。
 var lmrTable = func() [MaxPly]int {
@@ -245,6 +279,16 @@ const (
 
 // pieceValue 是着法排序用的子力价值，索引为 game 的棋子类型编码。
 var pieceValue = [8]int{0, 10000, 200, 200, 400, 900, 450, 100}
+
+// capPieceValue 是**评估尺度**的子力价值（索引同为 game 的棋子类型编码）。
+//
+// ⚠️ 它与 `pieceValue`（排序尺度）是两套数：车在那里是 900、这里是 1305。
+// 剪枝余量用的是评估值（`staticEval`），所以必须用这一套 —— 两边的评估输出
+// 已经对拍过（同一局面我们 4094 vs 皮卡鱼内部值 4094.6），量纲是一致的。
+//
+// 取自皮卡鱼 src/types.h：Rook 1305、Advisor 219、Cannon 773、Pawn 144、
+// Knight 720、Bishop 187；King 在它的表里是 0。
+var capPieceValue = [8]int{0, 0, 219, 187, 720, 1305, 773, 144}
 
 // deltaMargin 是静态搜索里 delta pruning 的缓冲值。
 //
@@ -1268,6 +1312,21 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			skip = !p.SeeGE(int(m.From), int(m.To), -35*lmrDepth*lmrDepth)
 		}
 
+		// 吃子的 SEE 剪枝（皮卡鱼 Step 13）：这步交换净亏太多就直接跳过。
+		// 阈值照抄皮卡鱼 `-256*depth`（它还有一项吃子历史 `captHist*34/1024`，
+		// 本项目没有吃子历史，省略 ⇒ 略保守）。
+		//
+		// ⚠️ 与静的那一处同理，**必须在落子之前算**：落子后 from 已空、to 上
+		// 是自己的子，SeeGE 的「第二层捷径」恒成立，一次都剪不到（这个坑踩过，
+		// 见上面静的着法那处的注释）。
+		//
+		// 额外挂 `seeQuietEnabled`：SEE 在本项目实测**成本大于收益**（见该开关处
+		// 的记录），而这里是「每个吃子都调一次」，比静的那一处更贵。单独打开
+		// `QIJING_CAPP` 时只吃 futility（便宜），要吃子 SEE 得再开 `QIJING_SEEQ`。
+		if !skip && capPrune && seeQuietEnabled && !isPV && !inCheck && !quiet {
+			skip = !p.SeeGE(int(m.From), int(m.To), -256*depth)
+		}
+
 		// 奇异延伸（皮卡鱼 Step 14）。**必须在落子之前**：验证搜索要的是
 		// 「拿掉这个着法之后」的局面，落子后再调用就得先撤回去。
 		//
@@ -1334,7 +1393,24 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		// 按「会白丢子」或静态评估剪掉都会漏杀（这条教训在 futility 上
 		// 已经踩过一次 —— 曾把 depth 6 的将杀剪没）。这也是唯一需要落子
 		// 才能回答的问题，所以放在 Make 之后。
-		if skip && p.InCheck(p.Turn) {
+		givesCheck := p.InCheck(p.Turn)
+		// 吃子的 futility 剪枝（皮卡鱼 Step 13 的另一半）：静态评估加上余量与
+		// 被吃子的价值仍够不到 alpha，这个吃子不可能成为最佳着法。
+		//
+		// 余量照抄皮卡鱼 `322 + 336*lmrDepth`（它还有一项吃子历史，我们省略）。
+		//
+		// ⚠️ 必须在落子之后：皮卡的条件是 `!givesCheck`，而「这步是不是将军」
+		// 只有落子后才算得准（本项目没有 `gives_check(move)` 的预计算表）。
+		// 代价是被剪掉的吃子也要付一次 Make/Unmake，但省下的是整棵子树。
+		if !skip && capPrune && !s.noForward && !isPV && !quiet && best > -Infinity &&
+			beta < MateScore-MaxPly && alpha > -MateScore+MaxPly &&
+			!givesCheck && lmrDepth < 19 &&
+			// ⚠️ `victim` 是**带颜色位**的棋子编码（0..15），必须过 `TypeOf`
+			// 才能当下标用（本项目其它处都这么写；直接下标会在吃掉黑子时越界）。
+			staticEval+322+336*lmrDepth+capPieceValue[game.TypeOf(victim)] <= alpha {
+			skip = true
+		}
+		if skip && givesCheck {
 			skip = false
 		}
 		if skip {
