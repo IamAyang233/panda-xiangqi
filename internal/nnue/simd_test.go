@@ -1,6 +1,7 @@
 package nnue
 
 import (
+	"math"
 	"math/rand"
 	"os"
 	"testing"
@@ -68,6 +69,60 @@ func TestSIMDMatchesScalar(t *testing.T) {
 			}
 		}
 	})
+
+	// ---- PSQT 行（16 个 int32）----
+	//
+	// 与上面的 int16 累加器是另一套内核：输入是 int32 而不是 int8，
+	// 一次覆盖 2 个 YMM 而不是 8 轮循环。这里额外把 int32 的环绕边界钉住 ——
+	// 标量与 VPADDD 都按二进制补码环绕，绝不能换成带饱和的指令（那会在
+	// 累加器接近边界时静默钳位，而平时完全看不出来）。
+	psqtW := make([]int32, PSQTBuckets)
+	for i := range psqtW {
+		psqtW[i] = int32(rng.Intn(1<<31) - 1<<30)
+	}
+	psqtW[0], psqtW[1] = math.MinInt32, math.MaxInt32
+
+	var psqtBase [PSQTBuckets]int32
+	for i := range psqtBase {
+		psqtBase[i] = int32(rng.Intn(2001) - 1000)
+	}
+	// 让低 4 个通道从一开始就贴着边界，必定发生环绕。
+	psqtBase[0], psqtBase[2] = math.MinInt32, math.MaxInt32
+
+	t.Run("psqt-add", func(t *testing.T) {
+		got, want := psqtBase, psqtBase
+		psqtAddAVX2(&got, psqtW)
+		psqtAddScalar(&want, psqtW)
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("第 %d 项不一致：AVX2=%d 标量=%d（权重 %d）",
+					i, got[i], want[i], psqtW[i])
+			}
+		}
+	})
+
+	t.Run("psqt-sub", func(t *testing.T) {
+		got, want := psqtBase, psqtBase
+		psqtSubAVX2(&got, psqtW)
+		psqtSubScalar(&want, psqtW)
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("第 %d 项不一致：AVX2=%d 标量=%d（权重 %d）",
+					i, got[i], want[i], psqtW[i])
+			}
+		}
+	})
+
+	t.Run("psqt-add-then-sub-roundtrip", func(t *testing.T) {
+		got := psqtBase
+		psqtAddAVX2(&got, psqtW)
+		psqtSubAVX2(&got, psqtW)
+		for i := range got {
+			if got[i] != psqtBase[i] {
+				t.Fatalf("第 %d 项往返后未还原：%d != %d", i, got[i], psqtBase[i])
+			}
+		}
+	})
 }
 
 // TestDetectAVX2Sanity 确认检测函数本身能给出结论（本机应当支持 AVX2）。
@@ -102,6 +157,38 @@ func BenchmarkAddAVX2(b *testing.B) {
 		b.Skip("无 AVX2")
 	}
 	benchAdd(b, addI16AVX2)
+}
+
+// benchPsqt 量「一条特征的 PSQT 向量更新」。
+//
+// 表取 1<<20 个 int32（4MB，与真实 Psqt 同量级）：它常驻 L3 而不是 L1，
+// 所以数字里同时含 uop 数与 L3 延迟两种成分，比全部放 L1 更贴近实际。
+func benchPsqt(b *testing.B, fn func(*[PSQTBuckets]int32, []int32)) {
+	const total = 1 << 20
+	src := make([]int32, total)
+	for i := range src {
+		src[i] = int32(i % 251)
+	}
+	var dst [PSQTBuckets]int32
+	rng := rand.New(rand.NewSource(7))
+	idxs := make([]int, 8192)
+	for i := range idxs {
+		idxs[i] = rng.Intn(total/PSQTBuckets-1) * PSQTBuckets
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		base := idxs[i&8191]
+		fn(&dst, src[base:base+PSQTBuckets])
+	}
+}
+
+func BenchmarkPsqtRowScalar(b *testing.B) { benchPsqt(b, psqtAddScalar) }
+
+func BenchmarkPsqtRowAVX2(b *testing.B) {
+	if !UsesAVX2() {
+		b.Skip("无 AVX2")
+	}
+	benchPsqt(b, psqtAddAVX2)
 }
 
 // BenchmarkApplyIncrementalSIMD 端到端对比：整条累加器增量更新的耗时。

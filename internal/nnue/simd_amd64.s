@@ -120,3 +120,43 @@ TEXT ·maddubsProbe(SB), NOSPLIT, $0-72
 	VMOVDQU Y1, (DX)
 	VZEROUPPER
 	RET
+
+// func psqtAddAVX2(dst *[PSQTBuckets]int32, src []int32)
+//
+// dst[k] += src[k]，k = 0..15。一条特征除 1024 通道的累加器外还要维护这 16 个
+// int32 的 PSQT 向量；16 个 int32 ＝ 64 字节 ＝ 恰好 2 个 YMM，所以一次调用
+// 只需 2 条 VPADDD。
+//
+// int32 的环绕语义在向量与标量下完全一致（无饱和、无浮点舍入），所以这里
+// 不需要像 VPMADDUBSW 那样担心语义差异，结果与 psqtAddScalar 逐位相同。
+//
+// 展开成直线代码而不是循环：只有 2 个块，循环开销比本体还大。
+TEXT ·psqtAddAVX2(SB), NOSPLIT, $0-32
+	MOVQ dst+0(FP), DI
+	MOVQ src_base+8(FP), SI
+	VMOVDQU (SI), Y0
+	VPADDD  (DI), Y0, Y0
+	VMOVDQU Y0, (DI)
+	VMOVDQU 32(SI), Y1
+	VPADDD  32(DI), Y1, Y1
+	VMOVDQU Y1, 32(DI)
+	VZEROUPPER
+	RET
+
+// func psqtSubAVX2(dst *[PSQTBuckets]int32, src []int32)
+//
+// dst[k] -= src[k]。VPSUBD 的语义是 dst = src2 - src1，所以作为被减数的
+// 累加器要写在中间那个操作数上，否则方向会反（与 subI16AVX2 同一个坑）。
+TEXT ·psqtSubAVX2(SB), NOSPLIT, $0-32
+	MOVQ dst+0(FP), DI
+	MOVQ src_base+8(FP), SI
+	VMOVDQU (SI), Y2
+	VMOVDQU (DI), Y0
+	VPSUBD  Y2, Y0, Y0
+	VMOVDQU Y0, (DI)
+	VMOVDQU 32(SI), Y3
+	VMOVDQU 32(DI), Y1
+	VPSUBD  Y3, Y1, Y1
+	VMOVDQU Y1, 32(DI)
+	VZEROUPPER
+	RET

@@ -16,3 +16,7 @@ func SIMDStatus() string { return "标量（当前架构无 SIMD 内核，如 ar
 func addI16(acc *[L1]int16, w8 []byte) { addI16Scalar(acc, w8) }
 
 func subI16(acc *[L1]int16, w8 []byte) { subI16Scalar(acc, w8) }
+
+func psqtAdd(dst *[PSQTBuckets]int32, src []int32) { psqtAddScalar(dst, src) }
+
+func psqtSub(dst *[PSQTBuckets]int32, src []int32) { psqtSubScalar(dst, src) }

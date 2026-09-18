@@ -179,36 +179,28 @@ func psqAdd(a *Accumulator, w *Weights, c, idx int) {
 	base := idx * L1
 	addI16(&a.PsqAcc[c], w.W[base:base+L1])
 	base = psqPsqtBase + idx*PSQTBuckets
-	for k := 0; k < PSQTBuckets; k++ {
-		a.PsqPsqt[c][k] += w.Psqt[base+k]
-	}
+	psqtAdd(&a.PsqPsqt[c], w.Psqt[base:base+PSQTBuckets])
 }
 
 func psqSub(a *Accumulator, w *Weights, c, idx int) {
 	base := idx * L1
 	subI16(&a.PsqAcc[c], w.W[base:base+L1])
 	base = psqPsqtBase + idx*PSQTBuckets
-	for k := 0; k < PSQTBuckets; k++ {
-		a.PsqPsqt[c][k] -= w.Psqt[base+k]
-	}
+	psqtSub(&a.PsqPsqt[c], w.Psqt[base:base+PSQTBuckets])
 }
 
 func thrAdd(a *Accumulator, w *Weights, c, idx int) {
 	base := idx * L1
 	addI16(&a.ThrAcc[c], w.ThreatW[base:base+L1])
 	base = idx * PSQTBuckets
-	for k := 0; k < PSQTBuckets; k++ {
-		a.ThrPsqt[c][k] += w.Psqt[base+k]
-	}
+	psqtAdd(&a.ThrPsqt[c], w.Psqt[base:base+PSQTBuckets])
 }
 
 func thrSub(a *Accumulator, w *Weights, c, idx int) {
 	base := idx * L1
 	subI16(&a.ThrAcc[c], w.ThreatW[base:base+L1])
 	base = idx * PSQTBuckets
-	for k := 0; k < PSQTBuckets; k++ {
-		a.ThrPsqt[c][k] -= w.Psqt[base+k]
-	}
+	psqtSub(&a.ThrPsqt[c], w.Psqt[base:base+PSQTBuckets])
 }
 
 // forEachThreat 枚举某视角下所有激活的威胁特征索引。

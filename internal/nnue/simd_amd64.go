@@ -13,6 +13,12 @@ func addI16AVX2(acc *[L1]int16, w8 []byte)
 func subI16AVX2(acc *[L1]int16, w8 []byte)
 
 //go:noescape
+func psqtAddAVX2(dst *[PSQTBuckets]int32, src []int32)
+
+//go:noescape
+func psqtSubAVX2(dst *[PSQTBuckets]int32, src []int32)
+
+//go:noescape
 func cpuid(eax, ecx uint32) (a, b, c, d uint32)
 
 //go:noescape
@@ -92,4 +98,22 @@ func subI16(acc *[L1]int16, w8 []byte) {
 		return
 	}
 	subI16Scalar(acc, w8)
+}
+
+// psqtAdd 把一条特征的 PSQT 向量累加到累加器的同名向量上。
+func psqtAdd(dst *[PSQTBuckets]int32, src []int32) {
+	if useAVX2 {
+		psqtAddAVX2(dst, src)
+		return
+	}
+	psqtAddScalar(dst, src)
+}
+
+// psqtSub 是 psqtAdd 的减版本。
+func psqtSub(dst *[PSQTBuckets]int32, src []int32) {
+	if useAVX2 {
+		psqtSubAVX2(dst, src)
+		return
+	}
+	psqtSubScalar(dst, src)
 }

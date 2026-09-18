@@ -38,3 +38,31 @@ func subI16Scalar(acc *[L1]int16, w8 []byte) {
 		acc[i+3] -= int16(int8(w8[i+3]))
 	}
 }
+
+// PSQT 行的标量参考实现（无 AVX2 时兜底）。
+//
+// 一条特征除 1024 通道的累加器外，还要更新 PSQTBuckets（16）个 int32 的
+// PSQT 向量。Go 不做自动向量化，这段 16 次迭代的循环在汇编里是 64 条标量
+// 指令（载入/加/存各 16）；而 16 个 int32 恰好是 64 字节 ＝ 2 个 YMM，
+// 有 AVX2 时可用 2 条 VPADDD 做完。
+//
+// ⚠️ 汇编内核把「2 个 YMM = 16 个 int32」写死了，PSQTBuckets 一改就会静默
+// 只算一半（不会越界、不会报错，只是评估值悄悄变偏）。下面两个零长数组
+// 当编译期断言用：任一为负长度都会编译失败。
+var (
+	_ [PSQTBuckets - 16]struct{}
+	_ [16 - PSQTBuckets]struct{}
+)
+
+func psqtAddScalar(dst *[PSQTBuckets]int32, src []int32) {
+	for k := 0; k < PSQTBuckets; k++ {
+		dst[k] += src[k]
+	}
+}
+
+// psqtSubScalar 是 psqtAddScalar 的减版本。
+func psqtSubScalar(dst *[PSQTBuckets]int32, src []int32) {
+	for k := 0; k < PSQTBuckets; k++ {
+		dst[k] -= src[k]
+	}
+}
