@@ -82,7 +82,8 @@ func (w *Weights) Apply(p *Position, a *Accumulator) {
 			if diagOn {
 				rebPSQ(stale, a, c, bucket, mirror)
 			}
-			w.rebuildPSQ(p, a, c, bucket, mirror)
+			// 不是整表重建：桶/镜像变过的地方按 (桶, 镜像) 缓存，只补差集。
+			w.refreshPSQ(p, a, c, bucket, mirror)
 		}
 
 		if !stale && a.valid[c] && a.mirror[c] == mirror &&

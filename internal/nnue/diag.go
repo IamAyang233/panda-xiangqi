@@ -33,7 +33,7 @@ type DiagStats struct {
 	MaxWindow     int   // pendingThreats 峰值长度
 	RebuildThreat int64 // rebuildThreats 调用次数（每个视角一次）
 	RebuildFeat   int64 // rebuildThreats 枚举到的威胁特征总数
-	RebuildPSQ    int64 // rebuildPSQ 调用次数
+	RebuildPSQ    int64 // 未走增量路径的视角次数（整表重建 + 缓存差集）
 	RebuildPiece  int64 // rebuildPSQ 累加的棋子特征总数
 	ApplyEntries  int64 // applyThreats 实际消费的条目总数
 	ApplyPieces   int64 // applyPSQ 实际消费的棋子条目总数
@@ -42,7 +42,9 @@ type DiagStats struct {
 	//
 	// 重建（rebuildPSQ + rebuildThreats）实测占全机 12.7%，是特征链路里
 	// 除 applyThreats 之外最大的一块。但它是不是「可省的」取决于触发原因：
-	// 桶/镜像变化与首帧是设计代价，脏窗口超限才可能与 pendingLimit 有关。
+	// 首帧确实是设计代价，脏窗口超限与 pendingLimit 有关；
+	// ⚠️ 而桶/镜像变化**不是**设计代价 —— PSQ 侧已由 (桶, 镜像) 缓存
+	// 化解（见 psqcache.go），看 PSQCacheHit/Miss 判断它有没有起作用。
 	// 没有这张分解表就没法判断该往哪使劲。
 	RebStale    int64 // 局面被标记为脏（stale）
 	RebInvalid  int64 // 累加器尚未建立（首帧）
@@ -50,6 +52,11 @@ type DiagStats struct {
 	RebMirror   int64 // 镜像变化（跨中线）
 	RebPieceWin int64 // PSQ 侧棋子脏窗口超限
 	RebThrWin   int64 // 威胁侧脏窗口超限
+
+	// PSQ 的 (桶, 镜像) 缓存命中情况（见 psqcache.go）。
+	// 命中率低说明搜索里桶变化太散，缓存没起作用。
+	PSQCacheHit  int64 // 命中缓存、只补差集
+	PSQCacheMiss int64 // 未命中，整表重建
 }
 
 // rebPSQ 分类记录 PSQ 侧走全量重建的原因（只在 diagOn 时调用）。

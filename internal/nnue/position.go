@@ -62,6 +62,10 @@ type Position struct {
 	// stale 表示累加器相对当前局面已失效，下次更新必须走全量重建。
 	stale bool
 
+	// psqCache 见 psqcache.go：桶/镜像变化时按 (桶, 镜像) 复用 PSQ 累加器，
+	// 避免把 31.6 行整表重算。随局面走（自洽缓存，无需失效）。
+	psqCache *psqCache
+
 	// suppressDirty 非零时 updateThreats 直接返回（局面照常更新）。
 	// 用于回滚路径：常规回退产生的脏信息会被 pending 截断丢弃，
 	// 白算一遍；只有「累加器正好停在回滚前局面」时才需要留下它。
