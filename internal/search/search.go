@@ -1547,6 +1547,22 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 	return best
 }
 
+// lmrMinIndex 是 LMR 开始生效的着法序号（0 基）—— 即「前几个着法不削减」。
+//
+// ⚠️ 皮卡鱼用的是 `moveCount > 1`，也就是**从第 2 个着法（index>=1）就开始削减**；
+// 本项目一直是 index>=4。逐层对照（2026-09-19）显示我们的树从 depth 4 起就比对手
+// 重，怀疑过「前几个着法不削减」是原因，于是把它做成变量扫过一遍：
+//
+//	lmrMinIndex   到 d12 的累计走子   相对基线
+//	4（现状）          296,002          —
+//	3                  366,466        +23.8%
+//	2                  303,886         +2.7%
+//	1                  300,561         +1.5%
+//
+// ⇒ **现状最优，假设被证否**。注意它是**非单调**的（3 比 2 和 4 都差），说明树形
+// 对这个常量相当敏感，不能按「越小越好」的直觉推。守卫见 `TestLmrIndexSweep`。
+var lmrMinIndex = 4
+
 // reduction 计算后期着法削减量（LMR）。返回 0 表示不削减。
 //
 // 只削减“安静着法”（非吃子）：吃子着法价值高、容错低，削减容易漏掉战术。
@@ -1562,7 +1578,7 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 // 就用全深重搜」，削过头会让更多着法在浅层通过、触发更多全深重搜，多出来的
 // 节点超过削减省下的。要再动这个公式，先量这三项，别只凭对数式更“标准”。
 func (s *Searcher) reduction(depth, index int, victim byte, inCheck bool) int {
-	if depth < 3 || index < 4 || victim != game.Empty || inCheck {
+	if depth < 3 || index < lmrMinIndex || victim != game.Empty || inCheck {
 		return 0
 	}
 	red := 1 + index/8
