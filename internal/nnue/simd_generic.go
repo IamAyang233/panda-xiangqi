@@ -22,11 +22,16 @@ func psqtAdd(dst *[PSQTBuckets]int32, src []int32) { psqtAddScalar(dst, src) }
 func psqtSub(dst *[PSQTBuckets]int32, src []int32) { psqtSubScalar(dst, src) }
 
 // addRows2Fused 在非 amd64 上退回两次标量单行调用（没有对应内核）。
-func addRows2Fused(acc *[L1]int16, w1, w2 []byte, sub2 bool) {
-	addI16(acc, w1)
-	if sub2 {
+func addRows2Fused(acc *[L1]int16, w1, w2 []byte, mode uint8) {
+	switch mode {
+	case rowSubSub:
+		subI16(acc, w1)
 		subI16(acc, w2)
-	} else {
+	case rowAddAdd:
+		addI16(acc, w1)
 		addI16(acc, w2)
+	default:
+		addI16(acc, w1)
+		subI16(acc, w2)
 	}
 }

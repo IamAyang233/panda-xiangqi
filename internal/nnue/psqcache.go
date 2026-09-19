@@ -158,14 +158,26 @@ func (w *Weights) refreshPSQ(p *Position, a *Accumulator, c, bucket int, mirror 
 			for k := 0; k < pair; k++ {
 				psqPairAddSub(a, w, c, int(addIdx[k]), int(subIdx[k]))
 			}
-			for k := pair; k < na; k++ {
+			// 零头里的同方向也凑成对（与 applyPSQ 同一套：两个加 / 两个减各一趟）。
+			twoAdd, twoSub := 0, 0
+			if useRowPairing && useSamePair {
+				twoAdd = (na - pair) / 2
+				twoSub = (ns - pair) / 2
+			}
+			for k := 0; k < twoAdd; k++ {
+				psqPairSameAdd(a, w, c, int(addIdx[pair+2*k]), int(addIdx[pair+2*k+1]))
+			}
+			for k := 0; k < twoSub; k++ {
+				psqPairSameSub(a, w, c, int(subIdx[pair+2*k]), int(subIdx[pair+2*k+1]))
+			}
+			for k := pair + 2*twoAdd; k < na; k++ {
 				if diagOn {
 					diagStats.SingleRows++
 					diagStats.SingleAddRows++
 				}
 				psqAdd(a, w, c, int(addIdx[k]))
 			}
-			for k := pair; k < ns; k++ {
+			for k := pair + 2*twoSub; k < ns; k++ {
 				if diagOn {
 					diagStats.SingleRows++
 					diagStats.SingleSubRows++

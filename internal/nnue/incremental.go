@@ -170,14 +170,26 @@ func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bo
 	for k := 0; k < pair; k++ {
 		psqPairAddSub(a, w, c, int(addIdx[k]), int(subIdx[k]))
 	}
-	for k := pair; k < na; k++ {
+	// 零头里的同方向也凑成对（与 applyThreats 同一套：两个加 / 两个减各一趟）。
+	twoAdd, twoSub := 0, 0
+	if useRowPairing && useSamePair {
+		twoAdd = (na - pair) / 2
+		twoSub = (ns - pair) / 2
+	}
+	for k := 0; k < twoAdd; k++ {
+		psqPairSameAdd(a, w, c, int(addIdx[pair+2*k]), int(addIdx[pair+2*k+1]))
+	}
+	for k := 0; k < twoSub; k++ {
+		psqPairSameSub(a, w, c, int(subIdx[pair+2*k]), int(subIdx[pair+2*k+1]))
+	}
+	for k := pair + 2*twoAdd; k < na; k++ {
 		if diagOn {
 			diagStats.SingleRows++
 			diagStats.SingleAddRows++
 		}
 		psqAdd(a, w, c, int(addIdx[k]))
 	}
-	for k := pair; k < ns; k++ {
+	for k := pair + 2*twoSub; k < ns; k++ {
 		if diagOn {
 			diagStats.SingleRows++
 			diagStats.SingleSubRows++
@@ -253,17 +265,25 @@ func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) 
 	for k := 0; k < pair; k++ {
 		thrPairAddSub(a, w, c, int(addIdx[k]), int(subIdx[k]))
 	}
-	// 零头只剩同一个方向。两个「加」还能再凑一对（内核的 add+add 模式）；
-	// 两个「减」凑不了 —— 那需要内核再加一个 `acc -= w1 + w2` 的循环体。
+	// 零头只剩同一个方向，但**还能再凑成对**：两个「加」走内核的 add+add 模式，
+	// 两个「减」走后来补的 sub+sub 模式（acc -= w1 + w2，见 simd_amd64.s）。
 	//
-	// 注意关掉配对开关时 twoAdd 必须是 0，否则零头会被「配对」成两次单行调用，
+	// 为什么要补 sub+sub：两列长度不等时多出来的那一边全是同一方向，而实测
+	// 单行零头里「减」(1.83 行/结点) 是「加」(0.65) 的 2.8 倍 —— 缺了它就只能单行走。
+	// pair = min(na, ns)，所以这两个计数至多一个非零。
+	//
+	// 注意关掉配对开关时它们必须是 0，否则零头会被「配对」成两次单行调用，
 	// 与 on 态只差内核形状、量不出配对的真实收益（这正是这个开关要区分的东西）。
-	twoAdd := 0
-	if useRowPairing {
+	twoAdd, twoSub := 0, 0
+	if useRowPairing && useSamePair {
 		twoAdd = (na - pair) / 2
+		twoSub = (ns - pair) / 2
 	}
 	for k := 0; k < twoAdd; k++ {
 		thrPairSameAdd(a, w, c, int(addIdx[pair+2*k]), int(addIdx[pair+2*k+1]))
+	}
+	for k := 0; k < twoSub; k++ {
+		thrPairSameSub(a, w, c, int(subIdx[pair+2*k]), int(subIdx[pair+2*k+1]))
 	}
 	for k := pair + 2*twoAdd; k < na; k++ {
 		if diagOn {
@@ -272,7 +292,7 @@ func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) 
 		}
 		thrAdd(a, w, c, int(addIdx[k]))
 	}
-	for k := pair; k < ns; k++ {
+	for k := pair + 2*twoSub; k < ns; k++ {
 		if diagOn {
 			diagStats.SingleRows++
 			diagStats.SingleSubRows++
@@ -297,15 +317,45 @@ func thrPairSameAdd(a *Accumulator, w *Weights, c, idx1, idx2 int) {
 	if diagOn {
 		diagStats.FusePairs++
 	}
-	if useFuseRows {
-		addRows2(&a.ThrAcc[c],
-			w.ThreatW[idx1*L1:idx1*L1+L1], w.ThreatW[idx2*L1:idx2*L1+L1], false)
-	} else {
-		addI16(&a.ThrAcc[c], w.ThreatW[idx1*L1:idx1*L1+L1])
-		addI16(&a.ThrAcc[c], w.ThreatW[idx2*L1:idx2*L1+L1])
-	}
+	rowsPairSame(&a.ThrAcc[c],
+		w.ThreatW[idx1*L1:idx1*L1+L1], w.ThreatW[idx2*L1:idx2*L1+L1], rowAddAdd)
 	psqtAdd(&a.ThrPsqt[c], w.Psqt[idx1*PSQTBuckets:(idx1+1)*PSQTBuckets])
 	psqtAdd(&a.ThrPsqt[c], w.Psqt[idx2*PSQTBuckets:(idx2+1)*PSQTBuckets])
+}
+
+// thrPairSameSub 把两条「减」合成一趟（acc -= w1 + w2）：内核的模式 2。
+func thrPairSameSub(a *Accumulator, w *Weights, c, idx1, idx2 int) {
+	if diagOn {
+		diagStats.FusePairs++
+		diagStats.FusePairsSub++
+	}
+	rowsPairSame(&a.ThrAcc[c],
+		w.ThreatW[idx1*L1:idx1*L1+L1], w.ThreatW[idx2*L1:idx2*L1+L1], rowSubSub)
+	psqtSub(&a.ThrPsqt[c], w.Psqt[idx1*PSQTBuckets:(idx1+1)*PSQTBuckets])
+	psqtSub(&a.ThrPsqt[c], w.Psqt[idx2*PSQTBuckets:(idx2+1)*PSQTBuckets])
+}
+
+// psqPairSameAdd / psqPairSameSub 是 PSQ 侧的同方向配对。
+// PSQ 侧此前完全没有零头配对（只配了「加+减」），两个方向都补上。
+func psqPairSameAdd(a *Accumulator, w *Weights, c, idx1, idx2 int) {
+	if diagOn {
+		diagStats.FusePairs++
+	}
+	rowsPairSame(&a.PsqAcc[c],
+		w.W[idx1*L1:idx1*L1+L1], w.W[idx2*L1:idx2*L1+L1], rowAddAdd)
+	psqtAdd(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+idx1*PSQTBuckets:psqPsqtBase+(idx1+1)*PSQTBuckets])
+	psqtAdd(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+idx2*PSQTBuckets:psqPsqtBase+(idx2+1)*PSQTBuckets])
+}
+
+func psqPairSameSub(a *Accumulator, w *Weights, c, idx1, idx2 int) {
+	if diagOn {
+		diagStats.FusePairs++
+		diagStats.FusePairsSub++
+	}
+	rowsPairSame(&a.PsqAcc[c],
+		w.W[idx1*L1:idx1*L1+L1], w.W[idx2*L1:idx2*L1+L1], rowSubSub)
+	psqtSub(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+idx1*PSQTBuckets:psqPsqtBase+(idx1+1)*PSQTBuckets])
+	psqtSub(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+idx2*PSQTBuckets:psqPsqtBase+(idx2+1)*PSQTBuckets])
 }
 
 // applyThreatsSimple 是逐条处理的兜底路径，只在脏窗口超出栈上索引数组容量时
@@ -395,6 +445,21 @@ func thrSub(a *Accumulator, w *Weights, c, idx int) {
 	psqtSub(&a.ThrPsqt[c], w.Psqt[base:base+PSQTBuckets])
 }
 
+// useSamePair 决定零头里**同方向**的行要不要再凑成对（两个加 / 两个减）。
+//
+// 它是**测量用开关**，而且与 useRowPairing 不互相依赖 —— 关掉它之后「加+减」
+// 配对照常工作，所以「开/关」两态之间只差同方向配对这一项，能干净地量出它的
+// 边际贡献（吸取上一轮的教训：两个开关若互相塌回同一条路径，量到的就是合计
+// 而不是边际）。由 QIJING_SAMEPAIR=off 关闭。
+var useSamePair = os.Getenv("QIJING_SAMEPAIR") != "off"
+
+// SetSamePair 切换同方向配对并返回原值，供测试与基准使用。
+func SetSamePair(on bool) bool {
+	old := useSamePair
+	useSamePair = on
+	return old
+}
+
 // useRowPairing 决定要不要把成对的行合并成一次调用。
 //
 // 它是**测量用开关**：关掉之后配对结构仍在，只是每对退回两次单行调用 ——
@@ -426,11 +491,31 @@ func pairCount(na, ns int) int {
 // 只是慢一点。A/B 要靠这个开关在同一份二进制里切两态。
 func rowsPairAddSub(acc *[L1]int16, wAdd, wSub []byte) {
 	if useFuseRows {
-		addRows2(acc, wAdd, wSub, true)
+		addRows2(acc, wAdd, wSub, rowAddSub)
 		return
 	}
 	addI16(acc, wAdd)
 	subI16(acc, wSub)
+}
+
+// rowsPairSame 把**同方向**的两行合成一趟：mode 为 rowAddAdd 时 acc += w1+w2，
+// 为 rowSubSub 时 acc -= w1+w2。
+//
+// 存在的原因是零头配对：两列长度不等时，多的那一边剩下的全是同一方向，
+// 它们**还能再凑成对**（只要不少于两条）。两个「加」本就共用模式 0；
+// 两个「减」需要模式 2 —— 那是汇编里后来补的一个循环体。
+func rowsPairSame(acc *[L1]int16, w1, w2 []byte, mode uint8) {
+	if useFuseRows {
+		addRows2(acc, w1, w2, mode)
+		return
+	}
+	if mode == rowSubSub {
+		subI16(acc, w1)
+		subI16(acc, w2)
+		return
+	}
+	addI16(acc, w1)
+	addI16(acc, w2)
 }
 
 // forEachThreat 枚举某视角下所有激活的威胁特征索引。

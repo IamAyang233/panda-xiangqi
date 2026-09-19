@@ -86,16 +86,33 @@ func psqtSubScalar(dst *[PSQTBuckets]int32, src []int32) {
 // （1220ms / 143.6 万结点 / 约 25 行每结点），而权重 L1 常驻的微基准只有
 // **21.3ns** ⇒ 约 **2/3 是执行吞吐、1/3 是访存**。两行合一消的是前者：
 // 微基准 56.8 → 37.6ns（−34%）。后者预取不掉（整行版净亏、轻剂量版 1.003~1.012）。
-func addRows2(acc *[L1]int16, w1, w2 []byte, sub2 bool) {
+// 两行合一内核的三种模式（决定 acc 怎么被这两行更新）。
+//
+// 模式 0 与 2 是后来补的：零头配对后，同方向的行也能成对了 ——
+// 「两个加」走 0、「两个减」走 2，而「一加一减」（走一步棋最常见的形状）走 1。
+// 缺了 2，零头里的「减」就只能单行走，而实测单行零头里减是加的 2.8 倍。
+const (
+	rowAddAdd uint8 = 0 // acc += w1 + w2
+	rowAddSub uint8 = 1 // acc += w1 - w2
+	rowSubSub uint8 = 2 // acc -= w1 + w2
+)
+
+func addRows2(acc *[L1]int16, w1, w2 []byte, mode uint8) {
 	if useFuseRows {
-		addRows2Fused(acc, w1, w2, sub2)
+		addRows2Fused(acc, w1, w2, mode)
 		return
 	}
-	addI16(acc, w1)
-	if sub2 {
+	// 退化：退回两次单行调用，结果与合一版本逐位相同（环绕加可交换结合）。
+	switch mode {
+	case rowSubSub:
+		subI16(acc, w1)
 		subI16(acc, w2)
-	} else {
+	case rowAddAdd:
+		addI16(acc, w1)
 		addI16(acc, w2)
+	default:
+		addI16(acc, w1)
+		subI16(acc, w2)
 	}
 }
 

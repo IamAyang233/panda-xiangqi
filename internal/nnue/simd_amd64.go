@@ -13,7 +13,7 @@ func addI16AVX2(acc *[L1]int16, w8 []byte)
 func subI16AVX2(acc *[L1]int16, w8 []byte)
 
 //go:noescape
-func addRows2I16AVX2(acc *[L1]int16, w1, w2 []byte, sub2 bool)
+func addRows2I16AVX2(acc *[L1]int16, w1, w2 []byte, mode uint8)
 
 //go:noescape
 func psqtAddAVX2(dst *[PSQTBuckets]int32, src []int32)
@@ -103,9 +103,9 @@ func subI16(acc *[L1]int16, w8 []byte) {
 	subI16Scalar(acc, w8)
 }
 
-// addRows2Fused 走两行合一的 AVX2 内核（acc += w1，sub2 为真时再 − w2）。
-func addRows2Fused(acc *[L1]int16, w1, w2 []byte, sub2 bool) {
-	addRows2I16AVX2(acc, w1, w2, sub2)
+// addRows2Fused 走两行合一的 AVX2 内核，mode 见 simd.go 的 rowAddAdd/rowAddSub/rowSubSub。
+func addRows2Fused(acc *[L1]int16, w1, w2 []byte, mode uint8) {
+	addRows2I16AVX2(acc, w1, w2, mode)
 }
 
 // psqtAdd 把一条特征的 PSQT 向量累加到累加器的同名向量上。

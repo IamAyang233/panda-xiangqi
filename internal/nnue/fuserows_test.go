@@ -48,22 +48,28 @@ func TestFuseRowsKernelMatchesScalar(t *testing.T) {
 		var base [L1]int16
 		seed(&base)
 
-		for _, sub2 := range []bool{false, true} {
+		// 三种模式都要过：两个加 / 一加一减 / 两个减。
+		for _, mode := range []uint8{rowAddAdd, rowAddSub, rowSubSub} {
 			got, ref := base, base
-			addRows2Fused(&got, r1, r2, sub2)
+			addRows2Fused(&got, r1, r2, mode)
 
-			addI16(&ref, r1)
-			if sub2 {
+			switch mode {
+			case rowSubSub:
+				subI16(&ref, r1)
 				subI16(&ref, r2)
-			} else {
+			case rowAddAdd:
+				addI16(&ref, r1)
 				addI16(&ref, r2)
+			default:
+				addI16(&ref, r1)
+				subI16(&ref, r2)
 			}
 
 			if got != ref {
 				for k := 0; k < L1; k++ {
 					if got[k] != ref[k] {
-						t.Fatalf("融合与单行不一致：行 %d/%d sub2=%v，首个差异 k=%d 融合=%d 单行=%d",
-							a1, a2, sub2, k, got[k], ref[k])
+						t.Fatalf("融合与单行不一致：行 %d/%d mode=%d，首个差异 k=%d 融合=%d 单行=%d",
+							a1, a2, mode, k, got[k], ref[k])
 					}
 				}
 			}

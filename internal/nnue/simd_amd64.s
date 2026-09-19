@@ -161,9 +161,19 @@ TEXT ·psqtSubAVX2(SB), NOSPLIT, $0-32
 	VZEROUPPER
 	RET
 
-// func addRows2I16AVX2(acc *[L1]int16, w1, w2 []byte, sub2 bool)
+// func addRows2I16AVX2(acc *[L1]int16, w1, w2 []byte, mode uint8)
 //
-// 把两行权重合成一趟累加到同一片累加器上：acc += w1 ± w2。
+// 把两行权重合成一趟累加到同一片累加器上，mode 决定怎么合（见 simd.go 的
+// rowAddAdd / rowAddSub / rowSubSub）：
+//
+//	0 → acc += w1 + w2   两个「加」
+//	1 → acc += w1 - w2   一加一减（走一步棋最常见的形状）
+//	2 → acc -= w1 + w2   两个「减」
+//
+// 模式 2 是 2026-09-20 补的：配对逻辑把零头里同方向的行也攒成对之后，
+// 「两个减」成了唯一还需要新循环体的形状（两个「加」走模式 0）。
+// 缺了它，零头里的「减」只能单行走 —— 实测单行零头里减(1.83/结点)是
+// 加(0.65)的 2.8 倍，正是这次要补的那一半。
 //
 // 起因是量出来的：单行版 addI16AVX2 稳定在 21.3ns/次（权重 L1 常驻的微基准）。
 // 真实搜索里按「内核总耗时 ÷ 重量行数」摊，是 **33ns/行**：
@@ -191,7 +201,9 @@ TEXT ·addRows2I16AVX2(SB), NOSPLIT, $0-57
 	MOVQ acc+0(FP), DI
 	MOVQ w1_base+8(FP), SI
 	MOVQ w2_base+32(FP), R8
-	MOVBQZX sub2+56(FP), AX
+	MOVBQZX mode+56(FP), AX
+	CMPQ AX, $2
+	JE   subBothEntry
 	TESTQ AX, AX
 	JNZ  subEntry
 
@@ -253,5 +265,50 @@ subLoop:
 	ADDQ $128, DI
 	DECQ CX
 	JNZ  subLoop
+	VZEROUPPER
+	RET
+
+// 模式 2：acc -= w1 + w2。
+//
+// 与模式 0 同样先把两行合并（VPADDW），但最后一步是「acc 减去合并结果」。
+//
+// ⚠️ 这里比模式 0/1 多 4 条载入：VEX 的 VPSUBW 只允许内存作**最后一个**源操作数，
+// 而 Go 的操作数顺序是反的（Go 的 `VPSUBW A, B, C` 对应 Intel 的 `VPSUBW C, B, A`），
+// 于是内存只能出现在 Go 的第一个操作数上 —— 那正是「减数」位。而我们要的是
+// `acc - (w1+w2)`，acc 必须落在「被减数」位，只能先进寄存器。
+// 代价：24 条 → 28 条（模式 0/1 是 24 条），对两次单行的 32 条仍省 12.5%。
+// 逐位正确性同样靠环绕加：acc - w1 - w2 与 acc - (w1+w2) 是同一个和。
+subBothEntry:
+	MOVQ $16, CX
+subBothLoop:
+	VPMOVSXBW (SI), Y0
+	VPMOVSXBW 16(SI), Y1
+	VPMOVSXBW 32(SI), Y2
+	VPMOVSXBW 48(SI), Y3
+	VPMOVSXBW (R8), Y4
+	VPMOVSXBW 16(R8), Y5
+	VPMOVSXBW 32(R8), Y6
+	VPMOVSXBW 48(R8), Y7
+	VPADDW Y4, Y0, Y0
+	VPADDW Y5, Y1, Y1
+	VPADDW Y6, Y2, Y2
+	VPADDW Y7, Y3, Y3
+	VMOVDQU (DI), Y8
+	VPSUBW  Y0, Y8, Y0
+	VMOVDQU Y0, (DI)
+	VMOVDQU 32(DI), Y8
+	VPSUBW  Y1, Y8, Y1
+	VMOVDQU Y1, 32(DI)
+	VMOVDQU 64(DI), Y8
+	VPSUBW  Y2, Y8, Y2
+	VMOVDQU Y2, 64(DI)
+	VMOVDQU 96(DI), Y8
+	VPSUBW  Y3, Y8, Y3
+	VMOVDQU Y3, 96(DI)
+	ADDQ $64, SI
+	ADDQ $64, R8
+	ADDQ $128, DI
+	DECQ CX
+	JNZ  subBothLoop
 	VZEROUPPER
 	RET
