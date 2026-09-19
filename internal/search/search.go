@@ -372,6 +372,23 @@ type Searcher struct {
 	// 一倍多 —— 这正是 2026-09-18 之前所有「等节点」跨引擎结论失真的原因。
 	makes  int64
 	ttHits int64
+	// ttEligible / ttCuts 把「置换表到底省了多少节点」量出来。
+	//
+	// 存在的理由：命中率（ttHits/probeCnt）只说表里有东西，不说它有没有用。
+	// 截断还要求 ① 表项深度 ≥ 当前剩余深度 ② 界限方向与窗口一致 ③ 非 PV
+	// ④ 不是奇异延伸的验证搜索。四条缺一就白命中一次。
+	//
+	// 实测（2026-09-19，单线程、每题清表、20 万结点预算）：
+	//
+	//	中局（子力互缠） 探测 196,896 ｜ 命中 29.9% ｜ 深度达标 28,396 ｜ 截断 23,235（11.8%）
+	//	初始局面         探测 144,674 ｜ 命中  9.1% ｜ 深度达标  4,197 ｜ 截断  3,704（ 2.6%）
+	//
+	// ⚠️ 两组数差一个数量级，因为初始局面的前向剪枝（razoring/反 futility）
+	// 在浅层就大量提前返回 —— 那些节点**从不写表**，于是重复到达也打不中。
+	// 这就是「剪枝与置换表在降低有效分支因子上相互替代」的量化版本。
+	// **不要拿一个局面的命中率代表全局。**
+	ttEligible int64 // 深度条件已满足的命中（截断候选）
+	ttCuts     int64 // 真正按表截断的次数
 	// rootDelta 是根节点的搜索窗口宽度（皮卡鱼：`rootDelta = beta - alpha`）。
 	// onIter 若非 nil，会在**每次完整迭代完成后**被调用一次。
 	//
@@ -515,6 +532,8 @@ func (s *Searcher) resetStats() {
 		qdAbNodes, qdQNodes, qdInCheck, qdDeltaCut = 0, 0, 0, 0
 	}
 	s.ttHits = 0
+	s.ttEligible = 0
+	s.ttCuts = 0
 	s.makes = 0
 	s.nullMoves = 0
 	s.probeCnt = 0
@@ -542,6 +561,12 @@ func (s *Searcher) Stop() {
 
 // TTHits 返回本次搜索的置换表命中次数。
 func (s *Searcher) TTHits() int64 { return s.ttHits }
+
+// TTEligible 返回深度条件已满足的命中次数（截断候选）。
+func (s *Searcher) TTEligible() int64 { return s.ttEligible }
+
+// TTCuts 返回真正按置换表截断的次数 —— 这才是「置换表省了多少节点」。
+func (s *Searcher) TTCuts() int64 { return s.ttCuts }
 
 // NullMoves 返回本次搜索实际尝试的空着次数。
 func (s *Searcher) NullMoves() int64 { return s.nullMoves }
@@ -946,15 +971,19 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 		// 拿它下结论等于自己证明自己，验证搜索永远判不出「奇异」。
 		if !isPV && !hasExcluded && int(e.depth) >= depth {
 			sc := scoreFromTT(e.score, ply)
+			s.ttEligible++
 			switch e.bound() {
 			case ttExact:
+				s.ttCuts++
 				return sc
 			case ttLower:
 				if sc >= beta {
+					s.ttCuts++
 					return sc
 				}
 			case ttUpper:
 				if sc <= alpha {
+					s.ttCuts++
 					return sc
 				}
 			}
@@ -1401,15 +1430,15 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			}
 		}
 
-	// 将军豁免：令对手被将的安静着法常含杀机，按静态评估或 SEE 剪掉都会漏杀
-	// （这条教训在 futility 上踩过一次 —— 曾把 depth 6 的将杀剪没）。
-	//
-	// ⚠️ 判定必须在**落子之前**：否则被剪掉的着法也要白付一次 Make/Unmake。
-	// 本项目实测 d12 中局局面上 **71.9%** 的试走是「落子即回滚」（261,690 次），
-	// 提到落子前拿到 **+22%（d60d7ec）**。皮卡鱼的 `pos.gives_check(move)` 也是
-	// 落子前算的（src/search.cpp 的 Step 15 之前），我们此前没有这个能力。
-	// ⚠️ 事前用微基准估的「上界 9.5%」明显偏低 —— 微基准只能当 go/no-go，
-	// 收益必须用同轮交替 A/B 定（见 ENGINE-PITFALLS-perf.md）。
+		// 将军豁免：令对手被将的安静着法常含杀机，按静态评估或 SEE 剪掉都会漏杀
+		// （这条教训在 futility 上踩过一次 —— 曾把 depth 6 的将杀剪没）。
+		//
+		// ⚠️ 判定必须在**落子之前**：否则被剪掉的着法也要白付一次 Make/Unmake。
+		// 本项目实测 d12 中局局面上 **71.9%** 的试走是「落子即回滚」（261,690 次），
+		// 提到落子前拿到 **+22%（d60d7ec）**。皮卡鱼的 `pos.gives_check(move)` 也是
+		// 落子前算的（src/search.cpp 的 Step 15 之前），我们此前没有这个能力。
+		// ⚠️ 事前用微基准估的「上界 9.5%」明显偏低 —— 微基准只能当 go/no-go，
+		// 收益必须用同轮交替 A/B 定（见 ENGINE-PITFALLS-perf.md）。
 		if skip && !p.GivesCheck(m) {
 			continue
 		}
