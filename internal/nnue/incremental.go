@@ -152,8 +152,9 @@ func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bo
 
 // applyThreats 按脏条目更新威胁累加器（索引只含镜像）。
 //
-// 这条路径是全项目最热的一段：一次安静中局搜索里 addI16/subI16 的调用有
-// 约 48 次/结点，合计占 30.6%，其中 applyThreats 自己占 27.6%（cum）。
+// 这条路径是全项目最热的一段：一次安静中局搜索里 addI16/subI16 合计占
+// 30.6%，其中 applyThreats 自己占 27.6%（cum）；每结点约 25 行权重
+// （威胁增量 17.4 + PSQ 增量 5.5 + 重建 2.5，均实测）。
 //
 // 条目天然是成对出现的 —— 走一步会产生「这些关系没了」和「那些关系有了」——
 // 正好喂给两行合一的内核（见 addRows2）。所以这里先把条目按方向分成两列，
