@@ -133,3 +133,50 @@ func BenchmarkFC0AVX2(b *testing.B) {
 	}
 	benchFC0(b, fc0AVX2)
 }
+
+// fc0AVX2x8 直接跑 8 输出内核（累加 + 汇编里的水平求和），绕开运行时分发。
+func fc0AVX2x8(out *[8]int32, w []byte, feat *[L1]byte) {
+	var acc [8][8]int32
+	fc0Accum8(&acc, w, feat)
+	fc0Reduce8AVX2(out, &acc)
+}
+
+// TestFC0Block8MatchesScalar 是 8 输出内核的正确性关卡。
+//
+// 与 4 输出版同样盯三件事：符号扩展方向（写成无符号会让负权重变大正数）、
+// VPMADDUBSW 的饱和边界（激活必须 ≤127）、以及**水平求和分组顺序的变化
+// 不影响结果**（int32 环绕加满足交换结合律，且上界 16.5M 远不溢出）。
+func TestFC0Block8MatchesScalar(t *testing.T) {
+	if !UsesAVX2() {
+		t.Skip("当前 CPU/OS 不支持 AVX2，跳过")
+	}
+
+	rng := rand.New(rand.NewSource(20260920))
+	w := make([]byte, 8*L1)
+	for i := range w {
+		w[i] = byte(int8(rng.Intn(256) - 128))
+	}
+	// 符号与边界极值：-128 / +127 / -1 / 0 各来一个。
+	w[0], w[1], w[L1], w[L1+1] = 0x80, 0x7f, 0xff, 0x00
+	w[7*L1], w[7*L1+L1-1] = 0x80, 0x7f
+
+	feat := new([L1]byte)
+	for i := range feat {
+		feat[i] = byte(rng.Intn(128)) // 0..127
+	}
+	feat[0], feat[1], feat[L1-1] = 127, 0, 127
+
+	var got, want [8]int32
+	fc0AVX2x8(&got, w, feat)
+	fc0Block8Scalar(&want, w, feat)
+
+	for j := 0; j < 8; j++ {
+		if got[j] != want[j] {
+			t.Errorf("输出 %d 不一致：AVX2=%d 标量=%d", j, got[j], want[j])
+		}
+	}
+	if t.Failed() {
+		return
+	}
+	t.Logf("8 个输出全部一致：%v", got)
+}

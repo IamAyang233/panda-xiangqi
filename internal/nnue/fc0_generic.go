@@ -8,3 +8,8 @@ package nnue
 func fc0Block4(out *[4]int32, w []byte, feat *[L1]byte) {
 	fc0Block4Scalar(out, w, feat)
 }
+
+// fc0Block8 在非 amd64 上直接走标量（没有对应内核）。
+func fc0Block8(out *[8]int32, w []byte, feat *[L1]byte) {
+	fc0Block8Scalar(out, w, feat)
+}

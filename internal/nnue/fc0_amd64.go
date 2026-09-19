@@ -7,6 +7,25 @@ package nnue
 //go:noescape
 func fc0Accum4(acc *[4][8]int32, w []byte, feat *[L1]byte)
 
+//go:noescape
+func fc0Accum8(acc *[8][8]int32, w []byte, feat *[L1]byte)
+
+//go:noescape
+func fc0Reduce8AVX2(out *[8]int32, acc *[8][8]int32)
+
+// fc0Block8 计算 8 个相邻输出的点积（AVX2 内核 + 汇编里的水平求和）。
+//
+// 没有 AVX2 时退回标量参考实现；FC0Out 不是 8 的倍数时调用方走 fc0Block4。
+func fc0Block8(out *[8]int32, w []byte, feat *[L1]byte) {
+	if useAVX2 {
+		var acc [8][8]int32
+		fc0Accum8(&acc, w, feat)
+		fc0Reduce8AVX2(out, &acc)
+		return
+	}
+	fc0Block8Scalar(out, w, feat)
+}
+
 // fc0Block4 计算 4 个相邻输出的点积。
 //
 // AVX2 内核只做热循环并留下 8 个 i32 通道，水平求和（32 次加法）在这里完成：

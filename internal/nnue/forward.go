@@ -145,17 +145,35 @@ func (w *Weights) EvalValueAt(p *Position, a *Accumulator) int32 {
 // 慢 30%：稀疏索引破坏了 row 的顺序访问，cache 局部性损失超过省下的乘法。
 func (ls *LayerStack) propagate(feat *[L1]byte) int32 {
 	var fc0 [FC0Out]int32
-	for j := 0; j < FC0Out; j += 4 {
-		b0 := j * FC0PaddedIn
-		w := ls.FC0W[b0 : b0+4*FC0PaddedIn]
+	if FC0Out%8 == 0 && useFC0Block8 {
+		// 8 个输出共用一趟：每 256 次乘加 28 条指令（4 输出版是 32 条），
+		// 且水平求和也在汇编里做完。FC0Out = 16 恰好整除 8 ⇒ 每次评估 2 趟。
+		for j := 0; j < FC0Out; j += 8 {
+			b0 := j * FC0PaddedIn
+			w := ls.FC0W[b0 : b0+8*FC0PaddedIn]
 
-		var s [4]int32
-		fc0Block4(&s, w, feat)
+			var s [8]int32
+			fc0Block8(&s, w, feat)
 
-		fc0[j] = s[0] + ls.FC0Bias[j]
-		fc0[j+1] = s[1] + ls.FC0Bias[j+1]
-		fc0[j+2] = s[2] + ls.FC0Bias[j+2]
-		fc0[j+3] = s[3] + ls.FC0Bias[j+3]
+			for k := 0; k < 8; k++ {
+				fc0[j+k] = s[k] + ls.FC0Bias[j+k]
+			}
+		}
+	} else {
+		// FC0Out 不是 8 的倍数时退回 4 输出版（当前网络不会走到，
+		// 留着是为了换网络结构时不会越界读）。
+		for j := 0; j < FC0Out; j += 4 {
+			b0 := j * FC0PaddedIn
+			w := ls.FC0W[b0 : b0+4*FC0PaddedIn]
+
+			var s [4]int32
+			fc0Block4(&s, w, feat)
+
+			fc0[j] = s[0] + ls.FC0Bias[j]
+			fc0[j+1] = s[1] + ls.FC0Bias[j+1]
+			fc0[j+2] = s[2] + ls.FC0Bias[j+2]
+			fc0[j+3] = s[3] + ls.FC0Bias[j+3]
+		}
 	}
 
 	// SqrClippedReLU 与 ClippedReLU 拼接成 fc_1 的输入。
