@@ -1401,32 +1401,38 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			}
 		}
 
+		// 将军豁免：令对手被将的安静着法常含杀机，按静态评估或 SEE 剪掉都会漏杀
+		// （这条教训在 futility 上踩过一次 —— 曾把 depth 6 的将杀剪没）。
+		//
+		// ⚠️ 判定必须在**落子之前**：否则被剪掉的着法也要白付一次 Make/Unmake。
+		// 本项目实测 d12 中局局面上 **71.9%** 的试走是「落子即回滚」，单对成本
+		// 240ns ⇒ 占整次搜索 **9.5%**。皮卡鱼的 `pos.gives_check(move)` 也是落子前算的
+		// （src/search.cpp 的 Step 15 之前），我们此前没有这个能力，只能先 Make。
+		if skip && !p.GivesCheck(m) {
+			continue
+		}
+		// 走到这里有两种情况：本来就没被剪；或者被剪了但确实是将军 ⇒ 放行
+		// （与旧代码的 `if skip && givesCheck { skip = false }` 等价）。
+		skip = false
+
 		p.Make(m)
 		s.pos.Make(int(m.From), int(m.To))
 
-		// 将军豁免对 SEE 与前向剪枝都生效：令对手被将的安静着法常含杀机，
-		// 按「会白丢子」或静态评估剪掉都会漏杀（这条教训在 futility 上
-		// 已经踩过一次 —— 曾把 depth 6 的将杀剪没）。这也是唯一需要落子
-		// 才能回答的问题，所以放在 Make 之后。
-		givesCheck := p.InCheck(p.Turn)
 		// 吃子的 futility 剪枝（皮卡鱼 Step 13 的另一半）：静态评估加上余量与
 		// 被吃子的价值仍够不到 alpha，这个吃子不可能成为最佳着法。
 		//
 		// 余量照抄皮卡鱼 `322 + 336*lmrDepth`（它还有一项吃子历史，我们省略）。
 		//
-		// ⚠️ 必须在落子之后：皮卡的条件是 `!givesCheck`，而「这步是不是将军」
-		// 只有落子后才算得准（本项目没有 `gives_check(move)` 的预计算表）。
-		// 代价是被剪掉的吃子也要付一次 Make/Unmake，但省下的是整棵子树。
+		// 这一支**默认关闭**（`QIJING_CAPP`），所以留在落子之后：它要问的同样是
+		// 「这步是否将军」，而 `p.InCheck(p.Turn)` 在 `capPrune` 关闭时被 && 短路、
+		// 不会执行。将来若要默认打开，应改用 `p.GivesCheck(m)` 一并提前。
 		if !skip && capPrune && !s.noForward && !isPV && !quiet && best > -Infinity &&
 			beta < MateScore-MaxPly && alpha > -MateScore+MaxPly &&
-			!givesCheck && lmrDepth < 19 &&
+			!p.InCheck(p.Turn) && lmrDepth < 19 &&
 			// ⚠️ `victim` 是**带颜色位**的棋子编码（0..15），必须过 `TypeOf`
 			// 才能当下标用（本项目其它处都这么写；直接下标会在吃掉黑子时越界）。
 			staticEval+322+336*lmrDepth+capPieceValue[game.TypeOf(victim)] <= alpha {
 			skip = true
-		}
-		if skip && givesCheck {
-			skip = false
 		}
 		if skip {
 			p.Unmake()

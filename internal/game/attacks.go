@@ -299,18 +299,28 @@ func cannonAttacks(sq int, occ, own Bitboard) (quiet, capture Bitboard) {
 // 仅覆盖将帅安全所需的类型：车、纵向照面、炮、马含蹩腿、兵）。
 func (b *BB) isAttackedBB(sq int, by int) bool {
 	side := by >> 3 // Red=0 / Black=1
-	rooks := b.byType[Rook].And(b.byColor[side])
-	kings := b.byType[King].And(b.byColor[side])
-	cannons := b.byType[Cannon].And(b.byColor[side])
-	horses := b.byType[Horse].And(b.byColor[side])
-	pawns := b.byType[Pawn].And(b.byColor[side])
+	return attackedBySet(b.occ, sq, side,
+		b.byType[Rook].And(b.byColor[side]),
+		b.byType[King].And(b.byColor[side]),
+		b.byType[Cannon].And(b.byColor[side]),
+		b.byType[Horse].And(b.byColor[side]),
+		b.byType[Pawn].And(b.byColor[side]))
+}
 
+// attackedBySet 是 isAttackedBB 的底层形式：占用与五类攻击子的集合由调用方给出。
+//
+// 存在的理由见 Position.GivesCheck —— 那里要在**落子之前**回答「走这步之后对方
+// 是否被将军」，办法是把占用与集合按落子后的样子预先构造出来，而不是真的落子再回滚。
+//
+// ⚠️ 五个集合必须是**该方**（side）对应兵种的集合，且与 occ 描述的是同一个局面。
+func attackedBySet(occ Bitboard, sq, side int,
+	rooks, kings, cannons, horses, pawns Bitboard) bool {
 	if !rooks.IsEmpty() || !kings.IsEmpty() || !cannons.IsEmpty() {
 		for d := 0; d < 4; d++ {
 			// 直接调 firstBlockerAt（不要经包装函数）：包装函数会把 firstBlockerAt
 			// 内联进去从而自己超出内联预算（cost 88 > 80），那两处就又变成真调用了。
 			ray := rayMask[sq][d]
-			fb := firstBlockerAt(b.occ, ray, d)
+			fb := firstBlockerAt(occ, ray, d)
 			if fb < 0 {
 				continue
 			}
@@ -321,7 +331,7 @@ func (b *BB) isAttackedBB(sq int, by int) bool {
 				return true // 将帅照面
 			}
 			if !cannons.IsEmpty() {
-				if fb2 := firstBlockerAt(b.occ, rayMask[fb][d], d); fb2 >= 0 && cannons.Test(fb2) {
+				if fb2 := firstBlockerAt(occ, rayMask[fb][d], d); fb2 >= 0 && cannons.Test(fb2) {
 					return true // 隔一子翻山
 				}
 			}
@@ -333,13 +343,13 @@ func (b *BB) isAttackedBB(sq int, by int) bool {
 			if ka.origin < 0 {
 				break
 			}
-			if horses.Test(ka.origin) && !b.occ.Test(ka.leg) {
+			if horses.Test(ka.origin) && !occ.Test(ka.leg) {
 				return true
 			}
 		}
 	}
 
-	if !pawns.IsEmpty() && !pawnAttackers[by>>3][sq].And(pawns).IsEmpty() {
+	if !pawns.IsEmpty() && !pawnAttackers[side][sq].And(pawns).IsEmpty() {
 		return true
 	}
 	return false

@@ -122,6 +122,39 @@ func (p *Position) InCheck(color int) bool {
 	return p.bb.isAttackedBB(p.kingSq[color>>3], Opponent(color))
 }
 
+// GivesCheck 返回「走 m 之后对方是否被将军」—— **不改变局面**。
+//
+// 存在的理由：调用方要在**落子之前**知道这一步是否将军，好把「将军豁免」写进剪枝
+// 条件（否则被剪掉的着法也要白付一次 Make/Unmake；本项目实测那占 d12 搜索的 9.5%）。
+// 皮卡鱼的 `pos.gives_check(move)` 同样是落子前算的。
+//
+// 语义严格等于「Make(m) 之后 InCheck(p.Turn)」，由 TestGivesCheckMatchesInCheck
+// 逐局面逐着法守护。实现就是把占用与五类攻击子按落子后的样子预先构造出来：
+//   - 占用：from 清位、to 置位；
+//   - 移动的那颗子：先按原样取该方该兵种的全集，再从 from 移出、若是该兵种则加入 to；
+//   - 其余子不动 —— 所以**闪露将自然被覆盖**（from 让出的那条线）。
+func (p *Position) GivesCheck(m Move) bool {
+	from, to := int(m.From), int(m.To)
+	moverType := TypeOf(p.Board[from])
+	ourIdx := p.Turn >> 3
+	oppIdx := 1 - ourIdx
+
+	occ := p.bb.occ
+	occ.Clear(from)
+	occ.Set(to)
+
+	setOf := func(t int) Bitboard {
+		b := p.bb.byType[t].And(p.bb.byColor[ourIdx])
+		b.Clear(from)
+		if t == moverType {
+			b.Set(to)
+		}
+		return b
+	}
+	return attackedBySet(occ, p.kingSq[oppIdx], ourIdx,
+		setOf(Rook), setOf(King), setOf(Cannon), setOf(Horse), setOf(Pawn))
+}
+
 // Make 走一步（伪合法即可），压入历史栈。返回被吃子（可能为 Empty）。
 func (p *Position) Make(m Move) byte {
 	from, to := int(m.From), int(m.To)
