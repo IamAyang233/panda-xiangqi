@@ -48,6 +48,13 @@ func SetPendingLimit(n int) int {
 	return old
 }
 
+// maxThreatPending 是 applyThreats 里栈上索引数组的容量。
+//
+// 正常路径不会逼近它：Apply 只在 len(pendingThreats) <= pendingLimit（48）时才
+// 走增量，超过就改全量重建。64 只是一点余量 —— 真超了会退回逐条处理，
+// 结果一致、只是慢一点。
+const maxThreatPending = 64
+
 // Apply 把累加器更新到局面 p 当前的特征集合。
 //
 // 这条路径不再枚举全盘特征，而是直接用走子过程中累积的脏信息做 add/sub。
@@ -119,26 +126,104 @@ func (w *Weights) RefreshFromPosition(p *Position, a *Accumulator) {
 }
 
 // applyPSQ 按脏格子更新 PSQ 累加器。索引含桶号，所以调用前必须确认桶与镜像未变。
+//
+// 一条脏棋子会产生「减旧行 + 加新行」两行 —— 恰好是两行合一的形状
+// （acc += w新 − w旧），所以配对交给 addRows2 一次做完。
+// psqt 那 16 个 int32 不参与合并：它与累加器是两片独立数组，合并没有收益。
 func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bool) {
 	if diagOn {
 		diagStats.ApplyPieces += int64(len(p.pendingPieces))
 	}
 	for _, d := range p.pendingPieces {
-		if d.oldPc != 0 {
-			psqSub(a, w, c, PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror))
-		}
-		if d.newPc != 0 {
+		switch {
+		case d.oldPc != 0 && d.newPc != 0:
+			newIdx := PSQIndex(c, d.sq, int(d.newPc), bucket, mirror)
+			oldIdx := PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror)
+			addRows2(&a.PsqAcc[c], w.W[newIdx*L1:newIdx*L1+L1], w.W[oldIdx*L1:oldIdx*L1+L1], true)
+			psqtSub(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+oldIdx*PSQTBuckets:psqPsqtBase+(oldIdx+1)*PSQTBuckets])
+			psqtAdd(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+newIdx*PSQTBuckets:psqPsqtBase+(newIdx+1)*PSQTBuckets])
+		case d.newPc != 0:
 			psqAdd(a, w, c, PSQIndex(c, d.sq, int(d.newPc), bucket, mirror))
+		default:
+			psqSub(a, w, c, PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror))
 		}
 	}
 }
 
 // applyThreats 按脏条目更新威胁累加器（索引只含镜像）。
+//
+// 这条路径是全项目最热的一段：一次安静中局搜索里 addI16/subI16 的调用有
+// 约 48 次/结点，合计占 30.6%，其中 applyThreats 自己占 27.6%（cum）。
+//
+// 条目天然是成对出现的 —— 走一步会产生「这些关系没了」和「那些关系有了」——
+// 正好喂给两行合一的内核（见 addRows2）。所以这里先把条目按方向分成两列，
+// 再逐对交给内核，剩下的零头走单行。
+//
+// 重排条目的累加次序**不改变结果**：累加器是环绕加，和的次序可以任意重排
+// （与 psqcache.go 用的是同一条论证）。落表的顺序变了也没有影响 ——
+// 差值表逐位相同，界面看到的评估值就一样。
 func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) {
+	ents := p.pendingThreats
 	if diagOn {
-		diagStats.ApplyEntries += int64(len(p.pendingThreats))
+		diagStats.ApplyEntries += int64(len(ents))
 	}
-	for _, t := range p.pendingThreats {
+
+	var addIdx, subIdx [maxThreatPending]int32
+	na, ns := 0, 0
+	for _, t := range ents {
+		idx := ThreatIndex(c, int(t.attacker), t.from, t.to, int(t.attacked), mirror)
+		if idx >= ThreatInputs {
+			continue
+		}
+		if t.add {
+			if na >= maxThreatPending {
+				w.applyThreatsSimple(ents, a, c, mirror)
+				return
+			}
+			addIdx[na] = int32(idx)
+			na++
+		} else {
+			if ns >= maxThreatPending {
+				w.applyThreatsSimple(ents, a, c, mirror)
+				return
+			}
+			subIdx[ns] = int32(idx)
+			ns++
+		}
+	}
+
+	pair := na
+	if ns < pair {
+		pair = ns
+	}
+	for k := 0; k < pair; k++ {
+		ai, si := int(addIdx[k]), int(subIdx[k])
+		if useFuseRows {
+			if diagOn {
+				diagStats.FusePairs++
+			}
+			addRows2(&a.ThrAcc[c],
+				w.ThreatW[ai*L1:ai*L1+L1], w.ThreatW[si*L1:si*L1+L1], true)
+			psqtSub(&a.ThrPsqt[c], w.Psqt[si*PSQTBuckets:(si+1)*PSQTBuckets])
+			psqtAdd(&a.ThrPsqt[c], w.Psqt[ai*PSQTBuckets:(ai+1)*PSQTBuckets])
+			continue
+		}
+		thrSub(a, w, c, si)
+		thrAdd(a, w, c, ai)
+	}
+	for k := pair; k < na; k++ {
+		thrAdd(a, w, c, int(addIdx[k]))
+	}
+	for k := pair; k < ns; k++ {
+		thrSub(a, w, c, int(subIdx[k]))
+	}
+}
+
+// applyThreatsSimple 是逐条处理的兜底路径，只在脏窗口超出栈上索引数组容量时
+// 使用（正常不会走到：Apply 只在 len(pendingThreats) <= pendingLimit 时才走
+// 增量，超了就改全量重建）。结果与配对路径逐位相同。
+func (w *Weights) applyThreatsSimple(ents []dirtyThreat, a *Accumulator, c int, mirror bool) {
+	for _, t := range ents {
 		idx := ThreatIndex(c, int(t.attacker), t.from, t.to, int(t.attacked), mirror)
 		if idx >= ThreatInputs {
 			continue

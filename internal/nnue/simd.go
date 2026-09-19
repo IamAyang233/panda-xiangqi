@@ -1,5 +1,13 @@
 package nnue
 
+import "os"
+
+// useFuseRows 决定累加器更新走不走「两行合一」内核，由 QIJING_FUSEROWS=off 关闭。
+//
+// 开关留成运行时的，是为了 A/B 能在同一份二进制里切换 —— 切换触发重编译时，
+// 编译与基准争抢 CPU 会让同轮交替的量测失去意义（这条在本项目已经踩过两次）。
+var useFuseRows = useAVX2 && os.Getenv("QIJING_FUSEROWS") != "off"
+
 // 累加器的 SIMD 内核分派。
 //
 // 这里的两个函数（addI16 / subI16）是 psqAdd / psqSub / thrAdd / thrSub 的
@@ -65,4 +73,38 @@ func psqtSubScalar(dst *[PSQTBuckets]int32, src []int32) {
 	for k := 0; k < PSQTBuckets; k++ {
 		dst[k] -= src[k]
 	}
+}
+
+// addRows2 把两行权重合成一趟累加到累加器上：acc += w1，sub2 为真时再 − w2。
+//
+// 数值上等价于连续调用 addI16/subI16 两次，**逐位相同** —— 环绕加满足交换
+// 结合律，「先合两行再累加」与「分两次累加」是同一个和的两种次序。
+// 这条论证与 PSQ 缓存用的是同一条（见 psqcache.go）：只要内核不做饱和加就成立。
+//
+// 动机是 profile 里 addI16/subI16 合计 30.6%（一次安静中局搜索、20 局面 ×
+// 6 万节点）：单行 21.3ns/次，而且真实搜索里摊下来还是 21.2ns/次 ——
+// 与权重 L1 常驻的微基准完全一致，说明那 30.6% 不是访存等出来的，
+// 是内核自己吃掉的执行吞吐。两行合一在微基准里 56.8 → 37.6ns（−34%）。
+func addRows2(acc *[L1]int16, w1, w2 []byte, sub2 bool) {
+	if useFuseRows {
+		addRows2Fused(acc, w1, w2, sub2)
+		return
+	}
+	addI16(acc, w1)
+	if sub2 {
+		subI16(acc, w2)
+	} else {
+		addI16(acc, w2)
+	}
+}
+
+// SetUseFuseRows 切换两行合一内核并返回原值。
+//
+// 供同一进程内交替测量使用 —— 这台机器有快慢相（同一份代码两次运行能差
+// 3.7×），跨进程交替再ABBA也压不住；把 A/B 放进同一个循环里逐轮交替，
+// 漂移就被差分掉了。
+func SetUseFuseRows(on bool) bool {
+	old := useFuseRows
+	useFuseRows = on
+	return old
 }

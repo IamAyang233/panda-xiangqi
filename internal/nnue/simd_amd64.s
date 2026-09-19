@@ -160,3 +160,91 @@ TEXT ·psqtSubAVX2(SB), NOSPLIT, $0-32
 	VMOVDQU Y1, 32(DI)
 	VZEROUPPER
 	RET
+
+// func addRows2I16AVX2(acc *[L1]int16, w1, w2 []byte, sub2 bool)
+//
+// 把两行权重合成一趟累加到同一片累加器上：acc += w1 ± w2。
+//
+// 起因是量出来的：单行版 addI16AVX2 稳定在 21.3ns/次，而且**与缓存无关** ——
+// 48 次调用/结点的真实搜索里摊下来仍是 21.2ns/次，和权重 L1 常驻的微基准一模一样。
+// 也就是说那 30.6% 不是访存等出来的，是内核自己吃掉的执行吞吐。
+// 微基准里把两行合成一趟：56.8ns → 37.6ns（−34%）。
+//
+// 为什么单行版的每元素成本降不下来：每 64 个元素要 4 条 VPMOVSXBW、
+// 4 条带内存操作数的 VPADDW、4 条 VMOVDQU 存储、再加 4 条循环开销 ——
+// 前三条是数据的必经之路，能省的只有「把两行的数据先合起来」这一层：
+// 合并后每 64 个元素变成 8 条 VPMOVSXBW + 4 条 VPADDW(合并) + 4 条 VPADDW(acc)
+// + 4 条存储 + 4 条开销 = 25 条覆盖两行，单行摊到 12.5 条（原来 16 条）。
+// 同步推进的两条独立数据流也让乱序窗口更满，实测收益大于纯 uop 账的 22%。
+//
+// 逐位正确性与 PADDW 的环绕语义绑定：int16 加法模 2^16 满足交换结合律，
+// 「先合两行再累加」与「分两次累加」算的是同一个和，只是次序不同。
+// 若哪天内核换成饱和加（PADDSUW/PADDSW），这条论证失效。
+TEXT ·addRows2I16AVX2(SB), NOSPLIT, $0-57
+	MOVQ acc+0(FP), DI
+	MOVQ w1_base+8(FP), SI
+	MOVQ w2_base+32(FP), R8
+	MOVBQZX sub2+56(FP), AX
+	TESTQ AX, AX
+	JNZ  subEntry
+
+	MOVQ $16, CX            // L1/64 = 1024/64
+addLoop:
+	VPMOVSXBW (SI), Y0
+	VPMOVSXBW 16(SI), Y1
+	VPMOVSXBW 32(SI), Y2
+	VPMOVSXBW 48(SI), Y3
+	VPMOVSXBW (R8), Y4
+	VPMOVSXBW 16(R8), Y5
+	VPMOVSXBW 32(R8), Y6
+	VPMOVSXBW 48(R8), Y7
+	VPADDW Y4, Y0, Y0
+	VPADDW Y5, Y1, Y1
+	VPADDW Y6, Y2, Y2
+	VPADDW Y7, Y3, Y3
+	VPADDW (DI), Y0, Y0
+	VPADDW 32(DI), Y1, Y1
+	VPADDW 64(DI), Y2, Y2
+	VPADDW 96(DI), Y3, Y3
+	VMOVDQU Y0, (DI)
+	VMOVDQU Y1, 32(DI)
+	VMOVDQU Y2, 64(DI)
+	VMOVDQU Y3, 96(DI)
+	ADDQ $64, SI
+	ADDQ $64, R8
+	ADDQ $128, DI
+	DECQ CX
+	JNZ  addLoop
+	VZEROUPPER
+	RET
+
+subEntry:
+	MOVQ $16, CX
+subLoop:
+	VPMOVSXBW (SI), Y0
+	VPMOVSXBW 16(SI), Y1
+	VPMOVSXBW 32(SI), Y2
+	VPMOVSXBW 48(SI), Y3
+	VPMOVSXBW (R8), Y4
+	VPMOVSXBW 16(R8), Y5
+	VPMOVSXBW 32(R8), Y6
+	VPMOVSXBW 48(R8), Y7
+	VPSUBW Y4, Y0, Y0
+	VPSUBW Y5, Y1, Y1
+	VPSUBW Y6, Y2, Y2
+	VPSUBW Y7, Y3, Y3
+	VPADDW (DI), Y0, Y0
+	VPADDW 32(DI), Y1, Y1
+	VPADDW 64(DI), Y2, Y2
+	VPADDW 96(DI), Y3, Y3
+	VMOVDQU Y0, (DI)
+	VMOVDQU Y1, 32(DI)
+	VMOVDQU Y2, 64(DI)
+	VMOVDQU Y3, 96(DI)
+	ADDQ $64, SI
+	ADDQ $64, R8
+	ADDQ $128, DI
+	DECQ CX
+	JNZ  subLoop
+	VZEROUPPER
+	RET
