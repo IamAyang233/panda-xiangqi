@@ -76,7 +76,7 @@ var matchFENs = []struct {
 }
 
 func main() {
-	mode := flag.String("mode", "moves", "moves = 着法一致率；games = 完整对局；puzzle = 残局战术诊断；depth = 同题同时间的搜索深度对比；curve = 节点预算→命中率曲线")
+	mode := flag.String("mode", "moves", "moves = 着法一致率；games = 完整对局；puzzle = 残局战术诊断；depth = 同题同时间的搜索深度对比；curve = 节点预算→命中率曲线；tput = 单线程吞吐比（等走子量计时）")
 	movetime := flag.Int("movetime", 1000, "每步思考时间（毫秒）")
 	games := flag.Int("games", 6, "对局数（mode=games）")
 	maxPly := flag.Int("maxply", 50, "单局步数上限（mode=games）")
@@ -88,7 +88,9 @@ func main() {
 	puzzleLimit := flag.Int("limit", 24, "残局题数（mode=puzzle）")
 	verbose := flag.Bool("v", false, "逐着打印")
 	maxDepthFlag := flag.Int("maxdepth", 7, "逐层诊断的最大深度（mode=profile）")
-	fenFlag := flag.String("fen", "", "只诊断这一个 FEN（mode=profile，留空则用内置局面集）")
+	fenFlag := flag.String("fen", "", "只诊断这一个 FEN（mode=profile/tput，留空则用内置局面集）")
+	tpBudget := flag.Int64("tpb", 60000, "吞吐对比的结点预算（mode=tput，两边换算成同走子量）")
+	tpRounds := flag.Int("tpr", 5, "吞吐对比的轮数，每轮顺序反转（mode=tput）")
 	depthsFlag := flag.String("depths", "10,12", "固定深度列表，逗号分隔（mode=self；调 LMR/剪枝时对比节点总数）")
 	corpusFlag := flag.String("corpus", "internal/search/testdata/quiet_fens.txt", "中局语料文件（mode=mg）")
 	mgLimit := flag.Int("mgl", 40, "语料取前几条（mode=mg）")
@@ -147,6 +149,16 @@ func main() {
 		}
 		uci.Close() // profile 自行建立 UCI 会话，先释放长连接
 		runSearchProfile(*flatPath, *uciPath, *maxDepthFlag, *uciSkill, set)
+	case "tput":
+		set := matchFENs
+		if *fenFlag != "" {
+			set = []struct {
+				name string
+				fen  string
+			}{{"自定义局面", *fenFlag}}
+		}
+		uci.Close()
+		throughput(*flatPath, *uciPath, *tpBudget, *tpRounds, set)
 	case "nodes":
 		uci.Close()
 		nodesBudget(*flatPath, *uciPath, *uciSkill, []int64{5000, 20000, 100000, 500000}, matchFENs)

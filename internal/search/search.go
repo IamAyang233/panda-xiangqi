@@ -1401,13 +1401,15 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 			}
 		}
 
-		// 将军豁免：令对手被将的安静着法常含杀机，按静态评估或 SEE 剪掉都会漏杀
-		// （这条教训在 futility 上踩过一次 —— 曾把 depth 6 的将杀剪没）。
-		//
-		// ⚠️ 判定必须在**落子之前**：否则被剪掉的着法也要白付一次 Make/Unmake。
-		// 本项目实测 d12 中局局面上 **71.9%** 的试走是「落子即回滚」，单对成本
-		// 240ns ⇒ 占整次搜索 **9.5%**。皮卡鱼的 `pos.gives_check(move)` 也是落子前算的
-		// （src/search.cpp 的 Step 15 之前），我们此前没有这个能力，只能先 Make。
+	// 将军豁免：令对手被将的安静着法常含杀机，按静态评估或 SEE 剪掉都会漏杀
+	// （这条教训在 futility 上踩过一次 —— 曾把 depth 6 的将杀剪没）。
+	//
+	// ⚠️ 判定必须在**落子之前**：否则被剪掉的着法也要白付一次 Make/Unmake。
+	// 本项目实测 d12 中局局面上 **71.9%** 的试走是「落子即回滚」（261,690 次），
+	// 提到落子前拿到 **+22%（d60d7ec）**。皮卡鱼的 `pos.gives_check(move)` 也是
+	// 落子前算的（src/search.cpp 的 Step 15 之前），我们此前没有这个能力。
+	// ⚠️ 事前用微基准估的「上界 9.5%」明显偏低 —— 微基准只能当 go/no-go，
+	// 收益必须用同轮交替 A/B 定（见 ENGINE-PITFALLS-perf.md）。
 		if skip && !p.GivesCheck(m) {
 			continue
 		}
