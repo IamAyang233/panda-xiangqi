@@ -62,6 +62,33 @@ type DiagStats struct {
 	// 两者之比决定「还要不要为某个方向补一个内核循环体」。
 	SingleRows int64
 
+	// 零头按方向细分。能成对的零头只有两种形状：
+	//   - 两个「加」→ 内核的 add+add 模式（威胁侧已实现，见 thrPairSameAdd）
+	//   - 两个「减」→ 需要内核再加一个 `acc -= w1 + w2` 的循环体（尚未实现）
+	// 这两个计数是「还值不值得补循环体」的唯一依据：单行的加若凑够成对的量，
+	// 就该补；减若一直是奇数个，补了也没用（永远只剩一个）。
+	SingleAddRows int64
+	SingleSubRows int64
+
+	// updateThreats 的实际枚举次数与被 suppressDirty 跳过的次数。
+	//
+	// Unmake 在「回滚段用不上」时会置 suppressDirty，让整轮枚举直接返回 ——
+	// 那是已经吃到的免费路径。这两个数的比例决定「让 Unmake 复用 Make 的条目」
+	// 这条改造还有多少空间：跳过比例越高，剩下的可省部分越小。
+	UtEnumerated int64
+	UtSuppressed int64
+
+	// UtUnmakeKept 是 Unmake 里 keepRollback 为真（即必须重新枚举威胁、
+	// 不能走 suppressDirty 免费路径）的次数。
+	// 如果它接近 UtEnumerated 的一半，说明 Unmake 的枚举正是整条链的主要成本 ——
+	// 那么「把 Make 的条目翻转复用」就有接近一半 updateThreats 的空间。
+	UtUnmakeKept int64
+
+	// UtReplayed 是 Unmake 里用「翻转 Make 的条目」替代枚举的次数。
+	// 它应当接近 UtUnmakeKept 中「无吃子」的那部分；明显偏低说明本层没留到副本
+	// （比如脏信息超限被丢弃），退回了枚举。
+	UtReplayed int64
+
 	// 两行合一内核（addRows2I16AVX2）真正处理的配对数。
 	//
 	// 存在的意义是给正确性测试一个「没测到而通过」的挡板：融合与单行两条路径

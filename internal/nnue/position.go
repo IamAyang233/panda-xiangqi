@@ -1,6 +1,9 @@
 package nnue
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // 本文件实现评估侧的增量局面 Position。
 //
@@ -38,6 +41,13 @@ type posMark struct {
 	pieces, threats int
 	from, to        int
 	captured        byte
+
+	// replayStart/replayEnd 是本层 Make 产生的威胁条目在 replayBuf 里的副本区间；
+	// segStart/segEnd 是同一批条目在 replaySeg 里占的段边界记录区间。
+	// captured != 0 的层不收集（吃子后换子那两段的条目与回滚段不构成取反关系，
+	// 见 Unmake 的说明），此时两对字段相等、区间为空。
+	replayStart, replayEnd int
+	segStart, segEnd       int
 }
 
 // Position 是评估侧的增量局面。
@@ -66,6 +76,32 @@ type Position struct {
 	// 避免把 31.6 行整表重算。随局面走（自洽缓存，无需失效）。
 	psqCache *psqCache
 
+	// replayBuf / replaySeg / replayOn：Unmake 复用 Make 的威胁条目。
+	//
+	// 依据是 Make 与 Unmake 的 updateThreats 调用**逐段配对**：
+	//   Make  movePiece(from→to)：先在「from 有子」时记 from 段，再在「to 有子」时记 to 段
+	//   Unmake movePiece(to→from)：先在「to 有子」时记 to 段，再在「from 有子」时记 from 段
+	// 同一段的 occupied 完全相同、只有 put 相反，而条目内容只取决于 (occupied, s, pc)，
+	// 所以**Unmake 要枚举出的条目，恰好是 Make 那批逐条取反**（顺序相反，但环绕加可交换）。
+	// 于是不必重算：Make 时留一份副本，Unmake 时翻转 add 直接追加。
+	//
+	// 为什么值得：Unmake 占 updateThreats 调用的近一半，而枚举（slidingAttackBoth +
+	// 射线/穿透循环）是这条链最贵的一段；实测把它换掉，固定节点基准快 10% 以上。
+	//
+	// replaySeg 是段结束位置（在 replayBuf 空间里）的栈：Unmake 按**倒序**取段。
+	// 吃子走子不收集 —— 它的回滚是 swapPiece(to, captured) + putPiece(from, moved)，
+	// 两段的 pc 与正向的 swapPiece(to, moved)/removePiece(from) 不同，不构成取反。
+	replayBuf  []dirtyThreat
+	replaySeg  []int
+	replayOn   bool
+	replayBase int
+	replaySegs []int
+	replayPick int
+
+	// collectReplay 非零时 updateThreats 把本次枚举的条目留一份副本进 replayBuf。
+	// 只在 Make 的 movePiece 段置位（吃子路径与回滚路径都不收集）。
+	collectReplay bool
+
 	// suppressDirty 非零时 updateThreats 直接返回（局面照常更新）。
 	// 用于回滚路径：常规回退产生的脏信息会被 pending 截断丢弃，
 	// 白算一遍；只有「累加器正好停在回滚前局面」时才需要留下它。
@@ -93,6 +129,9 @@ func (p *Position) ResetFromGame(squares *[squareNB]byte, side int) {
 	p.pendingPieces = p.pendingPieces[:0]
 	p.pendingThreats = p.pendingThreats[:0]
 	p.marks = p.marks[:0]
+	// 回放缓冲同样清空：不清也自洽（下标都按 len 记），但会白留一份上一个局面的内存。
+	p.replayBuf = p.replayBuf[:0]
+	p.replaySeg = p.replaySeg[:0]
 	p.side = side
 	p.stale = false
 	p.version = 0
@@ -129,6 +168,19 @@ func (p *Position) Version() int { return p.version }
 // PendingBase 返回累积脏信息对应的起始版本，供诊断与测试使用。
 func (p *Position) PendingBase() int { return p.pendingBase }
 
+// useThreatReplay 决定 Unmake 是否复用 Make 的威胁条目（下面 replayBuf 段的起点）。
+//
+// 由 QIJING_THRREPLAY=off 关闭：既给同一进程内的交替 A/B 提供两态，
+// 也给运维留一把一刀 —— 怀疑回放路径在某类局面算错时，关掉它看现象是否消失。
+var useThreatReplay = os.Getenv("QIJING_THRREPLAY") != "off"
+
+// SetThreatReplay 切换威胁条目回放并返回原值，供测试与基准使用。
+func SetThreatReplay(on bool) bool {
+	old := useThreatReplay
+	useThreatReplay = on
+	return old
+}
+
 // pendingMax 是累积脏信息的硬上限。超过说明这条搜索路径长时间没有评估过
 // （理论上不该发生，因为每个叶子都会评估），此时丢弃累积并让累加器整体重建。
 const pendingMax = 4096
@@ -144,12 +196,18 @@ func (p *Position) clearPending() {
 // Make 走一步 from→to 并累积本次走子的特征变化。
 // 调用方必须保证这是合法着法，且与 internal/game.Position 的同一步走法配对。
 func (p *Position) Make(from, to int) {
+	thrStart := len(p.pendingThreats)
+	segStart := len(p.replaySeg)
+	replayStart := len(p.replayBuf)
+
 	p.marks = append(p.marks, posMark{
-		pieces:   len(p.pendingPieces),
-		threats:  len(p.pendingThreats),
-		from:     from,
-		to:       to,
-		captured: p.board[to],
+		pieces:      len(p.pendingPieces),
+		threats:     thrStart,
+		replayStart: replayStart,
+		segStart:    segStart,
+		from:        from,
+		to:          to,
+		captured:    p.board[to],
 	})
 
 	moved := p.board[from]
@@ -159,11 +217,16 @@ func (p *Position) Make(from, to int) {
 	//   无吃子 → move_piece（离开 from 与到达 to 都要重算射线）
 	//   有吃子 → remove_piece(from) + swap_piece(to, moved)
 	// 后者在 to 处是「同一格换子」，射线不受影响，所以用 computeRay=false 的路径。
+	//
+	// 无吃子时顺带把本层产生的条目留一份副本（collectReplay），供 Unmake 翻转复用；
+	// 吃子路径的两段与回滚段不构成取反关系，不收集。
 	if captured != 0 {
 		p.removePiece(from)
 		p.swapPiece(to, moved)
 	} else {
+		p.collectReplay = true
 		p.movePiece(from, to)
+		p.collectReplay = false
 	}
 
 	p.pendingPieces = append(p.pendingPieces,
@@ -172,6 +235,8 @@ func (p *Position) Make(from, to int) {
 	p.side ^= 1
 	p.version++
 
+	// 记录本层的副本区间（超限丢弃时会走上面的分支，区间自动变成空的）。
+	k := len(p.marks) - 1
 	if len(p.pendingThreats) > pendingMax {
 		// 累积过长：丢弃脏信息并把各层回滚标记归零，同时标记累加器失效
 		// （它相对当前局面已经不确定差了哪些特征）。
@@ -180,7 +245,12 @@ func (p *Position) Make(from, to int) {
 			p.marks[i].pieces, p.marks[i].threats = 0, 0
 		}
 		p.stale = true
+		// 副本对应的脏信息已经不存在了，一起丢弃 —— 本层退回枚举路径。
+		p.replayBuf = p.replayBuf[:replayStart]
+		p.replaySeg = p.replaySeg[:segStart]
 	}
+	p.marks[k].replayEnd = len(p.replayBuf)
+	p.marks[k].segEnd = len(p.replaySeg)
 }
 
 // Unmake 回滚上一步。
@@ -199,9 +269,29 @@ func (p *Position) Unmake() {
 	// 常规回退会把它连同正向段一起截掉，那时没必要收集，省掉这一整轮计算。
 	newVersion := p.version - 1
 	keepRollback := p.pendingBase > newVersion
-	if !keepRollback {
+	if diagOn && keepRollback {
+		diagStats.UtUnmakeKept++
+	}
+
+	// 需要回滚段、且本层留了副本（无吃子走子）时，走回放替代枚举。
+	// 取段顺序是倒序：Unmake 的 movePiece(to→from) 先碰 to，而 Make 的
+	// movePiece(from→to) 先碰 from —— 恰好把两段的次序反过来。
+	segs := p.replaySeg[m.segStart:m.segEnd]
+	replay := keepRollback && useThreatReplay && m.captured == 0 && len(segs) == 2
+	if replay {
+		p.replayOn = true
+		p.replayBase = m.replayStart
+		p.replaySegs = segs
+		p.replayPick = len(segs) - 1
+	} else if !keepRollback {
 		p.suppressDirty++
 	}
+
+	// 本层的副本与段记录用完即弃（三个出口都要走到，用 defer 统一）。
+	defer func() {
+		p.replayBuf = p.replayBuf[:m.replayStart]
+		p.replaySeg = p.replaySeg[:m.segStart]
+	}()
 
 	// 回滚路径必须与 Make 的分支结构镜像，否则两边的脏信息不会精确抵消：
 	//   无吃子：Make 是 move_piece(from→to)，回滚是 move_piece(to→from)
@@ -215,6 +305,8 @@ func (p *Position) Unmake() {
 	} else {
 		p.movePiece(m.to, m.from)
 	}
+	p.replayOn = false
+	p.replaySegs = nil
 	if !keepRollback {
 		p.suppressDirty--
 	}
@@ -449,8 +541,38 @@ func testLoHi(lo, hi uint64, sq int) bool {
 // 射线不变，若仍按「空 vs 有子」比较就会凭空造出变化。
 func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if p.suppressDirty > 0 {
+		if diagOn {
+			diagStats.UtSuppressed++
+		}
 		return
 	}
+	if p.replayOn {
+		// 直接搬 Make 那一段的条目、翻转方向即可 —— 两条路径产出的条目集合完全相同，
+		// 只是顺序不同，而环绕加满足交换结合律，所以累加器逐位相同（树不变）。
+		if p.replayPick >= 0 {
+			i := p.replayPick
+			start := p.replayBase
+			if i > 0 {
+				start = p.replaySegs[i-1]
+			}
+			// 整体追加再原地翻转：逐个 append 是这条路径的主要成本
+			// （append 每次都要做容量检查），批量追加走的是 memmove。
+			old := len(p.pendingThreats)
+			p.pendingThreats = append(p.pendingThreats, p.replayBuf[start:p.replaySegs[i]]...)
+			for k := old; k < len(p.pendingThreats); k++ {
+				p.pendingThreats[k].add = !p.pendingThreats[k].add
+			}
+			p.replayPick--
+		}
+		if diagOn {
+			diagStats.UtReplayed++
+		}
+		return
+	}
+	if diagOn {
+		diagStats.UtEnumerated++
+	}
+	before := len(p.pendingThreats)
 	occupied := p.occ
 	pt := pieceType(int(pc))
 
@@ -622,6 +744,16 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 			p.pendingThreats = append(p.pendingThreats,
 				dirtyThreat{p.board[psq], p.board[tq], psq, tq, !put})
 		}
+	}
+
+	// 留一份副本给 Unmake 翻转复用。只统计本次调用新增的那一段，
+	// 并按段记录结束位置（Unmake 按段倒序取用）。
+	//
+	// computeRay=false 的提前返回不收集 —— 那条路径只在吃子走子的 swapPiece 里出现，
+	// 而 collectReplay 只在无吃子的 movePiece 期间置位，两者不会同时成立。
+	if p.collectReplay {
+		p.replayBuf = append(p.replayBuf, p.pendingThreats[before:]...)
+		p.replaySeg = append(p.replaySeg, len(p.replayBuf))
 	}
 }
 

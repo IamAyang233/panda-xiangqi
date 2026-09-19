@@ -173,12 +173,14 @@ func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bo
 	for k := pair; k < na; k++ {
 		if diagOn {
 			diagStats.SingleRows++
+			diagStats.SingleAddRows++
 		}
 		psqAdd(a, w, c, int(addIdx[k]))
 	}
 	for k := pair; k < ns; k++ {
 		if diagOn {
 			diagStats.SingleRows++
+			diagStats.SingleSubRows++
 		}
 		psqSub(a, w, c, int(subIdx[k]))
 	}
@@ -266,12 +268,14 @@ func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) 
 	for k := pair + 2*twoAdd; k < na; k++ {
 		if diagOn {
 			diagStats.SingleRows++
+			diagStats.SingleAddRows++
 		}
 		thrAdd(a, w, c, int(addIdx[k]))
 	}
 	for k := pair; k < ns; k++ {
 		if diagOn {
 			diagStats.SingleRows++
+			diagStats.SingleSubRows++
 		}
 		thrSub(a, w, c, int(subIdx[k]))
 	}

@@ -161,12 +161,14 @@ func (w *Weights) refreshPSQ(p *Position, a *Accumulator, c, bucket int, mirror 
 			for k := pair; k < na; k++ {
 				if diagOn {
 					diagStats.SingleRows++
+					diagStats.SingleAddRows++
 				}
 				psqAdd(a, w, c, int(addIdx[k]))
 			}
 			for k := pair; k < ns; k++ {
 				if diagOn {
 					diagStats.SingleRows++
+					diagStats.SingleSubRows++
 				}
 				psqSub(a, w, c, int(subIdx[k]))
 			}

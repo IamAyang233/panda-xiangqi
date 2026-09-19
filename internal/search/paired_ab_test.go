@@ -165,3 +165,39 @@ func BenchmarkFC0PairedAB(b *testing.B) {
 	}
 	b.ReportMetric(float64(tOn)/float64(tOff), "b8/b4")
 }
+
+// Unmake 复用 Make 的威胁条目（翻转）vs 重新枚举。
+// 两者产出的累加器逐位相同，所以这是同一份工作量的两条路径 —— 干净的 A/B。
+func BenchmarkThreatReplayPairedAB(b *testing.B) {
+	w, err := nnue.Load(flatPath)
+	if err != nil {
+		b.Skip("未找到展开后的权重，跳过")
+	}
+	fens := quietFENsForBench(b, 20)
+	parsed := make([]*game.Position, len(fens))
+	for i, f := range fens {
+		p, err := game.ParseFEN(f)
+		if err != nil {
+			b.Fatal(err)
+		}
+		parsed[i] = p
+	}
+	round := func() {
+		for _, p := range parsed {
+			New(w).SearchNodes(p, 60000)
+		}
+	}
+	var tOff, tOn time.Duration
+	for i := 0; i < b.N*5; i++ {
+		nnue.SetThreatReplay(false)
+		t0 := time.Now()
+		round()
+		tOff += time.Since(t0)
+
+		nnue.SetThreatReplay(true)
+		t0 = time.Now()
+		round()
+		tOn += time.Since(t0)
+	}
+	b.ReportMetric(float64(tOn)/float64(tOff), "replay/enum")
+}
