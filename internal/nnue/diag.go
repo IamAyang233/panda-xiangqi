@@ -58,6 +58,10 @@ type DiagStats struct {
 	PSQCacheHit  int64 // 命中缓存、只补差集
 	PSQCacheMiss int64 // 未命中，整表重建
 
+	// 配对与零头的分布：PairRows 是合成一趟的行对，SingleRows 是只能单行走的行。
+	// 两者之比决定「还要不要为某个方向补一个内核循环体」。
+	SingleRows int64
+
 	// 两行合一内核（addRows2I16AVX2）真正处理的配对数。
 	//
 	// 存在的意义是给正确性测试一个「没测到而通过」的挡板：融合与单行两条路径

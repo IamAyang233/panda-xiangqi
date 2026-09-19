@@ -59,3 +59,39 @@ func BenchmarkFuseRowsPairedAB(b *testing.B) {
 	b.ReportMetric(float64(tOff.Milliseconds()), "off_ms")
 	b.ReportMetric(float64(tOn.Milliseconds()), "on_ms")
 }
+
+// 配对本身的边际贡献：融合在两侧都开着，只切配对开关。
+func BenchmarkRowPairingPairedAB(b *testing.B) {
+	w, err := nnue.Load(flatPath)
+	if err != nil {
+		b.Skip("未找到展开后的权重，跳过")
+	}
+	fens := quietFENsForBench(b, 20)
+	parsed := make([]*game.Position, len(fens))
+	for i, f := range fens {
+		p, err := game.ParseFEN(f)
+		if err != nil {
+			b.Fatal(err)
+		}
+		parsed[i] = p
+	}
+	round := func() {
+		for _, p := range parsed {
+			New(w).SearchNodes(p, 60000)
+		}
+	}
+	nnue.SetUseFuseRows(true)
+	var tOff, tOn time.Duration
+	for i := 0; i < b.N*6; i++ {
+		nnue.SetRowPairing(false)
+		t0 := time.Now()
+		round()
+		tOff += time.Since(t0)
+
+		nnue.SetRowPairing(true)
+		t0 = time.Now()
+		round()
+		tOn += time.Since(t0)
+	}
+	b.ReportMetric(float64(tOn)/float64(tOff), "pair/off")
+}

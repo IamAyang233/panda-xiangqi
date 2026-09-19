@@ -118,24 +118,62 @@ func (w *Weights) refreshPSQ(p *Position, a *Accumulator, c, bucket int, mirror 
 		}
 		copy(a.PsqAcc[c][:], e.acc[:])
 		copy(a.PsqPsqt[c][:], e.psqt[:])
-		feats := 0
-		for s := 0; s < squareNB; s++ {
+		// 每个变了的格子天然是「减旧 + 加新」一对 —— 与 applyPSQ 同一个形状，
+		// 交给同一个两行合一的内核。第一遍只收集索引、不碰累加器，
+		// 这样越界兜底可以安全地从头重来。
+		var addIdx, subIdx [maxPSQPending]int32
+		na, ns, feats := 0, 0, 0
+		overflow := false
+		for s := 0; s < squareNB && !overflow; s++ {
 			old, cur := e.board[s], p.board[s]
 			if old == cur {
 				continue
 			}
-			if old != 0 {
-				psqSub(a, w, c, PSQIndex(c, s, int(old), bucket, mirror))
+			if cur != 0 {
+				if na >= maxPSQPending {
+					overflow = true
+					break
+				}
+				addIdx[na] = int32(PSQIndex(c, s, int(cur), bucket, mirror))
+				na++
 				feats++
 			}
-			if cur != 0 {
-				psqAdd(a, w, c, PSQIndex(c, s, int(cur), bucket, mirror))
+			if old != 0 {
+				if ns >= maxPSQPending {
+					overflow = true
+					break
+				}
+				subIdx[ns] = int32(PSQIndex(c, s, int(old), bucket, mirror))
+				ns++
 				feats++
 			}
 		}
-		if diagOn {
-			diagStats.RebuildPSQ++
-			diagStats.RebuildPiece += int64(feats)
+		if overflow {
+			// 差得太多（正常不会：棋盘最多 32 颗子，两个方向各不会超过 32，
+			// 而容量是 64）。真发生了就退回整表重建 —— 它会把 PsqAcc 重写成
+			// biases + 全部棋子、并把 PsqPsqt 清零，所以不需要先手工复位。
+			w.rebuildPSQ(p, a, c, bucket, mirror)
+		} else {
+			pair := pairCount(na, ns)
+			for k := 0; k < pair; k++ {
+				psqPairAddSub(a, w, c, int(addIdx[k]), int(subIdx[k]))
+			}
+			for k := pair; k < na; k++ {
+				if diagOn {
+					diagStats.SingleRows++
+				}
+				psqAdd(a, w, c, int(addIdx[k]))
+			}
+			for k := pair; k < ns; k++ {
+				if diagOn {
+					diagStats.SingleRows++
+				}
+				psqSub(a, w, c, int(subIdx[k]))
+			}
+			if diagOn {
+				diagStats.RebuildPSQ++
+				diagStats.RebuildPiece += int64(feats)
+			}
 		}
 	}
 

@@ -1,5 +1,7 @@
 package nnue
 
+import "os"
+
 // 本文件实现累加器的增量同步：只对「特征集合的差集」做 add/sub，
 // 避免每次评估都重算全部特征。
 //
@@ -54,6 +56,9 @@ func SetPendingLimit(n int) int {
 // 走增量，超过就改全量重建。64 只是一点余量 —— 真超了会退回逐条处理，
 // 结果一致、只是慢一点。
 const maxThreatPending = 64
+
+// maxPSQPending 同上，用于 applyPSQ 的栈上索引数组。
+const maxPSQPending = 64
 
 // Apply 把累加器更新到局面 p 当前的特征集合。
 //
@@ -127,27 +132,76 @@ func (w *Weights) RefreshFromPosition(p *Position, a *Accumulator) {
 
 // applyPSQ 按脏格子更新 PSQ 累加器。索引含桶号，所以调用前必须确认桶与镜像未变。
 //
-// 一条脏棋子会产生「减旧行 + 加新行」两行 —— 恰好是两行合一的形状
-// （acc += w新 − w旧），所以配对交给 addRows2 一次做完。
+// 一条脏棋子会产生「减旧行 + 加新行」两行，而**走一步天然产生「离开格(减) +
+// 到达格(加)」这一对**（见 position.go 的 Make）。所以这里把两个方向分别收进
+// 两列，再把两列一一配对交给两行合一的内核 —— 不吃子的走法就从 2 次单行调用
+// 变成 1 次。「同一格换子」（吃子后落子那格）同时产生一加一减，也落进这两列。
+//
+// ⚠️ 第一遍**只收集索引、不碰累加器**：越界兜底要能从头重来，若第一遍带了
+// 副作用，兜底就会把已经算过的条目再算一次。
 // psqt 那 16 个 int32 不参与合并：它与累加器是两片独立数组，合并没有收益。
 func (w *Weights) applyPSQ(p *Position, a *Accumulator, c, bucket int, mirror bool) {
 	if diagOn {
 		diagStats.ApplyPieces += int64(len(p.pendingPieces))
 	}
+
+	var addIdx, subIdx [maxPSQPending]int32
+	na, ns := 0, 0
 	for _, d := range p.pendingPieces {
-		switch {
-		case d.oldPc != 0 && d.newPc != 0:
-			newIdx := PSQIndex(c, d.sq, int(d.newPc), bucket, mirror)
-			oldIdx := PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror)
-			addRows2(&a.PsqAcc[c], w.W[newIdx*L1:newIdx*L1+L1], w.W[oldIdx*L1:oldIdx*L1+L1], true)
-			psqtSub(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+oldIdx*PSQTBuckets:psqPsqtBase+(oldIdx+1)*PSQTBuckets])
-			psqtAdd(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+newIdx*PSQTBuckets:psqPsqtBase+(newIdx+1)*PSQTBuckets])
-		case d.newPc != 0:
-			psqAdd(a, w, c, PSQIndex(c, d.sq, int(d.newPc), bucket, mirror))
-		default:
-			psqSub(a, w, c, PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror))
+		if d.newPc != 0 {
+			if na >= maxPSQPending {
+				w.applyPSQSimple(p, a, c, bucket, mirror)
+				return
+			}
+			addIdx[na] = int32(PSQIndex(c, d.sq, int(d.newPc), bucket, mirror))
+			na++
+		}
+		if d.oldPc != 0 {
+			if ns >= maxPSQPending {
+				w.applyPSQSimple(p, a, c, bucket, mirror)
+				return
+			}
+			subIdx[ns] = int32(PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror))
+			ns++
 		}
 	}
+
+	pair := pairCount(na, ns)
+	for k := 0; k < pair; k++ {
+		psqPairAddSub(a, w, c, int(addIdx[k]), int(subIdx[k]))
+	}
+	for k := pair; k < na; k++ {
+		if diagOn {
+			diagStats.SingleRows++
+		}
+		psqAdd(a, w, c, int(addIdx[k]))
+	}
+	for k := pair; k < ns; k++ {
+		if diagOn {
+			diagStats.SingleRows++
+		}
+		psqSub(a, w, c, int(subIdx[k]))
+	}
+}
+
+// applyPSQSimple 是逐条处理的兜底路径，只在脏窗口超出栈上索引数组容量时使用。
+func (w *Weights) applyPSQSimple(p *Position, a *Accumulator, c, bucket int, mirror bool) {
+	for _, d := range p.pendingPieces {
+		if d.oldPc != 0 {
+			psqSub(a, w, c, PSQIndex(c, d.sq, int(d.oldPc), bucket, mirror))
+		}
+		if d.newPc != 0 {
+			psqAdd(a, w, c, PSQIndex(c, d.sq, int(d.newPc), bucket, mirror))
+		}
+	}
+}
+
+// psqPairAddSub 把「加一条 PSQ 特征、减一条 PSQ 特征」合成一趟。
+func psqPairAddSub(a *Accumulator, w *Weights, c, addIdx, subIdx int) {
+	rowsPairAddSub(&a.PsqAcc[c],
+		w.W[addIdx*L1:addIdx*L1+L1], w.W[subIdx*L1:subIdx*L1+L1])
+	psqtSub(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+subIdx*PSQTBuckets:psqPsqtBase+(subIdx+1)*PSQTBuckets])
+	psqtAdd(&a.PsqPsqt[c], w.Psqt[psqPsqtBase+addIdx*PSQTBuckets:psqPsqtBase+(addIdx+1)*PSQTBuckets])
 }
 
 // applyThreats 按脏条目更新威胁累加器（索引只含镜像）。
@@ -193,31 +247,61 @@ func (w *Weights) applyThreats(p *Position, a *Accumulator, c int, mirror bool) 
 		}
 	}
 
-	pair := na
-	if ns < pair {
-		pair = ns
-	}
+	pair := pairCount(na, ns)
 	for k := 0; k < pair; k++ {
-		ai, si := int(addIdx[k]), int(subIdx[k])
-		if useFuseRows {
-			if diagOn {
-				diagStats.FusePairs++
-			}
-			addRows2(&a.ThrAcc[c],
-				w.ThreatW[ai*L1:ai*L1+L1], w.ThreatW[si*L1:si*L1+L1], true)
-			psqtSub(&a.ThrPsqt[c], w.Psqt[si*PSQTBuckets:(si+1)*PSQTBuckets])
-			psqtAdd(&a.ThrPsqt[c], w.Psqt[ai*PSQTBuckets:(ai+1)*PSQTBuckets])
-			continue
-		}
-		thrSub(a, w, c, si)
-		thrAdd(a, w, c, ai)
+		thrPairAddSub(a, w, c, int(addIdx[k]), int(subIdx[k]))
 	}
-	for k := pair; k < na; k++ {
+	// 零头只剩同一个方向。两个「加」还能再凑一对（内核的 add+add 模式）；
+	// 两个「减」凑不了 —— 那需要内核再加一个 `acc -= w1 + w2` 的循环体。
+	//
+	// 注意关掉配对开关时 twoAdd 必须是 0，否则零头会被「配对」成两次单行调用，
+	// 与 on 态只差内核形状、量不出配对的真实收益（这正是这个开关要区分的东西）。
+	twoAdd := 0
+	if useRowPairing {
+		twoAdd = (na - pair) / 2
+	}
+	for k := 0; k < twoAdd; k++ {
+		thrPairSameAdd(a, w, c, int(addIdx[pair+2*k]), int(addIdx[pair+2*k+1]))
+	}
+	for k := pair + 2*twoAdd; k < na; k++ {
+		if diagOn {
+			diagStats.SingleRows++
+		}
 		thrAdd(a, w, c, int(addIdx[k]))
 	}
 	for k := pair; k < ns; k++ {
+		if diagOn {
+			diagStats.SingleRows++
+		}
 		thrSub(a, w, c, int(subIdx[k]))
 	}
+}
+
+// thrPairAddSub 把「加一条威胁特征、减一条威胁特征」合成一趟。
+func thrPairAddSub(a *Accumulator, w *Weights, c, addIdx, subIdx int) {
+	if diagOn {
+		diagStats.FusePairs++
+	}
+	rowsPairAddSub(&a.ThrAcc[c],
+		w.ThreatW[addIdx*L1:addIdx*L1+L1], w.ThreatW[subIdx*L1:subIdx*L1+L1])
+	psqtSub(&a.ThrPsqt[c], w.Psqt[subIdx*PSQTBuckets:(subIdx+1)*PSQTBuckets])
+	psqtAdd(&a.ThrPsqt[c], w.Psqt[addIdx*PSQTBuckets:(addIdx+1)*PSQTBuckets])
+}
+
+// thrPairSameAdd 把两条「加」合成一趟（acc += w1 + w2）：内核的 add+add 模式。
+func thrPairSameAdd(a *Accumulator, w *Weights, c, idx1, idx2 int) {
+	if diagOn {
+		diagStats.FusePairs++
+	}
+	if useFuseRows {
+		addRows2(&a.ThrAcc[c],
+			w.ThreatW[idx1*L1:idx1*L1+L1], w.ThreatW[idx2*L1:idx2*L1+L1], false)
+	} else {
+		addI16(&a.ThrAcc[c], w.ThreatW[idx1*L1:idx1*L1+L1])
+		addI16(&a.ThrAcc[c], w.ThreatW[idx2*L1:idx2*L1+L1])
+	}
+	psqtAdd(&a.ThrPsqt[c], w.Psqt[idx1*PSQTBuckets:(idx1+1)*PSQTBuckets])
+	psqtAdd(&a.ThrPsqt[c], w.Psqt[idx2*PSQTBuckets:(idx2+1)*PSQTBuckets])
 }
 
 // applyThreatsSimple 是逐条处理的兜底路径，只在脏窗口超出栈上索引数组容量时
@@ -305,6 +389,44 @@ func thrSub(a *Accumulator, w *Weights, c, idx int) {
 	subI16(&a.ThrAcc[c], w.ThreatW[base:base+L1])
 	base = idx * PSQTBuckets
 	psqtSub(&a.ThrPsqt[c], w.Psqt[base:base+PSQTBuckets])
+}
+
+// useRowPairing 决定要不要把成对的行合并成一次调用。
+//
+// 它是**测量用开关**：关掉之后配对结构仍在，只是每对退回两次单行调用 ——
+// 于是「配对 + 融合」与「只融合」能在同一份二进制里背靠背交替，直接量出配对
+// 本身值多少（跨进程比较两批 A/B 的中位数分辨不出 1% 量级的差别）。
+var useRowPairing = os.Getenv("QIJING_ROWPAIR") != "off"
+
+// SetRowPairing 切换配对并返回原值，供同一进程内交替 A/B 使用。
+func SetRowPairing(on bool) bool {
+	old := useRowPairing
+	useRowPairing = on
+	return old
+}
+
+// pairCount 返回两列里实际能配对的数量；关掉配对开关时恒为 0。
+func pairCount(na, ns int) int {
+	if !useRowPairing {
+		return 0
+	}
+	if ns < na {
+		return ns
+	}
+	return na
+}
+
+// rowsPairAddSub 把「加一行、减一行」合成一趟：acc += wAdd − wSub。
+//
+// 关掉融合开关时退回两次单行调用 —— 结果逐位相同（环绕加可交换结合），
+// 只是慢一点。A/B 要靠这个开关在同一份二进制里切两态。
+func rowsPairAddSub(acc *[L1]int16, wAdd, wSub []byte) {
+	if useFuseRows {
+		addRows2(acc, wAdd, wSub, true)
+		return
+	}
+	addI16(acc, wAdd)
+	subI16(acc, wSub)
 }
 
 // forEachThreat 枚举某视角下所有激活的威胁特征索引。

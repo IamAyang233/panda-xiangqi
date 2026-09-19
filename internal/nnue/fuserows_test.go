@@ -72,11 +72,15 @@ func TestFuseRowsKernelMatchesScalar(t *testing.T) {
 	t.Logf("内核层：%d 组随机权重行 × 加减两种组合，融合与单行逐位一致 ✓", trials)
 }
 
-// TestFuseRowsMatchesSingle 在集成层对拍：同一串局面走两遍，两遍只差
-// useFuseRows，逐检查点比较累加器指纹。
+// TestFuseRowsMatchesSingle 在集成层对拍：同一串局面走四遍，四遍只差
+// 「配对开关 × 融合开关」，逐检查点比较累加器指纹。
 //
-// ⚠️ 这一层必须确认融合真的被走到过 —— 否则两侧走的是同一条路径，
-// 测试会「因为没测到而通过」。所以最后断言配对次数大于 0。
+// 四个组合必须两两逐位相同 —— 因为 (关配对, 关融合) 是「全部走单行」的
+// 原始形态，而 (开配对, 开融合) 是「尽量把行合成一趟」的形态；两者结果一致
+// 就等于证明了这一整条改造（配对重排 + 两行合一内核）没有改变任何数值。
+//
+// ⚠️ 这一层必须确认配对路径真的被走到过 —— 否则四个组合走的其实都是单行，
+// 测试会「因为没测到而通过」。所以最后断言配对数大于 0。
 func TestFuseRowsMatchesSingle(t *testing.T) {
 	w, err := Load(flatPath)
 	if err != nil {
@@ -100,10 +104,10 @@ func TestFuseRowsMatchesSingle(t *testing.T) {
 	defer EnableDiag(false)
 
 	// walk 用固定种子走一遍，返回每个检查点上的累加器指纹。
-	walk := func(fuse bool) ([]uint64, int64) {
-		old := useFuseRows
-		useFuseRows = fuse
-		defer func() { useFuseRows = old }()
+	walk := func(fuse, pair bool) ([]uint64, int64) {
+		oldFuse, oldPair := useFuseRows, useRowPairing
+		useFuseRows, useRowPairing = fuse, pair
+		defer func() { useFuseRows, useRowPairing = oldFuse, oldPair }()
 
 		ResetDiag()
 		var dig []uint64
@@ -167,20 +171,38 @@ func TestFuseRowsMatchesSingle(t *testing.T) {
 		return dig, DiagSnapshot().FusePairs
 	}
 
-	digSingle, _ := walk(false)
-	digFused, pairs := walk(true)
-
-	if len(digSingle) != len(digFused) {
-		t.Fatalf("两遍的检查点数不同：单行 %d，融合 %d", len(digSingle), len(digFused))
+	combos := []struct {
+		name       string
+		fuse, pair bool
+	}{
+		{"全单行(原始形态)", false, false},
+		{"只配对不融合", true, false},
+		{"只融合不配对", false, true},
+		{"配对+融合", true, true},
 	}
-	for i := range digSingle {
-		if digSingle[i] != digFused[i] {
-			t.Fatalf("第 %d 个检查点：融合与单行的累加器不同（单行 %#x，融合 %#x）",
-				i, digSingle[i], digFused[i])
+	base, _ := walk(combos[0].fuse, combos[0].pair)
+	pairs := int64(0)
+	for i, c := range combos {
+		if i == 0 {
+			continue
+		}
+		dig, p := walk(c.fuse, c.pair)
+		if p > pairs {
+			pairs = p
+		}
+		if len(dig) != len(base) {
+			t.Fatalf("%s：检查点数不同（%d vs %d）", c.name, len(dig), len(base))
+		}
+		for k := range base {
+			if dig[k] != base[k] {
+				t.Fatalf("%s：第 %d 个检查点与「全单行」不同（%#x vs %#x）",
+					c.name, k, dig[k], base[k])
+			}
 		}
 	}
 	if pairs == 0 {
-		t.Fatal("融合内核一次都没被走到 —— 这个测试没有测到目标路径")
+		t.Fatal("配对路径一次都没被走到 —— 这个测试没有测到目标路径")
 	}
-	t.Logf("集成层：%d 个检查点，融合路径触发 %d 次配对，逐位一致 ✓", len(digSingle), pairs)
+	t.Logf("集成层：%d 个检查点 × %d 个开关组合，逐位一致；配对最多触发 %d 次 ✓",
+		len(base), len(combos), pairs)
 }
