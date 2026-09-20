@@ -14,7 +14,6 @@ import (
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 	"github.com/IamAyang233/panda-xiangqi/internal/llm"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
-	"github.com/IamAyang233/panda-xiangqi/internal/search"
 )
 
 // Mode 对局模式。
@@ -440,23 +439,7 @@ func (s *Session) aiReply() {
 		res, err = player.BestMove(ctx, s.snapshot(), candidates)
 		mv, comment, fallback = res.Move, res.Comment, res.Fallback
 	case s.Mode == ModeEngine || s.Mode == ModePuzzle:
-		// 思考信息流：每完成一层推一条 analysis。
-		//
-		// ⚠️ 只有内嵌引擎支持（皮卡鱼走 UCI、简易引擎没有迭代加深，降级时
-		// obs 不会被调用）⇒ UI 只能把它当增强信息，不能依赖它一定出现。
-		//
-		// ⚠️ 回调跑在**搜索线程**上：这里只做一次 broadcast（它自己持锁），
-		// 不要在回调里做重活或反过来调引擎。
-		mv, err = s.engines.BestMoveObserve(ctx, s.snapshot(), s.puzzleLevel(), func(r search.Result) {
-			s.broadcast(map[string]any{
-				"type":  "analysis",
-				"depth": r.Depth,
-				"score": r.Score,
-				"nodes": r.Nodes,
-				"makes": r.Makes,
-				"best":  r.Best.String(),
-			})
-		})
+		mv, err = s.engines.BestMove(ctx, s.snapshot(), s.puzzleLevel())
 	default:
 		mv, err = s.engines.BestMove(ctx, s.snapshot(), s.puzzleLevel())
 	}
