@@ -7,6 +7,14 @@ package nnue
 // arm64 的 NEON 版本可以后续按同样方式补上（simd_arm64.go + simd_arm64.s），
 // 在此之前这里保持纯标量，行为正确只是慢一些。
 
+// useAVX2 在非 amd64 上恒为 false。
+//
+// ⚠️ 它必须与 simd_amd64.go 的同名变量**成对存在**：共用的 simd.go 里
+// `useFuseRows = useAVX2 && ...` 引用了它，缺了这个定义 arm64 交叉编译会直接报
+// undefined（本项目的 arm 包因此挂过一次，而本地 amd64 构建完全看不出来）。
+// 加平台相关变量时，记得两边都定义 —— 每次打包都要真的过一遍 arm 交叉编译。
+const useAVX2 = false
+
 // UsesAVX2 在非 amd64 上恒为 false。
 func UsesAVX2() bool { return false }
 
