@@ -32,6 +32,14 @@ const (
 func Piece(color, typ int) byte { return byte(color | typ) }
 
 // ColorOf 返回棋子颜色（Red/Black）。调用前须确认非 Empty/Edge。
+// ColorOf 返回棋子颜色（Red / Black）。
+//
+// ⚠️ **ColorOf(Empty) == Red**（Empty 是 0，0&0x08 == 0 == Red）。这个副作用在
+// 正常对局里无害，但一旦有 `Make` 从空格走子（伪合法契约允许，见 position.go 的
+// Make），那条 history 条目就会被记成**红方走子** —— 于是 LongCheckWinner 里
+// `blackAll` 可能空洞地为真、直接判「红胜」。2026-09-21：两条长将/重复测试正是
+// 因为这一点「用完全错误的理由通过了断言」，排查了很久。写测试时务必确认
+// 每一步的起点真的有子。
 func ColorOf(p byte) int { return int(p & 0x08) }
 
 // TypeOf 返回棋子类型（King..Pawn）。

@@ -924,8 +924,10 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 
 	if ply > 0 {
 		// RepetitionCount 含当前局面，首次出现返回 1，所以 >1 才是真的重复。
+		// 三次重复且构成长将循环时按规则判长将方负（见 longcheck.go），
+		// 其余重复仍按和棋分 —— 搜索的估值必须与对局裁决一致。
 		if p.RepetitionCount() > 1 {
-			return 0
+			return repetitionScore(p, ply)
 		}
 		if p.Halfmove >= 120 { // 60 回合自然限着
 			return 0
@@ -1650,7 +1652,8 @@ func (s *Searcher) quiesce(p *game.Position, alpha, beta, ply int) int {
 		return s.evaluate(p)
 	}
 	if p.RepetitionCount() > 1 {
-		return 0
+		// 同 alphaBeta：三次重复的长将循环按规则判负，其余按和棋分。
+		return repetitionScore(p, ply)
 	}
 
 	inCheck := p.InCheck(p.Turn)

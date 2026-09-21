@@ -233,39 +233,35 @@ func TestCannonCheckDetection(t *testing.T) {
 }
 
 func TestLongCheckRedLoses(t *testing.T) {
-	// 红长将：红车 e1（开局已将军 e9）→ e2 → d2 交替将军，黑王 e9↔d9 应将。
-	// 循环 4 步（红将、黑应、红将、黑应），重复 3 次后红长将判负（黑胜）。
-	p, err := ParseFEN("4k4/9/9/9/9/9/9/9/4R4/4K4 w - - 0 1")
+	// 红长将：红车 e2↔f2 追击（车随黑王的文件换线），黑王 f9↔e9 应将；
+	// 红帅在 d0 —— 与黑王永不在同一纵线，所以不存在「王走回去造成照面」的非法着法。
+	//
+	// ⚠️ 旧版本用的 FEN 是 "4k4/.../4R4/4K4" + 序列 e1e2/e9d9/...：那里双方帅在
+	// e 线照面，黑王走回 e9 的那几步（第 4/8/12 步）其实**非法**；而 `Make` 只要求
+	// 伪合法，于是测试照跑。现在换成下面这条**每一步都合法**的序列，并由
+	// playLegalSeq 逐着断言。
+	p, err := ParseFEN("5k3/9/9/9/9/9/9/4R4/9/3K5 w - - 0 1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	seq := []struct{ from, to string }{
-		{"e1", "e2"}, // 红车将军 e9
-		{"e9", "d9"}, // 黑王应将
-		{"e2", "d2"}, // 红车将军 d9
-		{"d9", "e9"}, // 黑王应将
-		{"d2", "e2"},
-		{"e9", "d9"},
-		{"e2", "d2"},
-		{"d9", "e9"},
-		{"d2", "e2"},
-		{"e9", "d9"},
-		{"e2", "d2"},
-		{"d9", "e9"},
+		{"e2", "f2"}, // 红车将军 f9
+		{"f9", "e9"}, // 黑王应将
+		{"f2", "e2"}, // 红车将军 e9
+		{"e9", "f9"}, // 黑王应将
+		{"e2", "f2"},
+		{"f9", "e9"},
+		{"f2", "e2"},
+		{"e9", "f9"},
+		{"e2", "f2"},
+		{"f9", "e9"},
+		{"f2", "e2"},
+		{"e9", "f9"},
 	}
-	for i, s := range seq {
-		f, ok1 := SquareFromName(s.from)
-		t2, ok2 := SquareFromName(s.to)
-		if !ok1 || !ok2 {
-			t.Fatalf("bad square %s-%s", s.from, s.to)
-		}
-		p.Make(Move{From: f, To: t2})
-		if i == 7 && p.RepetitionCount() != 2 {
-			t.Fatalf("第 8 步后期望重复计数 2, 实际 %d", p.RepetitionCount())
-		}
-	}
-	if got := p.RepetitionCount(); got != 3 {
-		t.Fatalf("期望三次重复, 实际 %d", got)
+	playLegalSeq(t, p, seq)
+	// 12 步 = 三圈 ⇒ 初始局面出现 4 次（第 0/4/8/12 步）。
+	if n := p.RepetitionCount(); n != 4 {
+		t.Fatalf("12 步后初始局面应出现 4 次，实际 %d", n)
 	}
 	if w, ok := p.LongCheckWinner(); !ok || w != ResultBlackWin {
 		t.Fatalf("红长将应判黑胜, 实际 winner=%q ok=%v", w, ok)
@@ -277,33 +273,36 @@ func TestLongCheckRedLoses(t *testing.T) {
 }
 
 func TestLongCheckBlackLoses(t *testing.T) {
-	// 黑长将：黑车 e2（开局已将军 e0）→ e3 → f3 交替将军，红帅 e0↔f0 应将。
-	// 重复 3 次后黑长将判负（红胜）。
-	p, err := ParseFEN("4k4/9/4r4/9/9/9/9/9/9/4K4 b - - 0 1")
+	// 黑长将：黑车 f7↔e7 追击（车随红帅的文件换线），红帅 e0↔f0 应将；
+	// 黑王在 d9 —— 与红帅永不在同一纵线。
+	//
+	// ⚠️ 旧版本有两处错，而且**测试照样通过**，2026-09-21 修正：
+	//   - 序列写的是 e2e3/e3f3（起点是空格！），黑车其实在 e7、一步没动。
+	//   - 于是 12 步的 history 里**没有任何黑方条目** —— 因为 ColorOf(Empty) == Red，
+	//     空走子被记成红方走子。LongCheckWinner 里 `blackAll` 于是空洞地为真，
+	//     直接返回 ResultRedWin。「用完全错误的理由断言了正确的值」。
+	// 现在子真的在动（黑车 e7↔f7），每一步也都合法。
+	p, err := ParseFEN("3k5/9/5r3/9/9/9/9/9/9/4K4 b - - 0 1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	seq := []struct{ from, to string }{
-		{"e2", "e3"}, // 黑车将军 e0
+		{"f7", "e7"}, // 黑车将军 e0
 		{"e0", "f0"}, // 红帅应将
-		{"e3", "f3"}, // 黑车将军 f0
+		{"e7", "f7"}, // 黑车将军 f0
 		{"f0", "e0"}, // 红帅应将
-		{"f3", "e3"},
+		{"f7", "e7"},
 		{"e0", "f0"},
-		{"e3", "f3"},
+		{"e7", "f7"},
 		{"f0", "e0"},
-		{"f3", "e3"},
+		{"f7", "e7"},
 		{"e0", "f0"},
-		{"e3", "f3"},
+		{"e7", "f7"},
 		{"f0", "e0"},
 	}
-	for _, s := range seq {
-		f, ok1 := SquareFromName(s.from)
-		t2, ok2 := SquareFromName(s.to)
-		if !ok1 || !ok2 {
-			t.Fatalf("bad square %s-%s", s.from, s.to)
-		}
-		p.Make(Move{From: f, To: t2})
+	playLegalSeq(t, p, seq)
+	if n := p.RepetitionCount(); n != 4 {
+		t.Fatalf("12 步后初始局面应出现 4 次，实际 %d", n)
 	}
 	if w, ok := p.LongCheckWinner(); !ok || w != ResultRedWin {
 		t.Fatalf("黑长将应判红胜, 实际 winner=%q ok=%v", w, ok)
@@ -316,31 +315,36 @@ func TestLongCheckBlackLoses(t *testing.T) {
 
 func TestRepetitionNonCheckDraw(t *testing.T) {
 	// 非长将的三次重复（双方走马闲步循环）不受影响，仍判和。
-	p, err := ParseFEN("n3k4/9/9/9/9/9/9/9/9/N3K4 w - - 0 1")
+	//
+	// ⚠️ 这个测试此前是**因为错误的原因**通过的，2026-09-21 修正：
+	//   - 两个马在 **a0 / a9**（FEN 首尾字段是 "n3k4"/"N3K4"），原来写的是 b0/b9 ——
+	//     那两格是空的，于是 12 步全在空格上「走子」，马一步没动。而 `Make`
+	//     从空格走子**不报错**，它照样 XOR Zobrist 键，键序列每 4 步重复一次
+	//     ⇒ RepetitionCount 照样涨上去 ⇒ 测试照样「通过」。
+	//   - 原来的 FEN 还把双方将帅放在同一条纵线上（照面），初始就「被将军」。
+	//     现在把红帅放到 d0，两个王的文件不同 ⇒ 局面干净、着法全合法。
+	//   - 还有一处**FEN 与着法序列自相矛盾**：FEN 把马放在 a0/a9，而序列按
+	//     b0/b9 写（`b0→c2` 才是马步；`a0→c2` 是斜线，压根不是马步）。
+	//     现按 FEN 把走法改成 a0↔b2 / a9↔b7。
+	// 下面每一步都断言「起点有子 + 着法合法」，坐标再写错就会当场失败。
+	p, err := ParseFEN("n3k4/9/9/9/9/9/9/9/9/N2K5 w - - 0 1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	seq := []struct{ from, to string }{
-		{"b0", "c2"}, // 红马闲步
-		{"b9", "c7"}, // 黑马闲步
-		{"c2", "b0"},
-		{"c7", "b9"},
-		{"b0", "c2"},
-		{"b9", "c7"},
-		{"c2", "b0"},
-		{"c7", "b9"},
-		{"b0", "c2"},
-		{"b9", "c7"},
-		{"c2", "b0"},
-		{"c7", "b9"},
+		{"a0", "b2"}, // 红马闲步
+		{"a9", "b7"}, // 黑马闲步
+		{"b2", "a0"},
+		{"b7", "a9"},
+		{"a0", "b2"},
+		{"a9", "b7"},
+		{"b2", "a0"},
+		{"b7", "a9"},
 	}
-	for _, s := range seq {
-		f, ok1 := SquareFromName(s.from)
-		t2, ok2 := SquareFromName(s.to)
-		if !ok1 || !ok2 {
-			t.Fatalf("bad square %s-%s", s.from, s.to)
-		}
-		p.Make(Move{From: f, To: t2})
+	playLegalSeq(t, p, seq)
+	// 8 步 = 两圈 ⇒ 初始局面出现 3 次（第 0/4/8 步）。
+	if n := p.RepetitionCount(); n != 3 {
+		t.Fatalf("8 步后初始局面应出现 3 次，实际 %d", n)
 	}
 	if _, ok := p.LongCheckWinner(); ok {
 		t.Fatal("非长将重复不应判定单方胜负")
@@ -348,5 +352,31 @@ func TestRepetitionNonCheckDraw(t *testing.T) {
 	st := p.CheckStatus()
 	if !st.IsDraw || st.Result != ResultDraw || st.Reason != ReasonRepetition {
 		t.Fatalf("非长将重复应和, 实际 result=%q reason=%q draw=%v", st.Result, st.Reason, st.IsDraw)
+	}
+}
+
+// playLegalSeq 依次走出一串着法，并断言每一步「起点有子且着法合法」。
+//
+// ⚠️ 这两个断言都不能省：`Make` 只要求**伪合法**，对「起点是空格」与「自将/照面」
+// 都不报错。少一个断言，写错坐标或写错照面的测试就会静默退化成一个空测试
+// —— 这在本文件里真的发生过两次（TestRepetitionNonCheckDraw 与
+// TestLongCheckBlackLoses）。
+func playLegalSeq(t *testing.T, p *Position, seq []struct{ from, to string }) {
+	t.Helper()
+	for _, s := range seq {
+		f, ok1 := SquareFromName(s.from)
+		t2, ok2 := SquareFromName(s.to)
+		if !ok1 || !ok2 {
+			t.Fatalf("bad square %s-%s", s.from, s.to)
+		}
+		if p.PieceAt(int(f)) == Empty {
+			t.Fatalf("着法 %s-%s 的起点没有棋子（坐标写错了？）—— 空走子不会报错，"+
+				"但会污染 Zobrist 键历史并制造假重复", s.from, s.to)
+		}
+		m := Move{From: f, To: t2}
+		if !p.IsLegal(m) {
+			t.Fatalf("着法 %s-%s 在当前局面不合法（自将 / 将帅照面 / 蹩腿等）", s.from, s.to)
+		}
+		p.Make(m)
 	}
 }

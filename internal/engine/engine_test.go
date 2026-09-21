@@ -122,25 +122,60 @@ func TestLevelConfigs(t *testing.T) {
 	}
 }
 
-// 引擎不得用"长将逼和"逃避败局：红车可 e2↔d2 长将黑王 e9↔d9（重复判红负），
-// 但红方整体劣势（黑有双车）。引擎应拒绝长将线，选择其它着法。
-func TestEngineAvoidsLongCheck(t *testing.T) {
-	// 黑双车 g1/h1 即将成杀，红只有一车可 e2↔d2 循环将军黑王。
-	p, err := game.ParseFEN("4k4/9/9/9/9/9/9/4R4/9/2r1K2r1 w - - 0 1")
-	if err != nil {
-		t.Fatal(err)
+// TestEnginesReturnLegalMoveInTensePosition 在「红王被双车逼杀」的紧局面上做冒烟检查：
+// 两条引擎路径都必须给出**合法**着法，且**不得改动调用方的局面**。
+//
+// ⚠️ 这个测试原来叫 TestEngineAvoidsLongCheck，断言「引擎不会选择长将着法
+// e2d2/d2e2」。但那个局面里红王正被 c0 黑车将军，红方**只有 e0e1 一个合法着法**
+// —— e2d2 压根不合法、永远不可能被选中，所以断言恒真、**零判别力**：
+// 它从没验证过任何东西（2026-09-21 发现）。同理它的注释写「黑双车 g1/h1」，
+// 而 FEN 里两车在 c0/h0，也不符。
+//
+// 「引擎会不会把长将当成和棋」这件事该由**确定性**的关卡把关，放在
+// internal/search 的 TestRepetitionScoreLongCheck（直接断言重复分值必须是长将方
+// 判负），而不是靠一个全输局面下的着法选择（那种局面里选哪步都不会更好，
+// 断言「不选某步」在原理上就不成立）。这里只保留它本来真正测到的东西。
+func TestEnginesReturnLegalMoveInTensePosition(t *testing.T) {
+	const fen = "4k4/9/9/9/9/9/9/4R4/9/2r1K2r1 w - - 0 1"
+
+	check := func(t *testing.T, tag string, mv game.Move, err error, p *game.Position, fen0 string) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s 出错: %v", tag, err)
+		}
+		if !p.IsLegal(mv) {
+			t.Errorf("%s 给出非法着法 %s", tag, mv)
+		}
+		if got := p.FEN(); got != fen0 {
+			t.Errorf("%s 改动了调用方的局面：前 %s，后 %s", tag, fen0, got)
+		}
 	}
-	e := NewSimpleEngine()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	mv, err := e.BestMove(ctx, p, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	longCheck := (mv.String() == "e2d2" || mv.String() == "d2e2")
-	if longCheck {
-		t.Errorf("引擎选择了长将着法 %s（会被判负），应避开", mv)
-	}
+
+	t.Run("simple", func(t *testing.T) {
+		p, err := game.ParseFEN(fen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fen0 := p.FEN()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		mv, err := NewSimpleEngine().BestMove(ctx, p, 10)
+		check(t, "降级引擎", mv, err, p, fen0)
+	})
+
+	t.Run("native", func(t *testing.T) {
+		e := NewNativeEngine(requireWeights(t), 1)
+		defer e.Close()
+		p, err := game.ParseFEN(fen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fen0 := p.FEN()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		mv, err := e.BestMove(ctx, p, 10)
+		check(t, "原生引擎", mv, err, p, fen0)
+	})
 }
 
 // 坏引擎（非 UCI 程序）必须进诊断而不是静默失败：这是排查"皮卡鱼启动不了"的关键信息。

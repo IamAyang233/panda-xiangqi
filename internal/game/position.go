@@ -315,6 +315,16 @@ func (p *Position) givesCheckBrute(m Move) bool {
 }
 
 // Make 走一步（伪合法即可），压入历史栈。返回被吃子（可能为 Empty）。
+//
+// ⚠️ 前置条件：**from 格必须有己方棋子**。`Make` 不校验这一点 —— 从空格走子
+// 不报错，但它照样会 XOR Zobrist 键（`pieceKeys[Empty][from] ^ pieceKeys[Empty][to]
+// ^ sideKey`）并把条目压进历史，于是**键历史被污染、RepetitionCount 虚增、
+// 出现假重复判和**（`longcheck`/`status` 都读这条历史）。
+// 它也不会校验合法性（自将 / 将帅照面），那是 `IsLegal` / `LegalMoves` 的职责。
+//
+// 对外的两条入口（session 的 ApplyPlayerMove 与 AI 应着）都已用 IsLegal 校验过，
+// 搜索也只对自己的合法着法列表调用，所以生产路径安全。**写测试或离线工具时
+// 要自己保证**：坐标写错会静默退化成一个毫无判别力的空测试（真实发生过三次）。
 func (p *Position) Make(m Move) byte {
 	from, to := int(m.From), int(m.To)
 	captured := p.Board[to]
