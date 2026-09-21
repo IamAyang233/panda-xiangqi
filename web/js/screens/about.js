@@ -20,6 +20,21 @@ function cmpVer(a, b) {
   return 0;
 }
 
+// safeURL 只放行 http/https 绝对地址，其余（含 javascript: / data: / blob:）返回空串。
+//
+// 用途：更新日志里的下载链接来自**远端更新服务**（可配置的 PanDa 地址），把它直接
+// 赋给 `a.href` 时，`javascript:` 这类伪协议会在点击时于本页执行脚本 —— 同一个
+// 响应里的其它字段都走了 textContent，唯独 href 是一条能带执行语义的通道。
+export function safeURL(s) {
+  if (!s) return '';
+  try {
+    const u = new URL(String(s), location.href);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+  } catch {
+    return '';
+  }
+}
+
 export function initAbout() {
   $('btn-about').onclick = openAbout;
   $('btn-about-lobby').onclick = openAbout;
@@ -104,10 +119,11 @@ function renderChangelog(releases, el) {
       t.textContent = r.title;
       head.appendChild(t);
     }
-    if (r.download_url) {
+    const dl = safeURL(r.download_url);
+    if (dl) {
       const a = document.createElement('a');
       a.className = 'changelog-dl';
-      a.href = r.download_url;
+      a.href = dl;
       a.target = '_blank';
       a.rel = 'noopener';
       a.textContent = '下载';

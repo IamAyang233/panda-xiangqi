@@ -81,14 +81,16 @@ func main() {
 	var url string
 	if cfg.SocketPath != "" {
 		// 清理残留 socket 文件，避免 bind 失败。
-		if _, statErr := os.Stat(cfg.SocketPath); statErr == nil {
-			_ = os.Remove(cfg.SocketPath)
+		// ⚠️ 只删「确实是 socket」的路径见 cleanStaleSocket：删除不可逆，而
+		// SocketPath 来自配置文件，写错成普通文件时不该把它删掉。
+		if err := cleanStaleSocket(cfg.SocketPath); err != nil {
+			log.Fatalf("Socket 路径 %s 不可用: %v", cfg.SocketPath, err)
 		}
 		ln, err = net.Listen("unix", cfg.SocketPath)
 		if err != nil {
 			log.Fatalf("监听 Unix Socket %s 失败: %v", cfg.SocketPath, err)
 		}
-		// 退出时移除 socket 文件。
+		// 退出时移除 socket 文件（此处 bind 已成功，该路径必定是我们的 socket）。
 		defer os.Remove(cfg.SocketPath)
 		mode := "本地 TCP"
 		if cfg.GatewayPrefix != "" {
@@ -137,6 +139,27 @@ func main() {
 	<-sig
 	log.Println("正在退出…")
 	_ = httpSrv.Close()
+}
+
+// cleanStaleSocket 清理残留的 Unix Socket 文件，供启动时 bind 前调用。
+//
+// 语义：
+//   - 路径不存在 → 什么都不做（正常情况）
+//   - 路径是 socket → 删掉（上一个实例异常退出留下的，不删会导致 bind 失败）
+//   - 路径存在但**不是** socket → 返回错误，**绝不删除**
+//
+// 第三条是重点：SocketPath 来自配置文件，写错成某个普通文件路径时，
+// 无条件的 `os.Remove` 会把那个文件删掉，而删除是不可逆的。
+// 宁可启动失败并给出明确原因，也不要静默毁掉用户的文件。
+func cleanStaleSocket(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil // 不存在（或无法 stat）→ 交给 net.Listen 报错
+	}
+	if st.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("已存在且不是 socket（配置写错了？拒绝覆盖）")
+	}
+	return os.Remove(path)
 }
 
 func findConfigFile() string {

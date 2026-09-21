@@ -161,6 +161,10 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
+	// ⚠️ 必须 trim 后再判空：前端是 trim 过的，服务端原来是裸 `req.Title == ""`
+	// ⇒ 直接打 REST 时「纯空格标题」能过，会把一条空标题的反馈转发到远端。
+	// 服务端才是信任边界，校验不能只靠前端那一份。
+	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": "标题不能为空"})
 		return
@@ -215,7 +219,13 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = map[string]any{"ok": true, "message": "已提交"}
 	}
-	out["ok"] = true
+	// ⚠️ 只在远端**没给** `ok`（或给的不是布尔值）时才补默认成功。
+	// 以前这里是无条件 `out["ok"] = true`，于是远端返回 HTTP 200 + `ok:false`
+	// （标题重复 / 限流 / 内容校验不过）也会被改写成成功 ⇒ 用户看到「✓ 反馈已提交」
+	// 而那条反馈根本没入库（静默丢数据，且用户不会重试）。
+	if _, isBool := out["ok"].(bool); !isBool {
+		out["ok"] = true
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

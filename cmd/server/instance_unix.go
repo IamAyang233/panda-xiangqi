@@ -44,5 +44,9 @@ func acquireSingleInstance() bool {
 		f.Close()
 		return true
 	}
+	// ⚠️ 这里**故意 fail-open**（返回 true = 当作拿到锁继续启动）：走到这里说明
+	// 「删锁或重建锁都失败了」，比如 /tmp 只读、并发竞争。单实例只是体验优化
+	// （防重复开端口/标签页），而「因为锁的问题让用户启动不了」是更糟的失败模式。
+	// Windows 侧 CreateMutex 失败时也是同一取舍（见 instance_windows.go）。
 	return true
 }

@@ -26,6 +26,13 @@ var wsReadTimeout = 90 * time.Second
 // wsWriteTimeout 单次写超时：对端消失时写会长时间阻塞，必须有上限。
 const wsWriteTimeout = 10 * time.Second
 
+// maxWSMessage 一条完整消息（含分片拼接后）的字节上限。
+//
+// ⚠️ 单帧上限挡不住分片：RFC 6455 允许把一条消息拆成任意多个帧，若只在 readFrame
+// 里限单帧长度，客户端可以发 N 个 1MB 的续帧让拼接缓冲无限增长 ⇒ 内存耗尽。
+// 本应用的消息都是小 JSON（着法/提示/心跳），1MB 对整条消息来说已经极宽裕。
+const maxWSMessage = 1 << 20
+
 // wsConn 单个 WebSocket 连接（服务端角色：发送不掩码，接收须解掩码）。
 type wsConn struct {
 	conn   net.Conn
@@ -149,6 +156,10 @@ func (c *wsConn) ReadMessage() ([]byte, error) {
 			c.wmu.Unlock()
 		case 0xA: // pong 忽略
 		case 0x1, 0x2, 0x0:
+			// 分片拼接也要限总长（见 maxWSMessage 的说明）。
+			if len(assembled)+len(payload) > maxWSMessage {
+				return nil, errFrameTooLarge
+			}
 			assembled = append(assembled, payload...)
 			if fin {
 				return assembled, nil
@@ -183,24 +194,27 @@ func (c *wsConn) readFrame() (fin bool, opcode byte, payload []byte, err error) 
 		length = uint64(ext[0])<<56 | uint64(ext[1])<<48 | uint64(ext[2])<<40 | uint64(ext[3])<<32 |
 			uint64(ext[4])<<24 | uint64(ext[5])<<16 | uint64(ext[6])<<8 | uint64(ext[7])
 	}
-	if length > 1<<20 { // 单帧上限 1MB（消息熔断）
+	if length > maxWSMessage { // 单帧上限（消息总长另在 ReadMessage 里限）
 		err = errFrameTooLarge
 		return
 	}
 	var mask [4]byte
-	if masked {
-		if _, err = io.ReadFull(c.br, mask[:]); err != nil {
-			return
-		}
+	if !masked {
+		// RFC 6455 §5.1：客户端 → 服务端的帧**必须**掩码。这里以前是静默接受
+		// （掩码全零等于不解包），既不合规也放过了「经由行为不一致的中间层」
+		// 做帧缓存投毒那类攻击。判错即让读循环退出并回收连接。
+		err = errUnmaskedFrame
+		return
+	}
+	if _, err = io.ReadFull(c.br, mask[:]); err != nil {
+		return
 	}
 	payload = make([]byte, length)
 	if _, err = io.ReadFull(c.br, payload); err != nil {
 		return
 	}
-	if masked {
-		for i := range payload {
-			payload[i] ^= mask[i&3]
-		}
+	for i := range payload {
+		payload[i] ^= mask[i&3]
 	}
 	return
 }
@@ -212,6 +226,7 @@ func (e wsError) Error() string { return string(e) }
 var (
 	errUpgrade       = wsError("websocket 升级失败")
 	errFrameTooLarge = wsError("帧过大")
+	errUnmaskedFrame = wsError("客户端帧未掩码")
 )
 
 func min(a, b int) int {
