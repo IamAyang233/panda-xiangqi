@@ -80,9 +80,14 @@ export class GameConn {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.type === 'legal_moves' && this.pendingLegal) {
-          const cb = this.pendingLegal;
+          const pending = this.pendingLegal;
+          // ⚠️ 用 from 配对：不匹配就是**过期回应**（用户已经点了别的子），丢掉即可，
+          // 由新请求自己的回应来收尾。少了这一句，快速连点两颗子时第一颗的落点会
+          // 落到第二颗的 resolver 上，第二颗显示错误的落点且再也纠正不过来
+          // （它自己的回应到达时 pendingLegal 已是 null，被当成普通消息丢弃）。
+          if (pending.from !== msg.from) return;
           this.pendingLegal = null;
-          cb(msg.targets || []);
+          pending.resolve(msg.targets || []);
           return;
         }
         for (const fn of this.anyHandlers) fn(msg);
@@ -100,7 +105,12 @@ export class GameConn {
       this.ws.onclose = () => {
         this.closed = true;
         this._stopHeartbeat();
-        if (this.manualClose) return; // 主动关闭：不重连
+        // ⚠️ 必须在这里让 Promise 落地。原来只在 onopen 里 resolve、别处都不 settle，
+        // 于是「连不上」时 `await conn.connect()` **永久悬挂** —— 两个调用点的
+        // try/catch 全成了死代码，界面会一直停在载入遮罩上（catch 里本来会清遮罩、
+        // 提示「连接对局服务失败」、会话过期时回大厅）。已经 resolve 过再 reject 是空操作。
+        reject(new Error('WebSocket 未建立即断开'));
+        if (this.manualClose) return;
         this._scheduleReconnect();
       };
     });
@@ -184,13 +194,23 @@ export class GameConn {
   sendMove(from, to) { this.send({ type: 'move', from, to }); }
 
   // legalTargets 查询某子合法落点（规则单一事实来源在后端）。
+  //
+  // ⚠️ 这个 Promise 必须**保证落地**，而且必须按「本次调用」记状态，不能用共享槽位
+  // 判断：槽位会被后一次调用覆盖、也会被回应消费掉，用 `pendingLegal === resolve`
+  // 之类的条件判超时，会让被覆盖/已被消费的那个 Promise **永久悬挂**。
+  // 这里用本地 done 标志收尾（回应与 3s 超时谁先到都行），槽位只是「当前该由谁接回应」。
   legalTargets(from) {
     return new Promise((resolve) => {
-      this.pendingLegal = resolve;
+      let done = false;
+      const finish = (targets) => {
+        if (done) return;
+        done = true;
+        if (this.pendingLegal && this.pendingLegal.resolve === finish) this.pendingLegal = null;
+        resolve(targets);
+      };
+      this.pendingLegal = { from, resolve: finish };
       this.send({ type: 'legal', from });
-      setTimeout(() => {
-        if (this.pendingLegal === resolve) { this.pendingLegal = null; resolve([]); }
-      }, 3000);
+      setTimeout(() => finish([]), 3000);
     });
   }
 
