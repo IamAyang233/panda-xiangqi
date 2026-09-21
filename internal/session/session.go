@@ -55,6 +55,12 @@ type Session struct {
 	thinking    bool
 	cancelThink context.CancelFunc
 
+	// gen 是局面世代，Restart 时递增。异步应着（aiReply）在开始与结束各读一次，
+	// 不一致就丢弃结果 —— 否则「刚走完一手立刻重开」会把旧局面的着法落到新局面上。
+	// ⚠️ 用世代号而不是复用 thinking 标志：thinking 只能表达「有人在算」，
+	// 无法区分「谁在算」，旧 goroutine 收尾时就会把新那次的标志清掉。
+	gen int
+
 	llmCfg    llm.Config
 	llmPlayer *llm.Player // 会话级复用（HTTP keep-alive，避免每步重建连接）
 	pz        *puzzle.Puzzle
@@ -397,6 +403,9 @@ func (s *Session) aiReply() {
 		s.mu.Unlock()
 		return
 	}
+	// gen 是「局面世代」：Restart 会递增它。本 goroutine 算完回来时若已变，
+	// 说明期间重开过 —— 这次应着算的是**旧局面**，必须整体作废。
+	gen := s.gen
 	s.thinking = true
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	s.cancelThink = cancel
@@ -449,6 +458,15 @@ func (s *Session) aiReply() {
 	cancel()
 
 	s.mu.Lock()
+	if s.gen != gen {
+		// 期间发生过重开（见 Restart）：这次应着算的是旧局面，丢弃。
+		//
+		// ⚠️ 这里**不能**碰 thinking / cancelThink：它们要么已被 Restart 重置，
+		// 要么属于「重开之后由 StartIfAIToMove 新发起的那一次应着」——
+		// 碰了就会把新那次认领的标志清掉，让玩家在 AI 还在算的时候就能走子。
+		s.mu.Unlock()
+		return
+	}
 	s.thinking = false
 	s.cancelThink = nil
 	if s.result != "" || s.pos.Turn == s.HumanSide {
@@ -469,7 +487,25 @@ func (s *Session) aiReply() {
 		mv = legal[0]
 	}
 	if s.Mode == ModePuzzle && s.pz != nil && !s.pzFail {
-		s.pzStep++ // 消费守方正解应着
+		switch {
+		case solUCI == "":
+			// 已偏离正解：守方由引擎自由应着，游标不推进。
+		case mv.String() == solUCI:
+			s.pzStep++ // 消费守方正解应着
+		default:
+			// ⚠️ 关卡正解**不可用**：记录着法解析不出、或在当前局面非法，
+			// 上面 `IsLegal` 兜底后实际走的是替代着法。
+			//
+			// 此时绝不能推进游标 —— 否则游标与实际局面错位，玩家之后**走对**
+			// 也会被判「偏离正解」（静默误判，且没人知道是数据问题）。
+			// 数据来源：内置残局由 cmd/puzzle-check 校验过，但 **LoadDir 允许
+			// 用户自带目录**，那条路径没有任何校验。
+			s.pzFail = true
+			log.Printf("session %s: 残局 %s 第 %d 手正解不可用（%q），改由引擎应着",
+				s.ID, s.pz.ID, s.pzStep, solUCI)
+			msgs = append(msgs, map[string]any{"type": "puzzle_event", "event": "solution_broken",
+				"message": "本关正解数据有误，已转为自由对弈（本局不计星级）"})
+		}
 	}
 	if fallback {
 		msgs = append(msgs, map[string]any{"type": "llm_fallback", "by": "local_engine"})
@@ -682,12 +718,28 @@ func (s *Session) Restart() error {
 	s.pzStep = 0
 	s.pzFail = false
 	s.hintUsed = false
+
+	// 作废正在进行的思考：它算的是重开**之前**的局面（在飞的 goroutine 会靠
+	// gen 校验自行丢弃结果，也不会再改 thinking/cancelThink）。不取消的话，
+	// 「刚走完一手立刻重开」会让那手旧着法落到新局面上（黑先关尤其明显）。
+	if s.cancelThink != nil {
+		s.cancelThink()
+		s.cancelThink = nil
+	}
+	s.gen++
+	s.thinking = false
+
 	msgs := []any{
 		map[string]any{"type": "restart"},
 		s.buildStateLocked(),
 	}
 	s.mu.Unlock()
 	s.flush(msgs)
+
+	// 黑先关（playerSide=black 且 FEN 为红先）重开后仍归 AI 先走。
+	// 原来没有这一步 ⇒ 重开后没人应着，玩家一动就被告知「现在轮到对方行棋」，
+	// 局面直接卡死（3577 关里有 2 关是黑先）。
+	s.StartIfAIToMove()
 	return nil
 }
 

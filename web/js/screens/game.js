@@ -438,6 +438,12 @@ export class GameScreen {
     if (m.event === 'deviate') {
       toast(m.message || '偏离正解', true, 4000);
       sfx.play('illegal');
+      return;
+    }
+    // 关卡自带的（或用户外置目录里的）正解着法在当前局面走不出来 —— 服务端已把它
+    // 转成自由对弈并封顶星级。这里必须提示，否则玩家只会觉得「走了正解还被判错」。
+    if (m.event === 'solution_broken') {
+      toast(m.message || '本关正解数据有误，已转为自由对弈', true, 5000);
     }
   }
 
