@@ -119,8 +119,9 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 	// 没有硬限（固定深度搜索）就一直搜到 maxDepth。
 	if withTimer && limit.Hard > 0 {
 		done := make(chan struct{})
-		defer close(done)
+		finished := make(chan struct{})
 		go func() {
+			defer close(finished)
 			t := time.NewTimer(limit.Hard)
 			defer t.Stop()
 			select {
@@ -128,6 +129,35 @@ func (s *Searcher) searchLoop(p *game.Position, limit TimeLimit, maxDepth int, w
 				s.Stop()
 			case <-done:
 			}
+		}()
+		// ⚠️ 必须等计时协程**真正退出**再返回，不能只 close(done) 就走。
+		//
+		// 否则存在这样一条路径：硬限恰好在搜索结束的瞬间到期，`t.C` 与 `done`
+		// 同时就绪，select 随机选中 `t.C` ⇒ 这个 Stop() 落在本函数返回**之后**，
+		// 而调用方（SearchTime / Pool.run）会在下一次搜索开始时 `stop.Store(false)`。
+		// 于是这一次迟到的 Stop() 打在下一次搜索身上 —— 表现为偶发「某一步搜得
+		// 异常浅」，窗口只有纳秒级，是最难排查的那类。
+		//
+		// 等协程退出后，无论它走了哪个分支，Stop() 都必然发生在返回之前；
+		// 下一次搜索的 Store(false) 只可能在它之后，顺序就固定了。
+		// 代价是返回路径多一次 channel 接收（纳秒级）。
+		//
+		// ⚠️ 这里**没有**配套的单元守卫，是权衡后的决定而不是遗漏：
+		// 触发它需要「t.C 恰在循环最后一次 stopped() 检查与 close(done) 之间就绪」
+		// 这种纳秒级 + 依赖调度的交错，写不出可靠复现。试过两版靠随机硬限 +
+		// 多轮重复的哨兵，都不成立：
+		//   - 用「同局面同预算的深度基准」判定被打断会**误报**：上一次被中断的
+		//     搜索会污染置换表，下一次同预算的搜索本来就会浅一截（实测基准 d11、
+		//     实际 d7，与是否修复无关，且因随机种子固定而每次必现）。
+		//   - 用绝对深度下限则会被 -race 的减速打穿（60ms 只到 d5，「低于下限」
+		//     只说明预算不够）。
+		// 同类机制（watchCancel 的迟到 Stop，修法相同）有一条**判别力已验证**的
+		// 守卫：internal/engine 的 TestCancelledSearchDoesNotStopNextSearch ——
+		// 它用「深度上限 + 不计时」做判据（必然跑满，不受机器快慢影响），
+		// 去掉等待会稳定抓到，加回等待稳定通过。
+		defer func() {
+			close(done)
+			<-finished
 		}()
 	}
 

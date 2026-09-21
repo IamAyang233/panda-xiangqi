@@ -161,6 +161,42 @@ func ctxErr(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// lockCtx 获取 e.mu，并在**等待期间**响应 ctx 取消。
+//
+// 直接 e.mu.Lock() 有个体验上的洞：等锁时取消不生效。用户「取消 → 立刻重下」时，
+// 后一个请求会先卡在前一次搜索的锁上，取消按钮形同虚设 —— 要等前一次算完才返回。
+// 这里把等待变成可取消的：
+//
+//	快路径   无竞争时一次 TryLock 就拿到（生产路径几乎都走这条，无额外开销）
+//	慢路径   每毫秒试一次，同时听 ctx.Done() ⇒ 取消最多延迟 1ms
+//
+// 用轮询而不是 channel 信号量，是为了不动 e.mu 的其它使用者（Close /
+// ClearTables / Diagnostics 都直接 Lock）—— 换掉锁的原语改造面会大得多。
+//
+// ⚠️ 拿到锁之后调用方仍应复查 ctxErr(ctx)：TryLock 成功与返回之间仍可能被取消，
+// 那时候没必要再白跑一次搜索。
+func (e *NativeEngine) lockCtx(ctx context.Context) error {
+	if ctx == nil {
+		e.mu.Lock()
+		return nil
+	}
+	if e.mu.TryLock() {
+		return nil
+	}
+	t := time.NewTicker(time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			if e.mu.TryLock() {
+				return nil
+			}
+		}
+	}
+}
+
 // BestMove 按档位搜索并返回着法。
 //
 // ctx 取消（对手超时、连接断开等）会中断搜索并返回错误，而不是降级继续算 ——
@@ -175,8 +211,13 @@ func (e *NativeEngine) BestMove(ctx context.Context, pos *game.Position, level i
 	// 搜索会大量 Make/Unmake，先用副本，避免改动调用方的局面。
 	p := pos.Clone()
 
-	e.mu.Lock()
+	if err := e.lockCtx(ctx); err != nil {
+		return game.Move{}, err
+	}
 	defer e.mu.Unlock()
+	if err := ctxErr(ctx); err != nil { // 等锁期间可能已被取消，别再白跑一次
+		return game.Move{}, err
+	}
 
 	stop := e.watchCancel(ctx)
 	defer stop()
@@ -212,8 +253,13 @@ func (e *NativeEngine) BestMoveObserve(ctx context.Context, pos *game.Position, 
 	}
 	p := pos.Clone()
 
-	e.mu.Lock()
+	if err := e.lockCtx(ctx); err != nil {
+		return game.Move{}, err
+	}
 	defer e.mu.Unlock()
+	if err := ctxErr(ctx); err != nil { // 等锁期间可能已被取消
+		return game.Move{}, err
+	}
 
 	stop := e.watchCancel(ctx)
 	defer stop()
@@ -253,8 +299,13 @@ func (e *NativeEngine) SearchTimedObserve(ctx context.Context, pos *game.Positio
 	}
 	p := pos.Clone()
 
-	e.mu.Lock()
+	if err := e.lockCtx(ctx); err != nil {
+		return search.Result{}, err
+	}
 	defer e.mu.Unlock()
+	if err := ctxErr(ctx); err != nil { // 等锁期间可能已被取消
+		return search.Result{}, err
+	}
 
 	stop := e.watchCancel(ctx)
 	defer stop()
@@ -305,8 +356,13 @@ func (e *NativeEngine) RankedMoves(ctx context.Context, pos *game.Position, leve
 	}
 	p := pos.Clone()
 
-	e.mu.Lock()
+	if err := e.lockCtx(ctx); err != nil {
+		return nil
+	}
 	defer e.mu.Unlock()
+	if ctxErr(ctx) != nil { // 等锁期间可能已被取消
+		return nil
+	}
 
 	stop := e.watchCancel(ctx)
 	defer stop()
@@ -327,19 +383,38 @@ func (e *NativeEngine) RankedMoves(ctx context.Context, pos *game.Position, leve
 }
 
 // watchCancel 把 context 取消转成引擎的中止信号，返回结束监听的函数。
+//
+// ⚠️ 返回的函数必须**等监听协程真正退出**再返回，不能只 close(done)。
+//
+// 否则存在与计时器同款的一条路径（见 search/timemgr.go 的说明）：若 ctx 恰好在
+// 搜索结束的瞬间被取消，`ctx.Done()` 与 `done` 同时就绪，select 随机选中前者
+// ⇒ 这个 pool.Stop() 落在调用方返回**之后**，而调用方下一次搜索开始时会
+// `pool.run` 里的 `stop.Store(false)`。那次迟到的 Stop() 于是打在下一次搜索上。
+//
+// 这条路径比计时器那条更容易踩到：「用户点取消 → 搜索结束 → 立刻重下」
+// 恰好制造「取消与结束同时到达」。
+//
+// 返回的闭包在调用处是 `defer stop()`，而 `defer e.mu.Unlock()` 注册在它之前 ——
+// LIFO 保证 stop() 先执行，于是等协程退出这段时间**仍持有 e.mu**，
+// 别的搜索不可能挤进来。pool.Stop() 只是原子写、不取锁，因此不会死锁。
 func (e *NativeEngine) watchCancel(ctx context.Context) func() {
 	if ctx == nil {
 		return func() {}
 	}
 	done := make(chan struct{})
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		select {
 		case <-ctx.Done():
 			e.pool.Stop()
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-finished
+	}
 }
 
 // Diagnostics 返回引擎状态，供启动日志与 /api/status 输出。

@@ -41,8 +41,8 @@ func TestThreatReplayMatchesEnumeration(t *testing.T) {
 	defer EnableDiag(false)
 
 	// walk 用固定种子走一遍（前进→Apply→后退→Apply，正是触发回滚段的那种序列），
-	// 返回每个检查点上的累加器指纹与回放次数。
-	walk := func(replay bool) ([]uint64, int64) {
+	// 返回每个检查点上的累加器指纹、回放次数、以及「段不足」次数。
+	walk := func(replay bool) ([]uint64, int64, int64) {
 		old := useThreatReplay
 		useThreatReplay = replay
 		defer func() { useThreatReplay = old }()
@@ -106,11 +106,12 @@ func TestThreatReplayMatchesEnumeration(t *testing.T) {
 				}
 			}
 		}
-		return dig, DiagSnapshot().UtReplayed
+		s := DiagSnapshot()
+		return dig, s.UtReplayed, s.UtReplayShort
 	}
 
-	digEnum, _ := walk(false)
-	digReplay, replays := walk(true)
+	digEnum, _, _ := walk(false)
+	digReplay, replays, shorts := walk(true)
 
 	if len(digEnum) != len(digReplay) {
 		t.Fatalf("两遍的检查点数不同：枚举 %d，回放 %d", len(digEnum), len(digReplay))
@@ -124,5 +125,12 @@ func TestThreatReplayMatchesEnumeration(t *testing.T) {
 	if replays == 0 {
 		t.Fatal("回放路径一次都没被走到 —— 这个测试没有测到目标路径")
 	}
-	t.Logf("集成层：%d 个检查点，回放 %d 次，逐位一致 ✓", len(digEnum), replays)
+	// ⚠️ 段不足时那条路径会**静默少算条目**（不报错、不越界，只是评估值偏移）。
+	// 它必须恒为 0；一旦非 0，说明 Make/Unmake 的 updateThreats 调用次数不再逐段
+	// 配对，回放的整个前提已经失效 —— 那种情况下上面「逐位相同」的结论也不可信。
+	if shorts != 0 {
+		t.Fatalf("有 %d 次回放因「段已用尽」被跳过 —— 逐段配对的前提被破坏，"+
+			"回放会静默少算条目", shorts)
+	}
+	t.Logf("集成层：%d 个检查点，回放 %d 次、段不足 0 次，逐位一致 ✓", len(digEnum), replays)
 }

@@ -100,7 +100,10 @@ func apply(c *Config, key, val string) {
 	case "puzzles", "puzzles_dir", "puzzles-dir":
 		c.PuzzlesDir = val
 	case "open_browser", "open-browser", "openbrowser":
-		c.OpenBrowser = val == "true" || val == "1" || val == "yes"
+		// ⚠️ 值也要小写化：yaml 里写 `open_browser: True` / `Yes` 很常见，
+		// 原实现只比对 "true"/"1"/"yes" 三个小写串，遇到首字母大写会**静默变成 false**。
+		v := strings.ToLower(val)
+		c.OpenBrowser = v == "true" || v == "1" || v == "yes" || v == "on"
 	case "update_api", "update-api", "updateapi":
 		c.UpdateAPI = val
 	case "feedback_token", "feedback-token", "feedbacktoken":

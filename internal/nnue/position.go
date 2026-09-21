@@ -549,22 +549,33 @@ func (p *Position) updateThreats(put bool, pc byte, s int, computeRay bool) {
 	if p.replayOn {
 		// 直接搬 Make 那一段的条目、翻转方向即可 —— 两条路径产出的条目集合完全相同，
 		// 只是顺序不同，而环绕加满足交换结合律，所以累加器逐位相同（树不变）。
-		if p.replayPick >= 0 {
-			i := p.replayPick
-			start := p.replayBase
-			if i > 0 {
-				start = p.replaySegs[i-1]
+		//
+		// 段数正常恰好等于本层 updateThreats 的调用次数（2 段 / 2 次）。段已用尽
+		// 说明两边不再逐段配对，此时回放**拿不出条目**，静默继续就会少算 ⇒ 评估值
+		// 出错且毫无声响。所以显式记一笔 UtReplayShort（守卫断言它恒为 0），
+		// 而不是当作正常分支悄悄跳过。
+		if p.replayPick < 0 {
+			if diagOn {
+				diagStats.UtReplayShort++
 			}
-			// 整体追加再原地翻转：逐个 append 是这条路径的主要成本
-			// （append 每次都要做容量检查），批量追加走的是 memmove。
-			old := len(p.pendingThreats)
-			p.pendingThreats = append(p.pendingThreats, p.replayBuf[start:p.replaySegs[i]]...)
-			for k := old; k < len(p.pendingThreats); k++ {
-				p.pendingThreats[k].add = !p.pendingThreats[k].add
-			}
-			p.replayPick--
+			return
 		}
+		i := p.replayPick
+		start := p.replayBase
+		if i > 0 {
+			start = p.replaySegs[i-1]
+		}
+		// 整体追加再原地翻转：逐个 append 是这条路径的主要成本
+		// （append 每次都要做容量检查），批量追加走的是 memmove。
+		old := len(p.pendingThreats)
+		p.pendingThreats = append(p.pendingThreats, p.replayBuf[start:p.replaySegs[i]]...)
+		for k := old; k < len(p.pendingThreats); k++ {
+			p.pendingThreats[k].add = !p.pendingThreats[k].add
+		}
+		p.replayPick--
 		if diagOn {
+			// 计数点必须在「真的搬了」之后：原来放在 if 外面，段不足时也照加，
+			// 于是这个「防没测到而通过」的挡板本身会说谎。
 			diagStats.UtReplayed++
 		}
 		return
