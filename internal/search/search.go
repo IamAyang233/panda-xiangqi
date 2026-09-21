@@ -1316,11 +1316,18 @@ func (s *Searcher) alphaBeta(p *game.Position, depth, alpha, beta, ply int, isPV
 					fv += 112
 				}
 				if fv <= alpha {
-					// fail-soft：被剪的这一层也交回一个有信息量的上界，
-					// 而不是让调用方以为这里毫无价值。
-					if false && best < fv && fv < MateScore-MaxPly && best > -MateScore+MaxPly {
-						best = fv
-					}
+					// 这里**不做** fail-soft 回填：best 保持「已搜过的最好值」不动，
+					// 被剪掉的这一层的贡献就是 -∞。
+					//
+					// 皮卡鱼在这处会把返回值抬到 futilityValue（「被剪的层也带回一个
+					// 上界」）。本项目按 `c60b2d1` 一起试过，已去掉 —— 当时的口径是
+					// EBF 从 2.09 推到 2.27。⚠️ 但 EBF 这个口径后来被判定会误报
+					// （见 ENGINE-PITFALLS-search.md：剪枝强弱要用固定节点深度看），
+					// 所以「更差」这条依据本身并不可靠。
+					//
+					// 保留不启用还有一个独立理由：写回会改变返回分值 ⇒ 改变整棵树
+					// （best 参与 TT 界限判定与返回值），因此它不是纯报告项。
+					// **要重新启用必须先量，别只凭皮卡鱼这么做就加回来。**
 					skip = true
 				}
 			}
