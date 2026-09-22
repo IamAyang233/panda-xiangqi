@@ -9,7 +9,10 @@ const defaults = {
     apiKey: '',
     model: '',
     temperature: 0.3,
-    timeoutMs: 30000,
+    // 120s：推理模型（思考型）单步实测可达 50s+，30s 会在拿到着法前就超时降级。
+    timeoutMs: 120000,
+    // 单次回复 token 上限。推理模型会先把额度花在思考上，给小了正文为空。
+    maxTokens: 4096,
     includeLegalMoves: true,
   },
   puzzleStars: {},   // id -> 星数
@@ -17,12 +20,20 @@ const defaults = {
   sound: true,
 };
 
+// 旧版本随包发出的超时默认值是 30000，对推理模型必然超时降级（见上）。
+// 存量配置里若仍是这个「我们发出去的」值，视为用户未曾调整过，升到新默认；
+// 用户自己改过的其它值一律不动。
+const LEGACY_DEFAULT_TIMEOUT = 30000;
+
 let data;
 try {
   data = Object.assign({}, defaults, JSON.parse(localStorage.getItem(KEY) || '{}'));
 } catch { data = { ...defaults }; }
 data.llm = Object.assign({}, defaults.llm, data.llm);
 data.theme = Object.assign({}, defaults.theme, data.theme);
+if (data.llm.timeoutMs === LEGACY_DEFAULT_TIMEOUT) {
+  data.llm.timeoutMs = defaults.llm.timeoutMs;
+}
 // 布尔项规范化：旧数据缺省时按默认开启（避免 undefined 被序列化丢失导致后端误判关闭）
 data.llm.engineAssist = data.llm.engineAssist !== false;
 data.llm.includeLegalMoves = data.llm.includeLegalMoves !== false;

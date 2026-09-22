@@ -12,7 +12,8 @@ export function initSettings(onThemeChange) {
   $('llm-apikey').value = llm.apiKey || '';
   $('llm-model').value = llm.model || '';
   $('llm-temp').value = llm.temperature ?? 0.3;
-  $('llm-timeout').value = llm.timeoutMs || 30000;
+  // 兜底值必须与 store.js 的默认一致（120s）：推理模型单步 50s+，30s 必然超时。
+  $('llm-timeout').value = llm.timeoutMs || 120000;
   $('llm-legal').checked = llm.includeLegalMoves !== false;
   $('llm-assist').checked = llm.engineAssist !== false;
   $('theme-pieces').value = store.theme.pieces;
@@ -24,7 +25,8 @@ export function initSettings(onThemeChange) {
     apiKey: $('llm-apikey').value.trim(),
     model: $('llm-model').value.trim(),
     temperature: parseFloat($('llm-temp').value) || 0.3,
-    timeoutMs: +$('llm-timeout').value || 30000,
+    // 留空时回落到 120s（与 store.js 默认一致），不要退回旧的 30s
+    timeoutMs: +$('llm-timeout').value || 120000,
     includeLegalMoves: $('llm-legal').checked,
     engineAssist: $('llm-assist').checked,
   });

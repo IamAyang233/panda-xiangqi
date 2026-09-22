@@ -72,9 +72,23 @@ make test      # 全部测试
 make cross     # Windows/Linux/macOS 三平台产物 → dist/
 ```
 
-## 皮卡鱼（UCI 引擎，飞牛 fnOS 版随包内置）
+## 引擎与难度档位
 
-飞牛 fnOS 版（x86 / arm）的 `panda-xiangqi-x86.fpk` / `panda-xiangqi-arm.fpk` **已随包内置皮卡鱼（Pikafish）引擎与 `pikafish.nnue` 权重**，零外部依赖、开箱即用；引擎二进制与权重位于 `app/server/engines/` 下，并由服务端在启动时自动 `chmod +x` 并指向内置权重。低档位（1~4）始终使用自研 SimpleEngine，5 档及以上优先皮卡鱼，缺失或崩溃时自动回退自研引擎。
+飞牛 fnOS 版（x86 / arm）**不再随包分发皮卡鱼二进制**，只随包内置内嵌 Go 引擎所需的
+`pikafish.nnue.flat` 权重（纯数据文件，位于 `app/server/engines/`，只读即可）。
+包里因此没有任何需要可执行位的文件 —— 根除了「应用以非 root 运行、却要给引擎文件补
+`chmod +x`」这个历史上的结构性故障点。
+
+**调度优先级（与档位无关）**：内嵌 Go 引擎（`internal/search`，主力）
+→ 皮卡鱼 UCI 子进程（内嵌引擎不可用时的强引擎兜底）
+→ 自研 SimpleEngine（最后兜底）。见 `Manager.BestMove`。
+
+**难度档位的强弱差异不由引擎种类决定**，而由内嵌引擎的档位参数实现（`search.Level`）：
+低档位靠浅深度（`MaxDepth`）限制棋力，再用 `TopN`/`Slack` 在最优着附近随机挑一个，
+制造类似人类的漏看；高档位靠时间预算榨取深度、总取最优。
+
+> 注：本文与源码注释曾写「1~4 档走 SimpleEngine、5 档及以上优先皮卡鱼」，
+> 与实现不符（`Manager.BestMove` 不看档位），2026-09-21 已订正。
 
 本地源码构建 / 桌面运行（非 fnOS 包）如需皮卡鱼，可任选其一放入：
 

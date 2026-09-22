@@ -118,6 +118,11 @@ export class GameConn {
 
   // 意外断开后指数退避自动重连（1s→2s→4s→8s→16s，封顶 15s）。
   // 重连无需新建局：服务端 Join 会回送完整 state，前端据此全量重建棋盘。
+  //
+  // ⚠️ **首次连接失败也会走到这里**：onclose 总是排下一次重连，而它没法区分
+  // 「刚连上又断了」和「根本没连上（比如会话已过期、服务端 404）」。后者会无限
+  // 重试下去，因此调用方若判断不该重试（如 restore() 里会话已失效），
+  // 必须显式 close() 把 manualClose 置位。
   _scheduleReconnect() {
     if (this.manualClose) return;
     this.reconnectAttempts++;
@@ -140,6 +145,10 @@ export class GameConn {
       try {
         const url = URL.createObjectURL(new Blob([hbWorkerSrc(this.hbInterval)], { type: 'text/javascript' }));
         this.hbWorker = new Worker(url);
+        // ⚠️ 必须记下 URL 并在停止时 revoke：createObjectURL 会在文档生命周期内
+        // 一直持有那块 Blob，而 _startHeartbeat 每次重连都会再建一个 —— 长时间
+        // 断线重连的页面会一路泄漏（旧实现从未 revoke）。
+        this.hbWorkerURL = url;
         this.hbWorker.onmessage = tick;
         this.hbWorker.postMessage('start');
         return;
@@ -152,6 +161,10 @@ export class GameConn {
     if (this.hbWorker) {
       try { this.hbWorker.postMessage('stop'); this.hbWorker.terminate(); } catch { /* 已终止 */ }
       this.hbWorker = null;
+    }
+    if (this.hbWorkerURL) {
+      try { URL.revokeObjectURL(this.hbWorkerURL); } catch { /* 已释放 */ }
+      this.hbWorkerURL = null;
     }
     if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
   }

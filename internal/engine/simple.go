@@ -170,15 +170,15 @@ type levelCfg struct {
 }
 
 var simpleLevels = map[int]levelCfg{
-	1: {1, 200 * time.Millisecond, 0.30},
-	2: {2, 300 * time.Millisecond, 0.20},
-	3: {3, 400 * time.Millisecond, 0.10},
-	4: {3, 500 * time.Millisecond, 0},
-	5: {4, 600 * time.Millisecond, 0},
-	6: {4, 800 * time.Millisecond, 0},
-	7: {5, 1000 * time.Millisecond, 0},
-	8: {5, 1200 * time.Millisecond, 0},
-	9: {6, 1500 * time.Millisecond, 0},
+	1:  {1, 200 * time.Millisecond, 0.30},
+	2:  {2, 300 * time.Millisecond, 0.20},
+	3:  {3, 400 * time.Millisecond, 0.10},
+	4:  {3, 500 * time.Millisecond, 0},
+	5:  {4, 600 * time.Millisecond, 0},
+	6:  {4, 800 * time.Millisecond, 0},
+	7:  {5, 1000 * time.Millisecond, 0},
+	8:  {5, 1200 * time.Millisecond, 0},
+	9:  {6, 1500 * time.Millisecond, 0},
 	10: {6, 1800 * time.Millisecond, 0},
 	11: {7, 2000 * time.Millisecond, 0},
 	12: {7, 2400 * time.Millisecond, 0},
@@ -200,15 +200,28 @@ type searcher struct {
 	tt       map[uint64]ttEntry
 	start    time.Time
 	deadline time.Time
-	stopped  bool
-	nodes    int
-	killers  [maxPly]game.Move
-	history  [65536]int32
+	// ctx 让搜索能响应上层取消（重开/悔棋/离开对局）。没有它时 SelfPlay 的
+	// 「思考中重开」只能干等到时间预算耗尽 —— SimpleEngine 是强引擎不可用时的
+	// 兜底路径，恰恰在低配设备上最可能被走到。
+	ctx     context.Context
+	stopped bool
+	nodes   int
+	killers [maxPly]game.Move
+	history [65536]int32
 }
 
 func (s *searcher) checkTime() {
 	s.nodes++
-	if s.nodes%2048 == 0 && time.Now().After(s.deadline) {
+	if s.nodes%2048 != 0 {
+		return
+	}
+	if time.Now().After(s.deadline) {
+		s.stopped = true
+		return
+	}
+	// 每 2048 节点顺带查一次取消：ctx.Done() 是个 channel 读，
+	// 不能每节点都查（会成为热点），与 deadline 同频即可。
+	if s.ctx != nil && s.ctx.Err() != nil {
 		s.stopped = true
 	}
 }
@@ -411,6 +424,7 @@ func (e *SimpleEngine) BestMove(ctx context.Context, pos *game.Position, level i
 		tt:       make(map[uint64]ttEntry, 1<<16),
 		start:    now,
 		deadline: now.Add(cfg.budget),
+		ctx:      ctx,
 	}
 	rng := rand.New(rand.NewSource(now.UnixNano()))
 
@@ -426,6 +440,8 @@ func (e *SimpleEngine) BestMove(ctx context.Context, pos *game.Position, level i
 			sc := -s.AlphaBeta(cfg.maxDepth-1, 1, -infScore, infScore)
 			s.pos.Unmake()
 			if s.stopped {
+				// 预算耗尽或被上层取消：用静态评估补齐该着法的分数，
+				// 保证候选列表仍然完整（调用方要从中挑，不能少项）。
 				sc = s.EvaluateRel()
 			}
 			list = append(list, scored{m, sc})
@@ -478,6 +494,7 @@ func (e *SimpleEngine) RankedMoves(ctx context.Context, pos *game.Position, leve
 		tt:       make(map[uint64]ttEntry, 1<<15),
 		start:    now,
 		deadline: now.Add(cfg.budget),
+		ctx:      ctx,
 	}
 	depth := cfg.maxDepth
 	if depth > 6 {

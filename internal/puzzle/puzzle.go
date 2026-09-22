@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"sort"
 	"sync"
+
+	"github.com/IamAyang233/panda-xiangqi/internal/game"
 )
 
 // Puzzle 残局数据（计划书 §4.5）。
@@ -69,6 +72,20 @@ func NewStore(fsys fs.FS) (*Store, error) {
 		for _, p := range list {
 			if p.ID == "" {
 				return fmt.Errorf("%s: 残局缺少 id", path)
+			}
+			// 语义校验：FEN 语法合法还不够，局面本身必须能安全进入对局路径。
+			// 「非行棋方被将军」的摆局会让走子方可以吃将，而吃将会让 kingSq 悬空、
+			// 整套合法性判定失真（详见 game.LegalPosition 的说明）。内置题库里
+			// 实测有这种条目（是数据缺陷，不是解析问题），外置目录更可能撞上。
+			//
+			// 策略：**跳过并告警**而不是整体加载失败 —— 一关数据坏掉不该让
+			// 整个残局库打不开。
+			if pos, err := game.ParseFEN(p.FEN); err != nil {
+				log.Printf("puzzle: %s 跳过（FEN 无法解析: %v）", p.ID, err)
+				continue
+			} else if err := pos.LegalPosition(); err != nil {
+				log.Printf("puzzle: %s 跳过（局面非法: %v）", p.ID, err)
+				continue
 			}
 			s.add(p)
 		}

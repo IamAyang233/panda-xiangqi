@@ -78,10 +78,15 @@ func (p *Position) MoveToChinese(m Move) string {
 		case 3:
 			prefix = []string{"前", "中", "后"}[idx]
 		default: // 4~5 子同线：前/二/三/后（近似，极端排局）
+			// ⚠️ 中间子必须从「二」开始编号：下标 0 被"前"占用，所以下标 i 对应
+			// 序号 i+1。原先写成 numStr(color, i) 会输出"前/一/二/后"，
+			// 与上面注释声明的"前/二/三/后"差一位。红方是汉字一/二、黑方是阿拉伯
+			// 数字 1/2，两边都会错。这是 LLM 生成-匹配解析的输出侧，错串会让模型
+			// 的中文着法匹不上而被判非法。
 			names := make([]string, len(same))
 			names[0], names[len(same)-1] = "前", "后"
 			for i := 1; i < len(same)-1; i++ {
-				names[i] = numStr(color, i) // 中间子按序号
+				names[i] = numStr(color, i+1) // 中间子按序号：第 2 子记"二"/"2"
 			}
 			prefix = names[idx]
 		}
@@ -141,6 +146,11 @@ func (p *Position) LegalMovesChinese() []struct {
 }
 
 // NormalizeCN 中文着法串归一化：去空白、全角→半角、繁→简（常用字）。
+//
+// ⚠️ 覆盖必须完整，否则模型的繁体输出会**静默失配**：MoveToChinese 生成简体串，
+// 而模型可能回繁体（港台语料很常见），匹配不上就会重试、最后降级本地引擎代走 ——
+// 用户看到的是"模型答非所问"，完全看不出是归一化表漏了字。
+// 「進/帥/後」曾经就是这么漏掉的（而 馬/車/砲/將 都收了，属遗漏而非取舍）。
 func NormalizeCN(s string) string {
 	repl := strings.NewReplacer(
 		" ", "", "\t", "", "\n", "", "　", "",
@@ -148,6 +158,9 @@ func NormalizeCN(s string) string {
 		"５", "5", "６", "6", "７", "7", "８", "8", "９", "9",
 		"將", "将", "士", "仕", "象", "相", "車", "车", "砲", "炮",
 		"俥", "车", "傌", "马", "馬", "马", "卒", "卒",
+		// 遗漏补充：帅（红帅）、进/后（走子方向与"前后"前缀）。
+		// 这三个此前没收，模型的繁体输出会静默失配。
+		"帥", "帅", "進", "进", "後", "后",
 	)
 	return repl.Replace(s)
 }

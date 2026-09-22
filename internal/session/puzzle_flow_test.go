@@ -192,10 +192,19 @@ func TestPuzzleSessionBlackWin(t *testing.T) {
 }
 
 func TestPuzzleSessionDraw(t *testing.T) {
-	p := fixturePuzzle("pzl-040", "4k4/9/9/9/9/9/9/4R4/9/3K5 w - - 0 1", "red", "draw", 6,
-		[]string{"e2c2", "e9f9", "c2c3", "f9e9", "c3c2", "e9f9", "c2c3", "f9e9", "c3c2", "e9f9", "c2c3", "f9e9"})
+	// ⚠️ 该 fixture 原先用的是 "4k4/9/9/9/9/9/9/4R4/9/3K5 w"：红车 e2 与黑将 e9
+	// 同线且中间无子 ⇒ 黑将**正被将军**，而 FEN 写红先。这是非法局面（上一手黑方
+	// 把自己走成了被将），实测会让 session 侧的 LegalPosition 拒绝并退回初始局面。
+	// 现改为黑将在 f9（既不被车攻击，也不与红帅同线）。
+	p := fixturePuzzle("pzl-040", "5k3/9/9/9/9/9/9/4R4/9/3K5 w - - 0 1", "red", "draw", 6,
+		// 红车在 e2/c2 间往返、黑将在 f9/e9 间往返。
+		// 走满 8 手（四步一循环 × 两圈）后某个局面键第 3 次出现 ⇒ 三次重复判和。
+		[]string{"e2c2", "f9e9", "c2e2", "e9f9", "e2c2", "f9e9", "c2e2", "e9f9"})
 	conn := &recConn{}
 	playPuzzle(t, p, conn)
+	// ⚠️ 和棋由**守方（AI）的应着**触发，而 playPuzzle 在玩家落子后立刻检查 game_over
+	// —— 那一刻守方还在思考（有 600ms 保底时长），所以必须等异步结果落地。
+	waitGameOver(t, conn)
 	goMsg, ok := conn.lastGameOver()
 	if !ok {
 		t.Fatal("未收到 game_over（和棋关应可玩到终局）")
@@ -205,5 +214,20 @@ func TestPuzzleSessionDraw(t *testing.T) {
 	}
 	if got := goMsg["reason"]; got != game.ReasonRepetition {
 		t.Fatalf("期望 repetition, 实际 %v", got)
+	}
+}
+
+// waitGameOver 等待异步产生的 game_over（终局由守方应着触发时要等它落地）。
+func waitGameOver(t *testing.T, c *recConn) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, ok := c.lastGameOver(); ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("等待 game_over 超时")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

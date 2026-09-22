@@ -65,31 +65,49 @@ type Session struct {
 	llmPlayer *llm.Player // 会话级复用（HTTP keep-alive，避免每步重建连接）
 	pz        *puzzle.Puzzle
 	pzStep    int // solution 已消费的下标
-	pzFail    bool
-	hintUsed  bool
+	// pzConsumed 与 moves 逐手对应：第 i 手是否消费了正解。
+	// 悔棋时游标按「实际消费的正解手数」重算，不能按「撤了几手」硬减 ——
+	// 偏离正解后的手不消费正解，硬减会把游标推到局面之前，玩家之后**走对**
+	// 反而被判偏离正解（静默误判）。用逐手记账而非「停止下标」是因为双方在
+	// 正解耗尽时的行为并不对称（玩家侧仍计消费、守方侧不计），单一 stop 下标
+	// 无法表达。
+	pzConsumed []bool
+	pzFail     bool
+	hintUsed   bool
 
 	conns   map[Conn]struct{}
 	engines *engine.Manager
 	created time.Time
+	// lastActive 是「最后一次有连接」的时刻，供 Manager 判断闲置。
+	// 只看 len(conns)==0 不够：客户端断网/被杀时连接不会立刻注销，
+	// 这类会话会一直看起来「有人在用」而永不回收。
+	lastActive time.Time
 }
 
 // NewSession 创建会话。pz 非空时为残局模式。
 func NewSession(mode string, humanSide int, level int, llmCfg llm.Config, pz *puzzle.Puzzle, engines *engine.Manager) *Session {
 	s := &Session{
-		ID:        newID(),
-		Mode:      mode,
-		Level:     clampLevel(level),
-		HumanSide: humanSide,
-		llmCfg:    llmCfg,
-		pz:        pz,
-		conns:     make(map[Conn]struct{}),
-		engines:   engines,
-		created:   time.Now(),
+		ID:         newID(),
+		Mode:       mode,
+		Level:      clampLevel(level),
+		HumanSide:  humanSide,
+		llmCfg:     llmCfg,
+		pz:         pz,
+		conns:      make(map[Conn]struct{}),
+		engines:    engines,
+		created:    time.Now(),
+		lastActive: time.Now(),
 	}
 	if pz != nil {
 		pos, err := game.ParseFEN(pz.FEN)
 		if err != nil {
 			log.Printf("session: 残局 FEN 非法 %s: %v", pz.ID, err)
+			pos = game.NewPosition()
+		} else if err := pos.LegalPosition(); err != nil {
+			// 题库加载（puzzle.NewStore）与 Restart 都已过滤过，这里是最后一道闸：
+			// 非法局面会让「吃将」成为合法着法，进而使 kingSq 悬空、整套合法性
+			// 判定失真。宁可退回初始局面，也不能让这种棋局跑起来。
+			log.Printf("session: 残局局面非法 %s: %v（退回初始局面）", pz.ID, err)
 			pos = game.NewPosition()
 		}
 		s.pos = pos
@@ -119,6 +137,7 @@ func clampLevel(l int) int {
 func (s *Session) Join(c Conn) {
 	s.mu.Lock()
 	s.conns[c] = struct{}{}
+	s.lastActive = time.Now()
 	msg := s.buildStateLocked()
 	s.mu.Unlock()
 	c.SendJSON(msg)
@@ -128,6 +147,11 @@ func (s *Session) Join(c Conn) {
 func (s *Session) Leave(c Conn) {
 	s.mu.Lock()
 	delete(s.conns, c)
+	// 记下「最后一次有连接的时刻」：Manager 用它判断闲置，而不是看瞬时连接数
+	// （客户端断网时连接可能长期不注销）。
+	if len(s.conns) == 0 {
+		s.lastActive = time.Now()
+	}
 	s.mu.Unlock()
 }
 
@@ -290,16 +314,16 @@ func (s *Session) ApplyPlayerMove(from, to string) error {
 	if s.Mode == ModePuzzle && s.pz != nil && !s.pzFail {
 		if want := s.solutionMoveAt(s.pzStep); want != "" && want != m.String() {
 			s.pzFail = true
-			msgs = s.applyMoveLocked(m)
+			msgs = s.applyMoveLocked(m, false)
 			msgs = append(msgs, map[string]any{"type": "puzzle_event", "event": "deviate",
 				"message": "偏离正解，可悔棋修正或重开本关"})
 			needAI = true
 		} else {
 			s.pzStep++ // 消费玩家正解着法
-			msgs = s.applyMoveLocked(m)
+			msgs = s.applyMoveLocked(m, true)
 		}
 	} else {
-		msgs = s.applyMoveLocked(m)
+		msgs = s.applyMoveLocked(m, false)
 	}
 	if s.result == "" && s.Mode != ModeLocal && s.pos.Turn != s.HumanSide {
 		needAI = true
@@ -321,11 +345,15 @@ func (s *Session) solutionMoveAt(i int) string {
 }
 
 // applyMoveLocked 走子并构造广播消息（调用方持锁）。返回待发送消息。
-func (s *Session) applyMoveLocked(m game.Move) []any {
+//
+// consumedSolution 报告本手是否命中并消费了残局正解（非残局恒为 false）：
+// 它会被记进 pzConsumed，供悔棋时按「实际消费的正解手数」精确回退游标。
+func (s *Session) applyMoveLocked(m game.Move, consumedSolution bool) []any {
 	cn := s.pos.MoveToChinese(m)
 	red := s.pos.Turn == game.Red
 	s.pos.Make(m)
 	s.moves = append(s.moves, MoveRecord{UCI: m.String(), CN: cn, Red: red})
+	s.pzConsumed = append(s.pzConsumed, consumedSolution)
 
 	st := s.pos.CheckStatus()
 	inCheck := st.Result == "" && s.pos.InCheck(s.pos.Turn)
@@ -368,10 +396,14 @@ func (s *Session) finishLocked(result, reason string) []any {
 			// 和棋关：终局为和棋即算通过（含三次重复 / 60 回合 / 子力不足）。
 			cleared = result == game.ResultDraw
 		} else {
-			// 胜负关：玩家（执子方）将死或困毙对方即算通过。
+			// 胜负关：玩家（执子方）将死、困毙对方，或对方长将被判负，即算通过。
+			// 长将判负（ReasonLongCheck）也是玩家按棋规取胜，漏掉它会让「靠长将
+			// 取胜」的玩家拿到 0 星并被显示为「挑战失败」。
 			playerWon := (result == game.ResultRedWin && s.HumanSide == game.Red) ||
 				(result == game.ResultBlackWin && s.HumanSide == game.Black)
-			cleared = playerWon && (reason == game.ReasonCheckmate || reason == game.ReasonStalemate)
+			cleared = playerWon && (reason == game.ReasonCheckmate ||
+				reason == game.ReasonStalemate ||
+				reason == game.ReasonLongCheck)
 		}
 		if cleared {
 			playerMoves := 0
@@ -486,12 +518,14 @@ func (s *Session) aiReply() {
 		}
 		mv = legal[0]
 	}
+	consumedSol := false
 	if s.Mode == ModePuzzle && s.pz != nil && !s.pzFail {
 		switch {
 		case solUCI == "":
 			// 已偏离正解：守方由引擎自由应着，游标不推进。
 		case mv.String() == solUCI:
 			s.pzStep++ // 消费守方正解应着
+			consumedSol = true
 		default:
 			// ⚠️ 关卡正解**不可用**：记录着法解析不出、或在当前局面非法，
 			// 上面 `IsLegal` 兜底后实际走的是替代着法。
@@ -510,8 +544,11 @@ func (s *Session) aiReply() {
 	if fallback {
 		msgs = append(msgs, map[string]any{"type": "llm_fallback", "by": "local_engine"})
 	}
-	msgs = append(msgs, s.applyMoveLocked(mv)...)
-	if comment != "" {
+	msgs = append(msgs, s.applyMoveLocked(mv, consumedSol)...)
+	// LLM 模式：**即使模型没给棋评也要下发一次**（comment 为空串）。
+	// 前端是「替换」气泡内容的，不下发就会一直留着上一手的解说，
+	// 看起来像在描述当前这一手；空串让前端把气泡复位。
+	if s.Mode == ModeLLM {
 		msgs = append(msgs, map[string]any{"type": "llm_comment", "comment": comment})
 	}
 	s.mu.Unlock()
@@ -612,13 +649,20 @@ func (s *Session) Undo() error {
 		undone = append(undone, um)
 		s.pos.Unmake()
 		s.moves = s.moves[:len(s.moves)-1]
+		if len(s.pzConsumed) > 0 {
+			s.pzConsumed = s.pzConsumed[:len(s.pzConsumed)-1]
+		}
 	}
 	if s.Mode == ModePuzzle {
 		s.pzFail = false
-		if s.pzStep >= n {
-			s.pzStep -= n
-		} else {
-			s.pzStep = 0
+		// ⚠️ 游标不能按「撤了几手」硬减：偏离正解后的手不消费正解，减多了会让
+		// 游标落到局面之前，玩家之后**走对**也被判「偏离正解」。这里按剩余着法里
+		// 实际消费掉的正解手数重算（pzStep 恒等于已消费正解手数）。
+		s.pzStep = 0
+		for _, consumed := range s.pzConsumed {
+			if consumed {
+				s.pzStep++
+			}
 		}
 	}
 	if s.result != "" { // 悔棋复活对局（残局重试场景）
@@ -629,8 +673,15 @@ func (s *Session) Undo() error {
 		map[string]any{"type": "undo_result", "ok": true, "moves": undone},
 		s.buildStateLocked(),
 	}
+	// 悔棋后若又轮到 AI，必须重新拉应着：撤掉的可能正是 AI 的开局首手
+	// （人执黑时 len(moves)==1 ⇒ n=1）。Undo 是唯一不重新触发应着的回退路径，
+	// 少了这一步局面会永久停摆 —— 轮到 AI 却没有任何人在算。
+	needAI := s.result == "" && s.Mode != ModeLocal && s.pos.Turn != s.HumanSide
 	s.mu.Unlock()
 	s.flush(msgs)
+	if needAI {
+		go s.aiReply()
+	}
 	return nil
 }
 
@@ -645,7 +696,6 @@ func (s *Session) Hint() error {
 		s.mu.Unlock()
 		return errf("只有轮到你时才能提示")
 	}
-	s.hintUsed = true
 	pos := s.pos.Clone()
 	solUCI := ""
 	if s.Mode == ModePuzzle && s.pz != nil {
@@ -667,6 +717,11 @@ func (s *Session) Hint() error {
 	if err != nil {
 		return errf("提示失败: %v", err)
 	}
+	// hintUsed 只在提示**真的给出**之后才记账：放在引擎调用之前的话，
+	// 引擎报错时玩家什么也没看到，却已被永久剥夺三星资格。
+	s.mu.Lock()
+	s.hintUsed = true
+	s.mu.Unlock()
 	s.broadcast(map[string]any{
 		"type": "hint_result",
 		"from": game.SquareName(mv.From), "to": game.SquareName(mv.To),
@@ -711,11 +766,16 @@ func (s *Session) Restart() error {
 		s.mu.Unlock()
 		return errf("残局 FEN 非法")
 	}
+	if err := pos.LegalPosition(); err != nil {
+		s.mu.Unlock()
+		return errf("残局局面非法: %v", err)
+	}
 	s.pos = pos
 	s.moves = nil
 	s.result = ""
 	s.reason = ""
 	s.pzStep = 0
+	s.pzConsumed = nil
 	s.pzFail = false
 	s.hintUsed = false
 

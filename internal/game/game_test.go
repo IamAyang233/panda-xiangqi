@@ -1,6 +1,9 @@
 package game
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // perft 标准数据（初始局面，Xiangqi perft 基准）——任何不匹配即规则引擎回归。
 func TestPerftInitial(t *testing.T) {
@@ -378,5 +381,154 @@ func playLegalSeq(t *testing.T, p *Position, seq []struct{ from, to string }) {
 			t.Fatalf("着法 %s-%s 在当前局面不合法（自将 / 将帅照面 / 蹩腿等）", s.from, s.to)
 		}
 		p.Make(m)
+	}
+}
+
+// TestLongCheckWindowIgnoresNullEntries 白盒回归：混进重复窗口的空着（null move）
+// 不得参与长将判定。
+//
+// 背景：`RepetitionCount` 显式过滤 `h.null`，但 `LongCheckWinner` 曾**不过滤**。
+// 空着不改变子力，它出现在历史里只是搜索的中间产物；而 null 条目 `check` 恒为
+// false、`color` 被置成走子方 —— 一旦落进「最近一圈循环」的扫描窗口，会把
+// 「每步都将军」的那一方判成「没在将军」，方向性结论直接反转。
+//
+// 这里用白盒构造（直接改 hist）而不是靠自然走子去碰：自然路径要把空着恰好放进
+// 窗口，需要空着后走偶数手回到同一个键，构造困难且易在实现变动后失效；白盒直接
+// 钉住「窗口里出现 null 时该函数的行为」这一契约。
+func TestLongCheckWindowIgnoresNullEntries(t *testing.T) {
+	// 红长将循环（与 TestLongCheck 同源局面）。
+	p, err := ParseFEN("5k3/9/9/9/9/9/9/4R4/9/3K5 w - - 0 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := []struct{ from, to string }{
+		{"e2", "f2"}, {"f9", "e9"}, {"f2", "e2"}, {"e9", "f9"},
+		{"e2", "f2"}, {"f9", "e9"}, {"f2", "e2"}, {"e9", "f9"},
+	}
+	playLegalSeq(t, p, seq)
+
+	wantWinner, wantOK := p.LongCheckWinner()
+	if !wantOK || wantWinner != ResultBlackWin {
+		t.Fatalf("基线（无空着）应判红长将负 ⇒ 黑胜，实际 winner=%q ok=%v", wantWinner, wantOK)
+	}
+
+	// 定位当前键上次出现的位置（即窗口起点），在其后插入一条 null 条目。
+	i1 := -1
+	for i := len(p.hist) - 1; i >= 0; i-- {
+		if !p.hist[i].null && p.hist[i].key == p.Key {
+			i1 = i
+			break
+		}
+	}
+	if i1 < 0 {
+		t.Fatal("没有找到窗口起点")
+	}
+
+	// 注入位置取窗口正中间：一定落在 [i1:] 内，且不改动 i1 之前的内容。
+	at := i1 + (len(p.hist)-i1)/2
+	// 空着的关键特征：check=false、color=走子方（红）、key 是一个不相干的键。
+	// key 用不相干值是为了让它不成为新的「上次出现位置」而干扰 i1 的定位。
+	inj := histEntry{key: 0xdeadbeefdeadbeef, color: Red, check: false, null: true}
+	p.hist = append(p.hist[:at], append([]histEntry{inj}, p.hist[at:]...)...)
+
+	// 注入后 i1 可能因切片变化而移动一位，重新定位。
+	i1b := -1
+	for i := len(p.hist) - 1; i >= 0; i-- {
+		if !p.hist[i].null && p.hist[i].key == p.Key {
+			i1b = i
+			break
+		}
+	}
+	nullsInWindow := 0
+	for _, h := range p.hist[i1b:] {
+		if h.null {
+			nullsInWindow++
+		}
+	}
+	if nullsInWindow == 0 {
+		t.Fatal("构造失败：空着没有落进扫描窗口，测试无判别力")
+	}
+
+	gotWinner, gotOK := p.LongCheckWinner()
+	if gotWinner != wantWinner || gotOK != wantOK {
+		t.Errorf("窗口内混入 %d 条空着后长将判定被污染\n  无空着=(%q,%v)\n  有空着=(%q,%v)",
+			nullsInWindow, wantWinner, wantOK, gotWinner, gotOK)
+	}
+}
+
+// TestChineseNotationFourOnSameFile 4+ 子同线的序号：必须与前/后构成连续编号。
+//
+// 旧实现把中间子的序号写成 numStr(color, i)，下标 0 已被"前"占用 ⇒ 输出变成
+// "前/一/二/后"，与注释声明的"前/二/三/后"差一位。3 子分支（前/中/后）本来就对，
+// 所以只有 4 子及以上受影响，属极端排局但确实可达（残局库/自定义题目）。
+func TestChineseNotationFourOnSameFile(t *testing.T) {
+	// 黑方 f 线（file 5）上 4 个卒，中间留空以便各自前进一步。
+	// ⚠️ FEN 首行是 rank 9，往下递减：所以 "5p3/9/…" 的卒落在 rank 8、6、4、2。
+	const fen = "3k5/5p3/9/5p3/9/5p3/9/5p3/9/4K4 b - - 0 1"
+	p, err := ParseFEN(fen)
+	if err != nil {
+		t.Fatalf("FEN 解析失败: %v", err)
+	}
+	if p.Turn != Black {
+		t.Fatal("测试前提：应为黑方走子")
+	}
+
+	// 自"前"到"后"：黑方向下为进（rank 减小），故"前"是 rank 最小的卒。
+	// 黑方"前"= 靠近红方底线 = rank 最小者 ⇒ rank 2 是"前"，rank 8 是"后"。
+	// 黑方的序号用阿拉伯数字（红方才用汉字），见 notation.go 的 numStr。
+	wantPrefix := map[int]string{2: "前", 4: "2", 6: "3", 8: "后"}
+	for _, r := range []int{2, 4, 6, 8} {
+		from := bbSquare(5, r)
+		to := bbSquare(5, r-1)
+		if p.Board[to] != Empty {
+			t.Fatalf("rank %d 的落点被占，构造有误", r)
+		}
+		m := Move{From: uint8(from), To: uint8(to)}
+		if !p.IsLegal(m) {
+			t.Fatalf("rank %d 的卒进一不合法（构造有误）", r)
+		}
+		got := p.MoveToChinese(m)
+		want := wantPrefix[r] + "卒进1"
+		if got != want {
+			t.Errorf("rank %d 的卒：got %q want %q（旧实现会给出 前/1/2/后 —— 中间子序号少一位）", r, got, want)
+		}
+	}
+}
+
+// TestNormalizeCNTraditional 繁体输出必须能归一化到简体（否则 LLM 着法静默失配）。
+func TestNormalizeCNTraditional(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"馬二進三", "马二进三"},
+		{"帥五進一", "帅五进一"},
+		{"後車退二", "后车退二"},
+		{"車二平五", "车二平五"},
+		{"將五進一", "将五进一"},
+		{" 馬 二 進 三 ", "马二进三"}, // 去空白
+		{"馬２進３", "马2进3"},      // 全角数字
+	}
+	for _, c := range cases {
+		if got := NormalizeCN(c.in); got != c.want {
+			t.Errorf("NormalizeCN(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestNormalizeCNMatchesGeneratedNotation 归一化后的繁体串必须能匹配 MoveToChinese
+// 生成的简体串 —— 这正是 LLM 生成-匹配解析（llm/player.go）所依赖的等价关系。
+func TestNormalizeCNMatchesGeneratedNotation(t *testing.T) {
+	p, err := ParseFEN(InitialFEN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := MoveFromUCI("b9c7") // 马2进3
+	cn := p.MoveToChinese(m)
+	if cn != "马2进3" {
+		t.Fatalf("前提变了：MoveToChinese 给出 %q", cn)
+	}
+	// 模型回繁体
+	trad := "馬２進３"
+	if !strings.Contains(NormalizeCN(trad), NormalizeCN(cn)) {
+		t.Errorf("繁体 %q 归一化后应包含简体着法 %q（归一化结果 %q）",
+			trad, cn, NormalizeCN(trad))
 	}
 }

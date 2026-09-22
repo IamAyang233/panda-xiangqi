@@ -156,11 +156,16 @@ export class GameScreen {
     this.conn?.close();
     this.conn = new GameConn(created.gameId);
     this.conn.onAny((m) => this._dispatch(m));
+    this.conn.onReconnecting = (n) => toast(`连接中断，正在重连…（第 ${n} 次）`, false, 2200);
     try {
       await this.conn.connect();
     } catch {
       this._setBoardLoading(false); // 连不上就别把棋盘一直盖着
       toast('连接对局服务失败', true);
+      // ⚠️ 必须显式 close()：connect() 的 Promise 虽然已 reject，但 onclose 里
+      // 排下的重连定时器还在跑（manualClose 仍是 false），对这个已不可能恢复的
+      // gameId 会以 1s→15s 无限重试，而这里没有接 onReconnecting 之外的提示路径。
+      this.conn?.close();
     }
   }
 
@@ -220,6 +225,9 @@ export class GameScreen {
     } catch {
       // 棋局会话可能已过期（服务端保留 2 小时），视为无存档返回大厅。
       this._setBoardLoading(false);
+      // ⚠️ 同 start()：不 close() 的话后台重连循环会继续对这个已失效的 gameId
+      // 无限重试，而用户已经被送回大厅了。
+      this.conn?.close();
       store.clearCurrentGame();
       showScreen('lobby');
       return false;
@@ -430,8 +438,16 @@ export class GameScreen {
   _onComment(m) {
     const bubble = $('llm-bubble');
     bubble.hidden = false;
+    const text = (m.comment || '').trim();
+    // 空评论 = 本手模型没给棋评。此时必须复位成占位文案并去掉气泡样式：
+    // 气泡内容是「替换」的，留着上一手的解说会让用户以为它在讲当前这手。
+    if (!text) {
+      bubble.classList.remove('has-comment');
+      bubble.textContent = 'AI 棋手将在此解说每一手棋…';
+      return;
+    }
     bubble.classList.add('has-comment');
-    bubble.textContent = m.comment || '';
+    bubble.textContent = text;
   }
 
   _onPuzzleEvent(m) {

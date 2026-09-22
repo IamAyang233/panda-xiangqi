@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 
@@ -68,30 +70,81 @@ func (p *Player) BestMove(ctx context.Context, pos *game.Position, candidates []
 	messages := []chatMessage{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, chatMessage{Role: "user", Content: p.buildPrompt(pos, legalUci, candUci, assist)})
 
+	// maxTok 是本次的输出上限，被截断时翻倍再试：推理模型的思考长度随局面变化，
+	// 固定额度总会在某些局面上不够（实测同一模型回一个着法可能花 300~3600 个思考 token）。
+	maxTok := p.cfg.maxTokens()
+	// 上限取 8192：再高的话「截断→加倍→再截断」的代价会明显变大（最坏 12k token），
+	// 而思考超过 8k 还回不出一个着法已属异常，报清楚原因让用户自己决定更合适。
+	const maxTokCap = 8192
+
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		ctx2, cancel := context.WithTimeout(ctx, p.cfg.timeout())
-		resp, err := p.client.Chat(ctx2, messages)
+		reply, err := p.client.ChatWithLimit(ctx2, messages, maxTok)
 		cancel()
 		if err != nil {
-			lastErr = err
+			lastErr = withTimeoutHint(err, p.cfg)
 			break // 网络/超时错误 → 直接降级
 		}
-		mv, comment, ok := parseMove(resp, pos, candidates)
-		if ok {
-			return Result{Move: mv, Comment: comment, Attempts: attempt}, nil
+
+		// 先尝试解析（不强求非空）：即使被截断，正文里也可能已经有完整着法，
+		// 能救回来就不必再花一次请求。
+		text := reply.Text()
+		if !reply.Empty() {
+			if mv, comment, ok := parseMove(text, pos, candidates); ok {
+				return Result{Move: mv, Comment: comment, Attempts: attempt}, nil
+			}
 		}
-		// 非法着法：携带反馈重试（A11 第 9 行）
-		lastErr = fmt.Errorf("输出未能解析为合法着法: %.120s", strings.TrimSpace(resp))
+
+		// 解析不成。按原因分派：
+		//   ① 被截断 —— 多半是思考把额度吃光了（finish_reason=length、content 为空、
+		//      reasoning 里全是思考过程）。加倍额度再试，而不是原样重发。
+		//   ② 完全空 —— 模型什么都没给。
+		//   ③ 有文本但解析不出 —— 把原文带进错误里，用户才看得到模型到底回了什么。
+		//
+		// ⚠️ ①必须报出「截断」这个具体原因：旧实现把空串格式化成
+		// 「输出未能解析为合法着法: %.120s」，用户看到一个冒号后什么都没有的提示，
+		// 完全无从排查。
+		if reply.Truncated() {
+			lastErr = fmt.Errorf("模型输出被截断：max_tokens=%d 不足（思考占用过多，未产出完整正文）", maxTok)
+			if maxTok < maxTokCap {
+				maxTok *= 2
+				continue
+			}
+			break
+		}
+		if reply.Empty() {
+			lastErr = fmt.Errorf("模型返回空内容（content 与 reasoning 均为空）")
+			break
+		}
+		lastErr = fmt.Errorf("输出未能解析为合法着法: %.120s", strings.TrimSpace(text))
 		messages = append(messages,
-			chatMessage{Role: "assistant", Content: resp},
+			chatMessage{Role: "assistant", Content: text},
 			chatMessage{Role: "user", Content: fmt.Sprintf(
 				"上一手输出非法（%s）。%s：%s。请重新只输出 JSON。",
-				strings.TrimSpace(resp), feedbackLabel(assist), strings.Join(candUci, ", "))})
+				strings.TrimSpace(text), feedbackLabel(assist), strings.Join(candUci, ", "))})
 	}
 	res := p.degrade(ctx, pos, candidates, 3)
 	res.Comment = fmt.Sprintf("本地引擎代走（%v）", lastErr)
 	return res, lastErr
+}
+
+// withTimeoutHint 给超时类错误补一句可操作的说明。
+//
+// 推理模型一步棋实测可达 50s+，而默认/用户设置里常有 30s —— 这时报「请求失败:
+// context deadline exceeded」用户看不懂是模型太慢还是连不上。明确指出超时值并
+// 提示调大，才能自助解决。
+func withTimeoutHint(err error, cfg Config) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("请求超时（当前超时 %dms，推理模型单步可能要 1 分钟以上，"+
+			"可在设置中调大「超时」）", cfg.timeout().Milliseconds())
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return fmt.Errorf("请求超时（当前超时 %dms，推理模型单步可能要 1 分钟以上，"+
+			"可在设置中调大「超时」）", cfg.timeout().Milliseconds())
+	}
+	return err
 }
 
 func feedbackLabel(assist bool) string {

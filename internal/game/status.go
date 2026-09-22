@@ -103,11 +103,22 @@ func (p *Position) RepetitionCount() int {
 // LongCheckWinner 检测三次重复的循环是否构成长将（一方在循环内每步都将军，
 // 另一方至少一步不将军）。返回胜方（长将方的对手）与 true；双方长将或
 // 非长将（一将一闲等）返回 false，由调用方按和棋处理。
+//
+// ⚠️ 空着（null move）必须整体排除，与 RepetitionCount 保持同一口径：
+//
+//   - 空着不改变子力，不是真实着法，它出现在历史里只是搜索的中间产物；
+//   - null 条目的 `check` 恒为 false、`color` 被置成走子方 —— 一旦混进循环窗口，
+//     会把「每步都将军」的那一方判成「没在将军」，方向性结论直接反转；
+//   - 更隐蔽的是**窗口只剩单个条目**时：redAll/blackAll 的初值都是 true，
+//     单条 null 条目（check=false）会让另一方「空洞地为真」，凭空判出胜负。
+//
+// 排除这一项的成本为零，而漏掉它的后果是「用完全错误的理由判对局胜负」。
 func (p *Position) LongCheckWinner() (string, bool) {
-	// 从后往前找当前局面键的上一次出现位置：该步之后的着法构成最近一圈循环
+	// 从后往前找当前局面键的上一次出现位置：该步之后的着法构成最近一圈循环。
+	// 空着不算「出现」（它并不真的走到过这个局面）。
 	i1 := -1
 	for i := len(p.hist) - 1; i >= 0; i-- {
-		if p.hist[i].key == p.Key {
+		if !p.hist[i].null && p.hist[i].key == p.Key {
 			i1 = i
 			break
 		}
@@ -116,7 +127,14 @@ func (p *Position) LongCheckWinner() (string, bool) {
 		return "", false
 	}
 	redAll, blackAll := true, true
+	// 窗口内是否有真实着法：全为空着时两个 all 都保持初值 true，
+	// 会落进「双方都长将」以外的分支，必须显式拒绝。
+	hasReal := false
 	for _, h := range p.hist[i1:] {
+		if h.null {
+			continue
+		}
+		hasReal = true
 		if h.color == Red {
 			if !h.check {
 				redAll = false
@@ -124,6 +142,9 @@ func (p *Position) LongCheckWinner() (string, bool) {
 		} else if !h.check {
 			blackAll = false
 		}
+	}
+	if !hasReal {
+		return "", false
 	}
 	switch {
 	case redAll && !blackAll:

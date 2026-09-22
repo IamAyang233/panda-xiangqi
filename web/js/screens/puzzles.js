@@ -32,18 +32,26 @@ function showListLoading() {
 
 export async function refresh() {
   showListLoading();
+  let err = null;
   try {
     all = await listPuzzles();
-  } catch {
+  } catch (e) {
+    // ⚠️ 不能静默吞掉：网络故障/后端 500 与「这个难度真的没有残局」在 UI 上
+    // 长得一模一样（都是空列表），用户只会以为没内容、不会想到重试。
+    err = e;
     all = [];
   }
   const active = document.querySelector('#difficulty-tabs .tab.active');
-  render(active ? active.dataset.diff : '');
+  render(active ? active.dataset.diff : '', err);
 }
 
 function starsHTML(n) {
-  if (!n) return '<span class="puzzle-stars" style="opacity:.4">☆☆☆</span>';
-  return `<span class="puzzle-stars">${'★'.repeat(n)}${'☆'.repeat(3 - n)}</span>`;
+  // ⚠️ 星数必须先夹到 [0,3]：localStorage 里若是旧版本/被手工改过的脏数据
+  // （>3 或 NaN），'☆'.repeat(3 - n) 会得到负数并抛 RangeError，
+  // 而 render() 没有 try/catch ⇒ 整个残局列表会白屏。
+  const stars = Number.isFinite(n) ? Math.max(0, Math.min(3, Math.floor(n))) : 0;
+  if (!stars) return '<span class="puzzle-stars" style="opacity:.4">☆☆☆</span>';
+  return `<span class="puzzle-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span>`;
 }
 
 function goalLabel(p) {
@@ -52,7 +60,7 @@ function goalLabel(p) {
   return `${side}${aim}`;
 }
 
-function render(diff) {
+function render(diff, loadError) {
   currentFilter = diff || '';
   const grid = $('puzzle-grid');
   grid.innerHTML = '';
@@ -74,7 +82,11 @@ function render(diff) {
     };
     grid.appendChild(card);
   }
-  if (!list.length) {
+  if (loadError) {
+    // 拉取失败与「真的没有该难度」必须可区分：前者要提示重试。
+    grid.innerHTML =
+      '<p style="color:var(--danger,#e06c75);padding:20px">残局列表加载失败，请检查网络或稍后重试。</p>';
+  } else if (!list.length) {
     grid.innerHTML = '<p style="color:var(--text-dim);padding:20px">该级别暂无残局</p>';
   }
 }

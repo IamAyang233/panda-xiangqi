@@ -18,12 +18,11 @@ import (
 )
 
 // UCIEngine 皮卡鱼（Pikafish）适配器（A10）：子进程 + UCI 协议，单读 goroutine 分发行输出。
-// 档位映射（计划 4.2）：
 //
-//	1~4  → Skill 1,    movetime 300ms（基本不用：Manager 在低档直接走 SimpleEngine）
-//	5~8  → Skill 1~8,  movetime 400~850ms
-//	9~13 → Skill 8~12, movetime 1~1.8s
-//	14~16 → Skill 20,  movetime 1~3s
+// ⚠️ 这套档位映射**只在内嵌 Go 引擎不可用时才生效**（Manager 优先用内嵌引擎，
+// 且不看档位；低档位的失误由 search.Level 的 TopN/Slack 制造）。所以这里的
+// 1~4 档与 search.Level 的 1~4 档**并不等强**，跨引擎比较档位是没有意义的
+// —— 要比棋力请用 BestMoveTimed 固定思考时间。
 type UCIEngine struct {
 	name     string
 	path     string
@@ -127,14 +126,24 @@ func (e *UCIEngine) start() error {
 	e.cmd, e.stdin = cmd, stdin
 	e.dead = make(chan struct{})
 
+	// ⚠️ 两个泵必须把 lines / errLines / dead **捕获成局部变量**，不能每轮
+	// 重新读字段：restart() 会换掉这三个字段，于是旧进程被杀、旧泵 EOF 时会去
+	// `close(e.lines)` —— 关掉的是**新**通道（旧通道已无引用），实测直接
+	// `panic: close of closed channel`。本进程没有 recover 兜底，等于整个服务崩掉。
+	// 本项目的引擎以 Go 内嵌为主力，这条路径平时走不到，但皮卡鱼一旦因崩溃/超时
+	// 被 restart 就会踩上（BestMove 里失败即重启重试一次）。
+	dead := e.dead
+	lines := e.lines
+	errLines := e.errLines
+
 	// 引擎 stderr 单独收进诊断通道（皮卡鱼把加载失败原因写在 stderr）
 	if stderr != nil {
 		go func() {
 			sc := bufio.NewScanner(stderr)
 			for sc.Scan() {
 				select {
-				case e.errLines <- sc.Text():
-				case <-e.dead:
+				case errLines <- sc.Text():
+				case <-dead:
 					return
 				}
 			}
@@ -147,12 +156,12 @@ func (e *UCIEngine) start() error {
 		sc.Buffer(make([]byte, 1<<16), 1<<20)
 		for sc.Scan() {
 			select {
-			case e.lines <- sc.Text():
-			case <-e.dead:
+			case lines <- sc.Text():
+			case <-dead:
 				return
 			}
 		}
-		close(e.lines)
+		close(lines)
 	}()
 
 	e.send("uci")
@@ -215,6 +224,15 @@ func (e *UCIEngine) send(line string) {
 func (e *UCIEngine) kill() {
 	if e.cmd != nil && e.cmd.Process != nil {
 		_ = e.cmd.Process.Kill()
+		// 必须回收：Kill 只是发信号，不 Wait 的子进程会一直留在进程表里（僵尸）。
+		// restart() 每次失败都会换一个新子进程，长期运行会累积 —— 通过 /api/status
+		// 的引擎诊断能看到反复重启的设备尤其明显。
+		//
+		// 放到独立 goroutine 里 Wait：调用方（BestMove/Close）都持有 e.mu，
+		// 同步等待一个刚被 Kill 的进程虽然通常很快，但没有理由把锁押在它上面。
+		cmd := e.cmd
+		go func() { _ = cmd.Wait() }()
+		e.cmd = nil
 	}
 	if e.dead != nil {
 		select {
@@ -223,6 +241,9 @@ func (e *UCIEngine) kill() {
 			close(e.dead)
 		}
 	}
+	// 注意：**不**把 e.stdin 置 nil。restart() 失败时它的错误被上层忽略，
+	// 紧接着还会再调一次 bestOnce（→ send）—— 写一个已死进程的管道只会返回
+	// 错误，而写一个 nil 接口会直接 panic。
 }
 
 // expect 逐行消费引擎输出直到出现 token 前缀；非匹配行（info 等）直接丢弃。

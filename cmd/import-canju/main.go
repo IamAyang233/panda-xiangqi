@@ -8,8 +8,9 @@
 //   - 正解生成（-solve）：用皮卡鱼（Windows 本地引擎）求主变 PV，推导 goal/正解/parMoves，保留星级模型。
 //
 // 用法：
-//   go run ./cmd/import-canju -intxt D:/.../canju12_tmp/app/src/main/assets -out internal/puzzle/data_canju
-//   go run ./cmd/import-canju -intxt ... -out ... -solve -engine dist-engines/pikafish-avx2.exe -workers 10
+//
+//	go run ./cmd/import-canju -intxt D:/.../canju12_tmp/app/src/main/assets -out internal/puzzle/data_canju
+//	go run ./cmd/import-canju -intxt ... -out ... -solve -engine dist-engines/pikafish-avx2.exe -workers 10
 package main
 
 import (
@@ -88,107 +89,10 @@ func loadTikuFile(path string) ([]record, error) {
 	return recs, sc.Err()
 }
 
-// ---- 合法性校验（防止棋子放错） ----
-
-var redElephant = map[[2]int]bool{
-	{2, 0}: true, {6, 0}: true, {0, 2}: true, {4, 2}: true, {8, 2}: true, {2, 4}: true, {6, 4}: true,
-}
-var redAdvisor = map[[2]int]bool{
-	{3, 0}: true, {5, 0}: true, {4, 1}: true, {3, 2}: true, {5, 2}: true,
-}
-
-func elephantPoint(file, rank, col int) bool {
-	if col == game.Red {
-		return redElephant[[2]int{file, rank}]
-	}
-	return redElephant[[2]int{file, 9 - rank}]
-}
-
-func advisorPoint(file, rank, col int) bool {
-	if col == game.Red {
-		return redAdvisor[[2]int{file, rank}]
-	}
-	return redAdvisor[[2]int{file, 9 - rank}]
-}
-
-// validatePlacement 检查静态摆位合法性（不检查轮走方是否被将军，因为"轮走方被将"在残局题里可能合法）。
-func validatePlacement(pos *game.Position) error {
-	for sq90 := 0; sq90 < 90; sq90++ {
-		pc := pos.PieceAt90(sq90)
-		if pc == game.Empty {
-			continue
-		}
-		typ := game.TypeOf(pc)
-		col := game.ColorOf(pc)
-		file := sq90 % 9
-		rank := sq90 / 9
-		switch typ {
-		case game.King:
-			if file < 3 || file > 5 {
-				return fmt.Errorf("将/帅不在九宫列(file=%d)", file)
-			}
-			if col == game.Red && rank > 2 {
-				return fmt.Errorf("红帅出宫(rank=%d)", rank)
-			}
-			if col == game.Black && rank < 7 {
-				return fmt.Errorf("黑将出宫(rank=%d)", rank)
-			}
-		case game.Advisor:
-			if !advisorPoint(file, rank, col) {
-				return fmt.Errorf("士不在九宫点(file=%d,rank=%d)", file, rank)
-			}
-		case game.Elephant:
-			if col == game.Red && rank > 4 {
-				return fmt.Errorf("红相过河(rank=%d)", rank)
-			}
-			if col == game.Black && rank < 5 {
-				return fmt.Errorf("黑象过河(rank=%d)", rank)
-			}
-			if !elephantPoint(file, rank, col) {
-				return fmt.Errorf("相/象不在象位(file=%d,rank=%d)", file, rank)
-			}
-		}
-	}
-	if flyingGeneral(pos) {
-		return fmt.Errorf("将帅对脸(飞将)")
-	}
-	return nil
-}
-
-func flyingGeneral(pos *game.Position) bool {
-	rk, bk := -1, -1
-	for sq90 := 0; sq90 < 90; sq90++ {
-		pc := pos.PieceAt90(sq90)
-		if pc == game.Empty {
-			continue
-		}
-		if game.TypeOf(pc) == game.King {
-			if game.ColorOf(pc) == game.Red {
-				rk = sq90
-			} else {
-				bk = sq90
-			}
-		}
-	}
-	if rk < 0 || bk < 0 {
-		return false
-	}
-	rf, rrank := rk%9, rk/9
-	bf, brank := bk%9, bk/9
-	if rf != bf {
-		return false
-	}
-	lo, hi := rrank, brank
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	for r := lo + 1; r < hi; r++ {
-		if pos.PieceAt90(r*9+rf) != game.Empty {
-			return false
-		}
-	}
-	return true
-}
+// ---- 合法性校验 ----
+//
+// 实现在 game 包（game.ValidatePlacement / game.LegalPosition），此处只做调用 ——
+// 原先这套点位表与飞将判定在内容管线里重复实现了一份，与运行时口径可能漂移。
 
 // ---- 难度分类 ----
 
@@ -224,7 +128,7 @@ func buildPuzzle(id, name string, rec record, source string) (*puzzle.Puzzle, er
 	if err != nil {
 		return nil, fmt.Errorf("FEN 非法: %w", err)
 	}
-	if err := validatePlacement(pos); err != nil {
+	if err := pos.ValidatePlacement(); err != nil {
 		return nil, fmt.Errorf("摆位非法: %w", err)
 	}
 	p := &puzzle.Puzzle{
