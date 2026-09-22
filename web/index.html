@@ -272,8 +272,9 @@
         <label>Base URL<input id="llm-baseurl" placeholder="https://api.deepseek.com/v1"></label>
         <label>API Key<input id="llm-apikey" type="password" placeholder="sk-...（仅保存在本机浏览器）"></label>
         <label>模型名称<input id="llm-model" placeholder="deepseek-chat / glm-4 / qwen-plus ..."></label>
-        <label class="inline">温度 <input id="llm-temp" type="number" step="0.1" min="0" max="2" value="0.3"></label>
-        <label class="inline" title="推理模型（思考型）单步可能需 1 分钟以上，建议 120000；设得过小会每步都超时降级到本地引擎">超时(ms) <input id="llm-timeout" type="number" step="1000" min="3000" value="120000"></label>
+        <label class="inline" title="留空 = 不发送该参数。OpenAI o1/o3 等只接受默认温度的模型必须留空，否则会 400 报错">温度 <input id="llm-temp" type="number" step="0.1" min="0" max="2" value="0.3"></label>
+        <label class="inline" title="推理模型（思考型）单步可能需 1 分钟以上，建议 180000（「截断→加倍重试」会跑两次，共用这个上限）；设得过小会每步都超时降级">超时(ms) <input id="llm-timeout" type="number" step="1000" min="3000" value="180000"></label>
+        <label class="inline" title="单次回复的 token 上限。推理模型要先把额度花在思考上，给小了会出现「正文为空」；被截断时会自动加倍重试">输出上限 <input id="llm-maxtokens" type="number" step="512" min="256" value="8192"></label>
         <label class="inline check"><input id="llm-assist" type="checkbox" checked> 引擎候选增强（本地引擎先筛强着，AI 从中选解——更快更强）</label>
         <label class="inline check"><input id="llm-legal" type="checkbox" checked> 非增强模式下附带合法着法表（着法更稳）</label>
         <div class="settings-row">

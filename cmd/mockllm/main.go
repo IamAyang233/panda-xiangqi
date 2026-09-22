@@ -2,9 +2,10 @@
 // 从提示词中的"可选合法着法"表抽取一手返回，用于大模型对战的端到端联调。
 //
 // 用法：go run ./cmd/mockllm [-addr :9099] [-mode legal|illegal|timeout]
-//   legal   —— 返回合法着法 JSON + 棋评（默认）
-//   illegal —— 永远返回非法内容，触发重试→本地引擎降级链
-//   timeout —— 响应前长睡，触发超时降级
+//
+//	legal   —— 返回合法着法 JSON + 棋评（默认）
+//	illegal —— 永远返回非法内容，触发重试→本地引擎降级链
+//	timeout —— 响应前长睡，触发超时降级
 package main
 
 import (
@@ -64,7 +65,10 @@ func pickMove(msgs []struct {
 	Content string `json:"content"`
 }, mode string) string {
 	if mode == "timeout" {
-		time.Sleep(60 * time.Second)
+		// ⚠️ 睡够 100s，别用 60s：对局侧 LLM 应着的 ctx 现在是「用户超时与 90s 取大」，
+		// 默认 120s。睡 60s 只能触发 llm 包层的超时，覆盖不到「模型耗时超过应着 ctx」
+		// 这条真正会静默降级的路径。100s 才能演练它。
+		time.Sleep(100 * time.Second)
 		return ""
 	}
 	var lastUser string

@@ -122,10 +122,10 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 // ---------------------------------------------------------------- 创建对局
 
 type createGameReq struct {
-	Mode     string    `json:"mode"`
-	Side     string    `json:"side"` // red | black
-	Level    int       `json:"level"`
-	PuzzleID string    `json:"puzzleId"`
+	Mode     string     `json:"mode"`
+	Side     string     `json:"side"` // red | black
+	Level    int        `json:"level"`
+	PuzzleID string     `json:"puzzleId"`
 	LLM      llm.Config `json:"llm"`
 }
 
@@ -255,9 +255,11 @@ func (s *Server) handleLLMValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := llm.NewClient(cfg)
+	// ⚠️ 别写死 30s：推理模型连一次 ping 也可能超过 30s，会给出「测试失败但对弈可用」
+	// 的假阴性。与 llm 包的默认（llm.DefaultTimeoutMs）保持一致。
 	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
 	if cfg.TimeoutMs <= 0 {
-		timeout = 30 * time.Second
+		timeout = time.Duration(llm.DefaultTimeoutMs) * time.Millisecond
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()

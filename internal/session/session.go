@@ -428,6 +428,26 @@ func (s *Session) finishLocked(result, reason string) []any {
 
 // ---------------------------------------------------------------- AI 应着
 
+// engineThinkTimeout 引擎应着的时间上限。
+//
+// 引擎单步预算最大 3.5s（search.Level 第 16 档），90s 绰绰有余。
+const engineThinkTimeout = 90 * time.Second
+
+// thinkTimeout 返回本次应着的 ctx 时长。
+//
+// ⚠️ 大模型模式必须放宽：推理模型一步棋实测 45~90s，而 ctx 是**整次应着**的硬上限，
+// 它比 llm 包里那 120s 更靠近模型、也就更早到期 —— 取 90s 会把用户设置的超时架空
+// （模型还在思考就被取消，静默降级，而提示却让用户去调大设置里的超时，调到 30 万
+// 也没用）。这里取「引擎默认」与「用户超时」中更大的那个。
+func (s *Session) thinkTimeout() time.Duration {
+	if s.Mode == ModeLLM {
+		if t := time.Duration(s.llmCfg.TimeoutMs) * time.Millisecond; t > engineThinkTimeout {
+			return t
+		}
+	}
+	return engineThinkTimeout
+}
+
 // aiReply AI（引擎/LLM/残局守方）应着，goroutine 中运行。
 func (s *Session) aiReply() {
 	s.mu.Lock()
@@ -439,7 +459,7 @@ func (s *Session) aiReply() {
 	// 说明期间重开过 —— 这次应着算的是**旧局面**，必须整体作废。
 	gen := s.gen
 	s.thinking = true
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), s.thinkTimeout())
 	s.cancelThink = cancel
 	side := s.pos.Turn
 	// 残局守方优先走记录的正解应着
