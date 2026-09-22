@@ -6,9 +6,10 @@
 // 用 -regen 可对"缺少正解"的胜负关用引擎自对弈生成主变（仅支持红先胜）。
 //
 // 用法：
-//   go run ./cmd/puzzle-check -in internal/puzzle/data/endgames.json
-//   go run ./cmd/puzzle-check -in internal/puzzle/data/endgames_hard.json
-//   go run ./cmd/puzzle-check -in puzzles.json -out puzzles.json -regen
+//
+//	go run ./cmd/puzzle-check -in internal/puzzle/data/endgames.json
+//	go run ./cmd/puzzle-check -in internal/puzzle/data/endgames_hard.json
+//	go run ./cmd/puzzle-check -in puzzles.json -out puzzles.json -regen
 package main
 
 import (

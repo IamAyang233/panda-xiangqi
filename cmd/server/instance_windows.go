@@ -10,7 +10,7 @@ import (
 
 // 用内核命名 Mutex 做单实例互斥：进程消亡由 OS 自动释放，不会残留文件或句柄。
 var (
-	procCreateMutex    *syscall.LazyProc
+	procCreateMutex     *syscall.LazyProc
 	singleInstanceMutex uintptr
 )
 

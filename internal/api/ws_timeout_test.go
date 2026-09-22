@@ -61,7 +61,7 @@ func TestWSIdleConnectionReaped(t *testing.T) {
 	}
 }
 
-//有心跳的连接必须跨过 wsReadTimeout 仍然存活（读超时按消息续期的回归测试）。
+// 有心跳的连接必须跨过 wsReadTimeout 仍然存活（读超时按消息续期的回归测试）。
 func TestWSHeartbeatKeepsAlive(t *testing.T) {
 	old := wsReadTimeout
 	wsReadTimeout = 400 * time.Millisecond

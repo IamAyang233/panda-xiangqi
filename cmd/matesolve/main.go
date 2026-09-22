@@ -8,9 +8,10 @@
 // accepts 将死). Pass -allow-stalemate to also accept 困毙 (stalemate).
 //
 // Usage:
-//   go run ./cmd/matesolve -in internal/puzzle/data/killers.json -depth 3
-//   go run ./cmd/matesolve -fen "..." -depth 3                # red to move (default)
-//   go run ./cmd/matesolve -fen "..." -side black -depth 3    # black to move
+//
+//	go run ./cmd/matesolve -in internal/puzzle/data/killers.json -depth 3
+//	go run ./cmd/matesolve -fen "..." -depth 3                # red to move (default)
+//	go run ./cmd/matesolve -fen "..." -side black -depth 3    # black to move
 //
 // When -in is used, each puzzle's "playerSide" field selects the attacker
 // (default red). The -side flag only applies to the single -fen form.

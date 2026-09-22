@@ -145,10 +145,10 @@ func init() {
 
 // MoveDesc 着法附加信息（供 UI / 记谱使用）。
 type MoveDesc struct {
-	Check     bool // 走完后将军对方
-	Capture   bool
-	Cn        string // 中文记谱
-	From, To  string // UCI 格式坐标
+	Check    bool // 走完后将军对方
+	Capture  bool
+	Cn       string // 中文记谱
+	From, To string // UCI 格式坐标
 }
 
 // popcount 保留给评估函数使用。
