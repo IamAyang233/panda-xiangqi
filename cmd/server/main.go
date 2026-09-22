@@ -52,6 +52,8 @@ func main() {
 
 	// 残局：外置目录优先，否则内嵌
 	puzzles := mustPuzzles(cfg.PuzzlesDir)
+	// 自定义残局（自摆局面）：独立目录、独立 Store，与题库互不干扰。
+	custom, customDir := mustCustom(cfg.CustomDir)
 
 	engines := engine.NewManagerWithNNUE(cfg.EnginePath, cfg.NNUEPath)
 	defer engines.Close()
@@ -67,6 +69,8 @@ func main() {
 		Sessions:      session.NewManager(),
 		Engines:       engines,
 		Puzzles:       puzzles,
+		Custom:        custom,
+		CustomDir:     customDir,
 		Static:        static,
 		UpdateAPI:     cfg.UpdateAPI,
 		FeedbackToken: cfg.FeedbackToken,
@@ -183,6 +187,30 @@ func mustPuzzles(dir string) *puzzle.Store {
 		log.Fatalf("内嵌残局加载失败: %v", err)
 	}
 	return st
+}
+
+// mustCustom 载入自定义残局目录。目录建不出来或不可读时**降级为空库**：
+// 自摆残局是附加功能，不该因为它而让整个服务起不来；此时保存只活在内存里
+// （进程重启即丢），这一事实由 /api/status 的 customWritable 如实暴露。
+// 返回的 dir 为 "" 即表示内存态。
+func mustCustom(dir string) (*puzzle.Store, string) {
+	if dir == "" {
+		return puzzle.NewEmpty(), ""
+	}
+	// 目录里的坏文件由 NewStore 逐条跳过并告警，不会整体失败。
+	st, err := puzzle.LoadDir(dir)
+	if err == nil {
+		return st, dir
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("自定义残局目录 %s 不可用，本次仅内存保存: %v", dir, err)
+		return puzzle.NewEmpty(), ""
+	}
+	if st, err = puzzle.LoadDir(dir); err != nil {
+		log.Printf("自定义残局目录 %s 载入失败，本次仅内存保存: %v", dir, err)
+		return puzzle.NewEmpty(), ""
+	}
+	return st, dir
 }
 
 func openBrowser(url string) {

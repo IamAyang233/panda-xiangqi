@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -109,9 +110,54 @@ func LoadDir(dir string) (*Store, error) {
 	return NewStore(os.DirFS(dir))
 }
 
+// NewEmpty 构造一个空库（自定义残局目录不存在 / 不可写时降级为内存态使用）。
+func NewEmpty() *Store {
+	return &Store{byID: map[string]*Puzzle{}}
+}
+
 func (s *Store) add(p *Puzzle) {
 	s.puzzles = append(s.puzzles, p)
 	s.byID[p.ID] = p
+}
+
+// Add 内存追加一条残局，并按与加载时相同的口径校验局面（FEN 可解析 + 局面合法）。
+// ID 重复直接报错：自定义残局的 id 是文件名，冲突会覆盖已有条目。
+func (s *Store) Add(p *Puzzle) error {
+	if p == nil {
+		return fmt.Errorf("残局为空")
+	}
+	if p.ID == "" {
+		return fmt.Errorf("残局缺少 id")
+	}
+	if pos, err := game.ParseFEN(p.FEN); err != nil {
+		return fmt.Errorf("FEN 无法解析: %w", err)
+	} else if err := pos.LegalPosition(); err != nil {
+		return fmt.Errorf("局面非法: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[p.ID]; ok {
+		return fmt.Errorf("残局 %s 已存在", p.ID)
+	}
+	s.add(p)
+	return nil
+}
+
+// Remove 摘除一条残局。不存在返回 false，调用方据此区分「删过了」与「本来就没有」。
+func (s *Store) Remove(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[id]; !ok {
+		return false
+	}
+	delete(s.byID, id)
+	for i, p := range s.puzzles {
+		if p.ID == id {
+			s.puzzles = append(s.puzzles[:i], s.puzzles[i+1:]...)
+			break
+		}
+	}
+	return true
 }
 
 // List 按难度列出（difficulty 为空返回全部）。
@@ -151,4 +197,74 @@ func (s *Store) All() []*Puzzle {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]*Puzzle(nil), s.puzzles...)
+}
+
+// ---------------------------------------------------------------- 落盘
+
+// SaveToDir 把一条残局写入目录（文件名 <id>.json），采用「临时文件 + rename」的原子写：
+// 断电或进程被杀时只可能留下临时文件，不会留下半截 JSON 让下次启动的加载器读到脏数据。
+func SaveToDir(dir string, p *Puzzle) error {
+	if dir == "" {
+		return fmt.Errorf("目录为空")
+	}
+	if p == nil || p.ID == "" {
+		return fmt.Errorf("残局缺少 id")
+	}
+	// 目录必须已存在：由启动流程创建，这里不静默 MkdirAll，避免把写权限问题藏起来。
+	if st, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("目录不可用: %w", err)
+	} else if !st.IsDir() {
+		return fmt.Errorf("目录不是一个文件夹: %s", dir)
+	}
+	data, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化失败: %w", err)
+	}
+	data = append(data, '\n')
+	tmp := filepath.Join(dir, p.ID+".json.tmp")
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("写入失败: %w", err)
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, p.ID+".json")); err != nil {
+		// rename 失败时清理临时文件，避免下次加载把它当成残局（扩展名不匹配故不会被加载，
+		// 但仍应清掉，不为排查留垃圾）。
+		_ = os.Remove(tmp)
+		return fmt.Errorf("落盘失败: %w", err)
+	}
+	return nil
+}
+
+// RemoveFromDir 删除目录里某条残局的磁盘文件。
+// 文件已不存在（例如被手工删过）时**不算错误**：调用方仍可据此摘除内存索引，
+// 否则「磁盘丢了但内存还在」会留下一个点开就 404 的幽灵条目。
+func RemoveFromDir(dir string, id string) error {
+	if dir == "" {
+		return fmt.Errorf("目录为空")
+	}
+	if id == "" {
+		return fmt.Errorf("残局 id 为空")
+	}
+	path := filepath.Join(dir, id+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("删除失败: %w", err)
+	}
+	return nil
+}
+
+// DirWritable 目录是否可写（用于降级时如实向外报告，而不是静默变成"保存了其实没保存"）。
+func DirWritable(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".write-check-")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	_ = os.Remove(name)
+	return true
 }

@@ -1,5 +1,5 @@
 # 熊猫象棋服务配置示例：复制为 config.yaml 后按需修改；环境变量可覆盖同名项
-#   QIJING_PORT / QIJING_ENGINE / QIJING_PUZZLES / QIJING_OPEN_BROWSER
+#   QIJING_PORT / QIJING_ENGINE / QIJING_PUZZLES / QIJING_CUSTOM / QIJING_OPEN_BROWSER
 
 # 监听端口
 port: 8080
@@ -10,6 +10,11 @@ port: 8080
 
 # 外置残局目录（覆盖内嵌残局；用于扩充残局内容）
 # puzzles: ./puzzles
+
+# 自定义残局目录（自摆局面保存到这里，全服共享）。默认 <工作目录>/custom-puzzles。
+# 建议 fpk 部署时指到数据卷目录，例如 /vol1/1000/panda-xiangqi-puzzles，
+# 否则应用升级可能连替换应用目录一起清掉这些局面。
+# custom: ./custom-puzzles
 
 # 启动时自动打开浏览器（个人使用推荐 true；服务器部署设为 false）
 open_browser: true

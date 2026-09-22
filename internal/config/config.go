@@ -14,6 +14,7 @@ type Config struct {
 	EnginePath    string // 皮卡鱼路径（空 = 自动探测）
 	NNUEPath      string // 内嵌 Go 引擎的 NNUE 权重（.flat）路径；空 = 自动探测
 	PuzzlesDir    string // 外置残局目录（空 = 使用内嵌）
+	CustomDir     string // 自定义残局目录（自摆局面落盘处，全服共享；空 = 用 ./custom-puzzles）
 	OpenBrowser   bool   // 启动时自动打开浏览器（仅本地 TCP 模式有效）
 	UpdateAPI     string // PanDa 推送更新服务入口（默认公网域名）
 	FeedbackToken string // 反馈提交共享 Token
@@ -30,11 +31,15 @@ func Default() Config {
 		OpenBrowser:   true,
 		UpdateAPI:     "https://www.aykeji.cn",
 		FeedbackToken: "fnos-panda-xiangqi-feedback",
+		CustomDir:     DefaultCustomDir,
 	}
 }
 
+// DefaultCustomDir 自定义残局目录的默认名（相对工作目录）。
+const DefaultCustomDir = "custom-puzzles"
+
 // Load 依次应用：默认值 → configPath（若存在）→ 环境变量。
-// 环境变量：QIJING_PORT / QIJING_ENGINE / QIJING_PUZZLES / QIJING_OPEN_BROWSER /
+// 环境变量：QIJING_PORT / QIJING_ENGINE / QIJING_PUZZLES / QIJING_CUSTOM / QIJING_OPEN_BROWSER /
 // QIJING_UPDATE_API / QIJING_FEEDBACK_TOKEN / QIJING_SOCKET_PATH / QIJING_GATEWAY_PREFIX。
 func Load(configPath string) Config {
 	c := Default()
@@ -64,6 +69,9 @@ func Load(configPath string) Config {
 	}
 	if v := os.Getenv("QIJING_PUZZLES"); v != "" {
 		apply(&c, "puzzles", v)
+	}
+	if v := os.Getenv("QIJING_CUSTOM"); v != "" {
+		apply(&c, "custom", v)
 	}
 	if v := os.Getenv("QIJING_OPEN_BROWSER"); v != "" {
 		apply(&c, "open_browser", v)
@@ -99,6 +107,10 @@ func apply(c *Config, key, val string) {
 		c.NNUEPath = val
 	case "puzzles", "puzzles_dir", "puzzles-dir":
 		c.PuzzlesDir = val
+	case "custom", "custom_dir", "custom-dir", "custom_puzzles":
+		// 自摆残局落盘目录。刻意与 puzzles 分开：puzzles 是「整体替换内嵌题库」，
+		// 把自摆残局写进去会要求用户必须配该目录，否则 3576 关会消失。
+		c.CustomDir = val
 	case "open_browser", "open-browser", "openbrowser":
 		// ⚠️ 值也要小写化：yaml 里写 `open_browser: True` / `Yes` 很常见，
 		// 原实现只比对 "true"/"1"/"yes" 三个小写串，遇到首字母大写会**静默变成 false**。

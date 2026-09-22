@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"math/rand"
 	"net/http"
 	"runtime"
 	"strings"
@@ -22,10 +24,12 @@ type Server struct {
 	Sessions      *session.Manager
 	Engines       *engine.Manager
 	Puzzles       *puzzle.Store
-	Static        fs.FS  // 前端资源（web/dist 或 web/）
-	UpdateAPI     string // PanDa 推送更新服务入口
-	FeedbackToken string // 反馈共享 Token
-	GatewayPrefix string // 飞牛 fnOS 统一网关注册前缀（如 /app/panda-xiangqi）；为空则本地开发直连
+	Custom        *puzzle.Store // 自定义残局（自摆局面，全服共享、可增删）
+	CustomDir     string        // 自定义残局落盘目录；空表示内存态（不持久化）
+	Static        fs.FS         // 前端资源（web/dist 或 web/）
+	UpdateAPI     string        // PanDa 推送更新服务入口
+	FeedbackToken string        // 反馈共享 Token
+	GatewayPrefix string        // 飞牛 fnOS 统一网关注册前缀（如 /app/panda-xiangqi）；为空则本地开发直连
 }
 
 // Handler 组装路由。
@@ -37,7 +41,7 @@ func (s *Server) Handler() http.Handler {
 	inner.HandleFunc("/api/games", s.handleCreateGame)
 	inner.HandleFunc("/api/games/", s.handleGameAction)
 	inner.HandleFunc("/api/puzzles", s.handlePuzzleList)
-	inner.HandleFunc("/api/puzzles/", s.handlePuzzleDetail)
+	inner.HandleFunc("/api/puzzles/", s.handlePuzzle)
 	inner.HandleFunc("/api/llm/validate", s.handleLLMValidate)
 	inner.HandleFunc("/api/update", s.handleUpdate)
 	inner.HandleFunc("/api/feedback", s.handleFeedback)
@@ -80,6 +84,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid, username, isAdmin := gatewayUser(r)
+	customCount, customDir, customWritable := 0, "", false
+	if s.Custom != nil {
+		customCount = s.Custom.Count()
+	}
+	if s.CustomDir != "" {
+		customDir = s.CustomDir
+		// 如实暴露可写性：目录不可写时保存会降级为内存态，若不让外面看见，
+		// 用户只会以为存好了，重启后才发现没了。
+		customWritable = puzzle.DirWritable(s.CustomDir)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"app":            AppName,
 		"version":        AppVersion,
@@ -87,6 +101,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"uciAvailable":   s.Engines.HasUCI(),
 		"engineDiag":     s.Engines.Diagnostics(),
 		"puzzles":        s.Puzzles.Count(),
+		"customPuzzles":  customCount,
+		"customDir":      customDir,
+		"customWritable": customWritable,
 		"sessions":       s.Sessions.Count(),
 		"gatewayUser":    username,
 		"gatewayUid":     uid,
@@ -220,14 +237,40 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- 残局
 
+// handlePuzzleList 列出残局：内置/外置题库 + 自定义残局合并返回。
+// 两者刻意不合并成一个 Store：外置题库会整体替换内嵌题库，而自定义残局是增量的、
+// 且需要可写，混在一起会让「配了 puzzles 目录」变成能不能自摆的前提条件。
 func (s *Server) handlePuzzleList(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.handlePuzzleSave(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "需要 GET")
+		return
+	}
 	difficulty := r.URL.Query().Get("difficulty")
-	writeJSON(w, http.StatusOK, s.Puzzles.List(difficulty))
+	out := s.Puzzles.List(difficulty)
+	if s.Custom != nil {
+		out = append(out, s.Custom.List(difficulty)...)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) handlePuzzleDetail(w http.ResponseWriter, r *http.Request) {
+// handlePuzzle 处理 /api/puzzles/{id} 与 /api/puzzles/{id}/delete。
+// 删除用 POST 而非 DELETE：项目里所有变更动作（undo/hint/resign/restart）都是 POST，
+// 且生产走 fnOS 统一网关反代 —— 不在「网关是否放行 DELETE」上赌运气。
+func (s *Server) handlePuzzle(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/puzzles/")
-	p, ok := s.Puzzles.Get(id)
+	if strings.HasSuffix(id, "/delete") {
+		s.handlePuzzleDelete(w, r, strings.TrimSuffix(id, "/delete"))
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "需要 GET")
+		return
+	}
+	p, ok := s.lookupPuzzle(id)
 	if !ok {
 		writeErr(w, http.StatusNotFound, "残局不存在")
 		return
@@ -236,6 +279,179 @@ func (s *Server) handlePuzzleDetail(w http.ResponseWriter, r *http.Request) {
 		ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
 		PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
 	})
+}
+
+// lookupPuzzle 在两个库里查找（自定义 id 统一用 custom- 前缀，无歧义）。
+func (s *Server) lookupPuzzle(id string) (*puzzle.Puzzle, bool) {
+	if p, ok := s.Puzzles.Get(id); ok {
+		return p, true
+	}
+	if s.Custom != nil {
+		return s.Custom.Get(id)
+	}
+	return nil, false
+}
+
+// ---------------------------------------------------------------- 自定义残局
+
+const (
+	// customPrefix 自定义残局 id 前缀；同时是「允许删除」的判据（防止误删内置 3576 关）。
+	customPrefix = "custom-"
+	// customDifficulty 自定义残局的难度标签，前端据此加一个「自定义」筛选页。
+	customDifficulty = "自定义"
+)
+
+// handlePuzzleSave POST /api/puzzles —— 保存一个自摆局面。
+//
+// 服务端是唯一防线：前端的校验条只是提示，请求可以绕过去。四条硬校验任一不过即 400，
+// 宁可拒也得保证进库的局面能被安全地跑起来（非法局面会让「吃将」成为合法着法，
+// 使 kingSq 悬空、整套合法性判定失真）。
+func (s *Server) handlePuzzleSave(w http.ResponseWriter, r *http.Request) {
+	if s.Custom == nil {
+		writeErr(w, http.StatusServiceUnavailable, "自定义残局功能未启用")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		FEN  string `json:"fen"`
+		Side string `json:"side"`
+		Goal string `json:"goal"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "自摆残局"
+	}
+	if len(name) > 40 {
+		name = name[:40]
+	}
+	side := req.Side
+	if side != "black" {
+		side = "red"
+	}
+	goal := req.Goal
+	if goal != "draw" {
+		goal = "win"
+	}
+
+	// ① FEN 可解析（语法：10 行 / 每行 9 格 / 双将齐备 / 轮走方合法）
+	pos, err := game.ParseFEN(req.FEN)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "局面无法解析: "+err.Error())
+		return
+	}
+	// ② 双方各恰好一个将/帅
+	if err := checkKings(pos); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// ③ 局面合法（九宫、士象位置、将帅不照面、非行棋方不被将军）
+	if err := pos.LegalPosition(); err != nil {
+		writeErr(w, http.StatusBadRequest, "局面非法: "+err.Error())
+		return
+	}
+	// ④ 先走方至少有一个合法着法（否则一开局就判结束，棋还没下就完了）
+	if len(pos.LegalMoves(pos.Turn)) == 0 {
+		writeErr(w, http.StatusBadRequest, "先走方无棋可走（被困毙或将死），无法作为残局")
+		return
+	}
+
+	now := time.Now()
+	p := &puzzle.Puzzle{
+		ID:         fmt.Sprintf("%s%s-%s", customPrefix, now.Format("20060102-150405"), randSuffix(4)),
+		Name:       name,
+		Source:     "自摆",
+		Difficulty: customDifficulty,
+		PlayerSide: side,
+		Goal:       goal,
+		// TrimSpace + 标准化轮走方：编辑器据 side 决定谁先走，落盘的就是唯一权威局面。
+		FEN:      strings.TrimSpace(req.FEN),
+		ParMoves: 0, // 自摆残局没有记录步数的正解，因此不参与评星
+	}
+	if s.CustomDir != "" {
+		if err := puzzle.SaveToDir(s.CustomDir, p); err != nil {
+			writeErr(w, http.StatusInternalServerError, "保存失败: "+err.Error())
+			return
+		}
+	}
+	if err := s.Custom.Add(p); err != nil {
+		// 落盘成功却没能入内存（id 冲突）时不应留下磁盘垃圾。
+		if s.CustomDir != "" {
+			_ = puzzle.RemoveFromDir(s.CustomDir, p.ID)
+		}
+		writeErr(w, http.StatusInternalServerError, "保存失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, puzzle.Public{
+		ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
+		PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves,
+	})
+}
+
+// handlePuzzleDelete POST /api/puzzles/{id}/delete —— 删除一个自定义残局。
+func (s *Server) handlePuzzleDelete(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "需要 POST")
+		return
+	}
+	if s.Custom == nil {
+		writeErr(w, http.StatusServiceUnavailable, "自定义残局功能未启用")
+		return
+	}
+	if !strings.HasPrefix(id, customPrefix) {
+		writeErr(w, http.StatusForbidden, "内置残局不可删除")
+		return
+	}
+	if s.CustomDir == "" {
+		// 内存态：磁盘上本来就没有记录，无从删起。如实告知而不是假装成功，
+		// 否则用户以为删了，重启后它又回来了。
+		writeErr(w, http.StatusBadRequest, "自定义残局当前为内存态（目录不可写），重启后会重新出现")
+		return
+	}
+	if err := puzzle.RemoveFromDir(s.CustomDir, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 文件已不存在（手工删过）时 RemoveFromDir 不算错误，但内存里的索引仍可能被查到，
+	// 若此刻返回 404 就会留下一个「点开必错」的幽灵条目。这里一律尝试摘索引。
+	if !s.Custom.Remove(id) {
+		writeErr(w, http.StatusNotFound, "残局不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// checkKings 双方必须各恰好一枚将/帅。
+// 没有王的一方走子后无从判将军；而多枚王会让「被将军」的语义发散。
+func checkKings(pos *game.Position) error {
+	var red, black int
+	for sq := 0; sq < 90; sq++ {
+		pc := pos.PieceAt(sq)
+		if pc == game.Empty || game.TypeOf(pc) != game.King {
+			continue
+		}
+		if game.ColorOf(pc) == game.Red {
+			red++
+		} else {
+			black++
+		}
+	}
+	if red != 1 || black != 1 {
+		return fmt.Errorf("双方必须各有一枚将/帅（当前红 %d 黑 %d）", red, black)
+	}
+	return nil
+}
+
+func randSuffix(n int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(b)
 }
 
 // ---------------------------------------------------------------- LLM 连通性测试

@@ -412,14 +412,19 @@ func (s *Session) finishLocked(result, reason string) []any {
 					playerMoves++
 				}
 			}
-			switch {
-			// 偏离正解或用过提示：封顶 1 星；否则按步数给 2/3 星。
-			case s.pzFail || s.hintUsed:
-				msg["stars"] = 1
-			case playerMoves <= s.pz.ParMoves:
-				msg["stars"] = 3
-			default:
-				msg["stars"] = 2
+			// ParMoves 0 表示没有记录步数的正解（自摆残局即如此）：此时
+			// `playerMoves <= 0` 恒为假，会落到 default 一律给 2 星 —— 而自摆局面
+			// 没有「标准答案」，凭步数评星毫无意义。这里不给星，前端也不显示。
+			if s.pz.ParMoves > 0 {
+				switch {
+				// 偏离正解或用过提示：封顶 1 星；否则按步数给 2/3 星。
+				case s.pzFail || s.hintUsed:
+					msg["stars"] = 1
+				case playerMoves <= s.pz.ParMoves:
+					msg["stars"] = 3
+				default:
+					msg["stars"] = 2
+				}
 			}
 		}
 	}
@@ -610,8 +615,12 @@ func (s *Session) puzzleLevel() int {
 		return 5
 	case "高级":
 		return 7
-	default:
+	case "大师":
 		return 9
+	default:
+		// 非内置难度（自摆残局的「自定义」）没有既定对应关系：固定档位会让玩家
+		// 在摆局时选的难度完全失效，所以改用玩家自己选的档位。
+		return s.Level
 	}
 }
 
