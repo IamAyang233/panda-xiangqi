@@ -82,7 +82,8 @@ func NewManagerWithNNUE(enginePath, nnuePath string) *Manager {
 		break
 	}
 	if m.uci == nil && len(m.diag) == 0 {
-		m.diag = append(m.diag, "未找到皮卡鱼可执行文件（期望位于可执行文件同目录或 engines/ 子目录）")
+		m.diag = append(m.diag, "未找到外置 UCI 引擎（可选、非必需，仅作兜底；如需使用，"+
+			"放在可执行文件同目录或 engines/ 子目录）")
 	}
 	return m
 }
@@ -228,7 +229,7 @@ func (m *Manager) BestMove(ctx context.Context, pos *game.Position, level int) (
 		if ctxErr(ctx) != nil {
 			return game.Move{}, err
 		}
-		m.noteDiag("皮卡鱼搜索失败，降级到自研引擎: " + err.Error())
+		m.noteDiag("外置 UCI 引擎搜索失败，降级到自研引擎: " + err.Error())
 	}
 	if err := ctxErr(ctx); err != nil {
 		return game.Move{}, err
