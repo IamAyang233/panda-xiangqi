@@ -17,6 +17,11 @@ func clearEnv(t *testing.T) {
 		"QIJING_PORT", "QIJING_ENGINE", "QIJING_NNUE", "QIJING_PUZZLES",
 		"QIJING_OPEN_BROWSER", "QIJING_UPDATE_API", "QIJING_FEEDBACK_TOKEN",
 		"QIJING_SOCKET_PATH", "QIJING_GATEWAY_PREFIX",
+		// 新增环境变量时别忘了加进来：漏掉会让上一条用例的值泄漏到下一条，
+		// 表现为「断言随用例顺序变化」—— QIJING_CUSTOM 就这么漏过一次。
+		"QIJING_CUSTOM",
+		// fnOS 框架变量：不参与断言时也一并清掉
+		"TRIM_PKGVAR",
 	} {
 		t.Setenv(k, "")
 	}
@@ -167,5 +172,45 @@ func TestPortFallback(t *testing.T) {
 				t.Errorf("QIJING_PORT=%q ⇒ Port=%d，期望 %d", tc.val, c.Port, tc.want)
 			}
 		})
+	}
+}
+
+// TestCustomDirFnOSDefault 自定义残局目录的解析顺序：
+// 显式配置（config.yaml / QIJING_CUSTOM）＞ fnOS 的 TRIM_PKGVAR ＞ 相对路径默认值。
+//
+// 为什么要有 TRIM_PKGVAR 这一档：fnOS 升级会替换应用目录，把自摆残局写在应用目录里
+// 会被一起清掉；TRIM_PKGVAR 是框架给的运行时数据目录，不受升级影响。
+// 同时遵循「尽量使用框架变量、不硬编码绝对路径」的约定：非 fnOS 环境保持相对路径。
+func TestCustomDirFnOSDefault(t *testing.T) {
+	clearEnv(t)
+
+	// ① 非 fnOS（无 TRIM_PKGVAR）：保持相对路径默认值
+	if got := Load(""); got.CustomDir != DefaultCustomDir {
+		t.Errorf("无 TRIM_PKGVAR 时应保持相对路径默认值 %q，实际 %q", DefaultCustomDir, got.CustomDir)
+	}
+
+	// ② fnOS：落到运行时数据目录下
+	t.Setenv("TRIM_PKGVAR", "/var/apps/panda-xiangqi/var")
+	want := filepath.Join("/var/apps/panda-xiangqi/var", DefaultCustomDir)
+	if got := Load(""); got.CustomDir != want {
+		t.Errorf("fnOS 环境应落到 %q，实际 %q", want, got.CustomDir)
+	}
+
+	// ③ QIJING_CUSTOM 显式指定：优先于 TRIM_PKGVAR（用户选择不被覆盖）
+	t.Setenv("QIJING_CUSTOM", "./my-puzzles")
+	if got := Load(""); got.CustomDir != "./my-puzzles" {
+		t.Errorf("QIJING_CUSTOM 应优先于 TRIM_PKGVAR，实际 %q", got.CustomDir)
+	}
+	clearEnv(t)
+
+	// ④ config.yaml 里显式指定（相对路径）同样优先
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfg, []byte("custom: ./cfg-puzzles\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TRIM_PKGVAR", "/var/apps/panda-xiangqi/var")
+	if got := Load(cfg); got.CustomDir != "./cfg-puzzles" {
+		t.Errorf("配置文件里的显式值应被尊重，实际 %q", got.CustomDir)
 	}
 }

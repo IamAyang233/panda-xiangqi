@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -22,6 +23,10 @@ type Config struct {
 	// 飞牛 fnOS 统一网关部署相关（由 cmd/main 注入，本地开发为空）。
 	SocketPath    string // 监听的 Unix Socket 路径；非空时优先于 Port 以 Socket 模式运行（无需 root）
 	GatewayPrefix string // 网关前缀，例如 /app/panda-xiangqi；非空时所有路由挂载到该前缀下
+
+	// customSet 记录「自定义残局目录」是否被显式配置过（config.yaml 或 QIJING_CUSTOM）。
+	// 未显式配置时才启用下面的 fnOS 目录兜底，避免覆盖用户的明确选择。
+	customSet bool
 }
 
 // Default 默认配置。
@@ -91,6 +96,15 @@ func Load(configPath string) Config {
 	if c.Port <= 0 || c.Port > 65535 {
 		c.Port = 8080
 	}
+	// 自定义残局目录：用户没显式配置时，按飞牛目录约定落到框架的运行时数据目录
+	// （TRIM_PKGVAR，升级替换应用目录时不会把自摆残局一起清掉）。
+	// 非 fnOS 环境保持相对路径 ./custom-puzzles —— 启动脚本会先 cd 到应用目录，
+	// 因此它落在应用目录内，符合「应用数据保存在应用目录内」的约定。
+	if !c.customSet {
+		if v := os.Getenv("TRIM_PKGVAR"); v != "" {
+			c.CustomDir = filepath.Join(v, DefaultCustomDir)
+		}
+	}
 	return c
 }
 
@@ -111,6 +125,7 @@ func apply(c *Config, key, val string) {
 		// 自摆残局落盘目录。刻意与 puzzles 分开：puzzles 是「整体替换内嵌题库」，
 		// 把自摆残局写进去会要求用户必须配该目录，否则 3576 关会消失。
 		c.CustomDir = val
+		c.customSet = true
 	case "open_browser", "open-browser", "openbrowser":
 		// ⚠️ 值也要小写化：yaml 里写 `open_browser: True` / `Yes` 很常见，
 		// 原实现只比对 "true"/"1"/"yes" 三个小写串，遇到首字母大写会**静默变成 false**。

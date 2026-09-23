@@ -54,6 +54,10 @@ func main() {
 	puzzles := mustPuzzles(cfg.PuzzlesDir)
 	// 自定义残局（自摆局面）：独立目录、独立 Store，与题库互不干扰。
 	custom, customDir := mustCustom(cfg.CustomDir)
+	if customDir != "" {
+		// 明确打出自摆残局的落盘位置：用户反馈「存了找不到」时看日志即可定位。
+		log.Printf("自定义残局目录: %s（%d 条）", customDir, custom.Count())
+	}
 
 	engines := engine.NewManagerWithNNUE(cfg.EnginePath, cfg.NNUEPath)
 	defer engines.Close()
