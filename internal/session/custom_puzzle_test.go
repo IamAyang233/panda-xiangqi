@@ -52,8 +52,38 @@ func TestCustomPuzzleNoStars(t *testing.T) {
 	if got := goMsg["result"]; got != game.ResultRedWin {
 		t.Fatalf("期望红胜（该局面一步将死），实际 %v", goMsg)
 	}
+	// cleared 是前端判「通关成功 / 挑战失败」的唯一依据（它拿不到 stars）。
+	// 漏发或发错会让赢棋显示成失败 —— 端到端黑盒实测踩过这个坑。
+	if got, ok := goMsg["cleared"].(bool); !ok || !got {
+		t.Fatalf("通关标志 cleared 应为 true，实际 %v", goMsg["cleared"])
+	}
 	if _, has := goMsg["stars"]; has {
 		t.Fatalf("自摆残局不应评星，实际 stars=%v", goMsg["stars"])
+	}
+}
+
+// TestCustomPuzzleGoalDrawNotClearedByWin 目标为「求和」的自摆残局，玩家把对方将死
+// （而不是走成和棋）不算通关 —— 验证 cleared 会如实为 false，而不是「只要赢了就算过」。
+func TestCustomPuzzleGoalDrawNotClearedByWin(t *testing.T) {
+	p := customFixture()
+	p.Goal = "draw"
+	conn := &recConn{}
+	sess := session.NewSession(session.ModePuzzle, game.Red, 4, llm.DefaultConfig(), p, engine.NewManager(""))
+	sess.Join(conn)
+	defer sess.Close()
+	waitPlayerTurn(t, sess, game.Red)
+	if err := sess.ApplyPlayerMove("a1", "d1"); err != nil {
+		t.Fatalf("着法应被接受: %v", err)
+	}
+	goMsg, ok := conn.lastGameOver()
+	if !ok {
+		t.Fatal("未收到 game_over")
+	}
+	if got, _ := goMsg["result"].(string); got != game.ResultRedWin {
+		t.Fatalf("局面本身是红胜，实际 %v", got)
+	}
+	if got, ok := goMsg["cleared"].(bool); !ok || got {
+		t.Fatalf("目标为求和时，将死对方不应算通关，cleared 应为 false，实际 %v", goMsg["cleared"])
 	}
 }
 

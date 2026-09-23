@@ -214,7 +214,7 @@ func (s *Session) buildStateLocked() map[string]any {
 	}
 	if s.Mode == ModePuzzle && s.pz != nil {
 		msg["puzzle"] = map[string]any{
-			"id": s.pz.ID, "goal": s.pz.Goal, "playerSide": s.pz.PlayerSide,
+			"id": s.pz.ID, "name": s.pz.Name, "goal": s.pz.Goal, "playerSide": s.pz.PlayerSide,
 			"step":   s.playerMoveCountLocked(),
 			"failed": s.pzFail, "hintUsed": s.hintUsed, "parMoves": s.pz.ParMoves,
 		}
@@ -405,6 +405,9 @@ func (s *Session) finishLocked(result, reason string) []any {
 				reason == game.ReasonStalemate ||
 				reason == game.ReasonLongCheck)
 		}
+		// cleared 显式下发「是否通关」，不让前端靠「有没有 stars」反推：
+		// 自摆残局不评星（无 stars），用 stars 反推会把胜利误判成挑战失败。
+		msg["cleared"] = cleared
 		if cleared {
 			playerMoves := 0
 			for _, mv := range s.moves {

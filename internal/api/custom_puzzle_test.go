@@ -248,17 +248,64 @@ func TestCustomDetailFromBothStores(t *testing.T) {
 	if pub.ID != id {
 		t.Fatalf("详情 id 不符: %q", pub.ID)
 	}
-	// 答案字段绝不能外泄
-	var raw map[string]any
-	resp2, _ := http.Get(ts.URL + "/api/puzzles/" + id)
+	// 答案字段绝不能外泄：重新取一次原始 JSON 核对字段名（上面的 Public 结构体
+	// 反序列化会把未知字段丢掉，靠它看不出「服务端多发了 fen」）。
+	resp2, err := http.Get(ts.URL + "/api/puzzles/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
-	_ = json.NewDecoder(resp2.Body).Decode(&raw)
+	var raw map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := raw["fen"]; ok {
 		t.Fatal("详情不应包含 fen（与题库 Public 视图一致）")
 	}
 }
 
-// TestPuzzleStoreAddRejects 库层面的校验：非法局面与重复 id 都必须在入内存前被挡住。
+// TestCreateGameFromCustomPuzzle 自摆残局保存后必须能按 id 起局。
+//
+// 这是「保存并挑战」的关键一步：handleCreateGame 的残局分支若只查内置题库，
+// 保存会成功但建局 404 —— 用户看到的是「已保存，开始挑战」之后卡在摆局屏。
+// 端到端黑盒实测抓到过这个缺陷，这里用单测钉住。
+func TestCreateGameFromCustomPuzzle(t *testing.T) {
+	ts, _, _ := customServer(t)
+	defer ts.Close()
+
+	_, body := postJSON(t, ts, "/api/puzzles", `{"name":"可挑战","fen":"`+goodFEN+`","side":"red","goal":"win"}`)
+	id, _ := body["id"].(string)
+	if id == "" {
+		t.Fatal("保存未返回 id")
+	}
+
+	code, created := postJSON(t, ts, "/api/games",
+		`{"mode":"puzzle","puzzleId":"`+id+`","level":8,"side":"red"}`)
+	if code != http.StatusOK {
+		t.Fatalf("按自定义残局 id 起局应成功，实际 %d: %v", code, created)
+	}
+	if created["youSide"] != "red" {
+		t.Fatalf("youSide 应为 red，实际 %v", created["youSide"])
+	}
+	if gid, _ := created["gameId"].(string); gid == "" {
+		t.Fatal("未返回 gameId")
+	}
+
+	// 黑先的自摆残局同样要能起局（playerSide 由残局定义决定）
+	_, b2 := postJSON(t, ts, "/api/puzzles", `{"name":"黑先局","fen":"3k5/9/9/9/9/9/9/9/R8/4K4 b","side":"black","goal":"draw"}`)
+	id2, _ := b2["id"].(string)
+	code2, created2 := postJSON(t, ts, "/api/games", `{"mode":"puzzle","puzzleId":"`+id2+`","level":4}`)
+	if code2 != http.StatusOK {
+		t.Fatalf("黑先自摆残局起局应成功，实际 %d: %v", code2, created2)
+	}
+	if created2["youSide"] != "black" {
+		t.Fatalf("黑先局 youSide 应为 black，实际 %v", created2["youSide"])
+	}
+	// 不存在的 id 仍要 404
+	if code, _ := postJSON(t, ts, "/api/games", `{"mode":"puzzle","puzzleId":"custom-none"}`); code != http.StatusNotFound {
+		t.Fatalf("不存在的 id 应 404，实际 %d", code)
+	}
+}
 func TestPuzzleStoreAddRejects(t *testing.T) {
 	s := puzzle.NewEmpty()
 	p := &puzzle.Puzzle{ID: "custom-x", Name: "x", FEN: goodFEN, Difficulty: "自定义"}

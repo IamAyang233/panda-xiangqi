@@ -166,8 +166,10 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	switch mode {
 	case session.ModeEngine, session.ModeLLM, session.ModeLocal:
 	case session.ModePuzzle:
+		// 题库与自定义库都要查：自摆残局保存后就是按 id 从自定义库起局的。
+		// 漏掉自定义库会让「保存并挑战」建局直接 404（保存成功却进不去）。
 		var ok bool
-		pz, ok = s.Puzzles.Get(req.PuzzleID)
+		pz, ok = s.lookupPuzzle(req.PuzzleID)
 		if !ok {
 			writeErr(w, http.StatusNotFound, "残局不存在")
 			return
