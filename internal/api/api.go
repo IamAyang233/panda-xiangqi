@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/engine"
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
@@ -37,19 +38,21 @@ type Server struct {
 // 飞牛 fnOS 统一网关不会剥离前缀，请求以 /app/<appname>/... 的形式到达本服务，
 // 因此所有路由在网关前缀下与根路径下各注册一份，本地开发与网关部署均可工作。
 func (s *Server) Handler() http.Handler {
-	inner := http.NewServeMux()
-	inner.HandleFunc("/api/games", s.handleCreateGame)
-	inner.HandleFunc("/api/games/", s.handleGameAction)
-	inner.HandleFunc("/api/puzzles", s.handlePuzzleList)
-	inner.HandleFunc("/api/puzzles/", s.handlePuzzle)
-	inner.HandleFunc("/api/llm/validate", s.handleLLMValidate)
-	inner.HandleFunc("/api/update", s.handleUpdate)
-	inner.HandleFunc("/api/feedback", s.handleFeedback)
-	inner.HandleFunc("/api/status", s.handleStatus)
-	inner.HandleFunc("/api/ws", s.handleWS)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/games", s.handleCreateGame)
+	mux.HandleFunc("/api/games/", s.handleGameAction)
+	mux.HandleFunc("/api/puzzles", s.handlePuzzleList)
+	mux.HandleFunc("/api/puzzles/", s.handlePuzzle)
+	mux.HandleFunc("/api/llm/validate", s.handleLLMValidate)
+	mux.HandleFunc("/api/update", s.handleUpdate)
+	mux.HandleFunc("/api/feedback", s.handleFeedback)
+	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/ws", s.handleWS)
 	if s.Static != nil {
-		inner.Handle("/", http.FileServerFS(s.Static))
+		mux.Handle("/", http.FileServerFS(s.Static))
 	}
+	// 全部响应加「必须重新验证」——见 noStaleCache 的说明。
+	inner := noStaleCache(mux)
 
 	prefix := strings.TrimRight(s.GatewayPrefix, "/")
 	if prefix == "" {
@@ -112,6 +115,22 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"goVersion":      runtime.Version(),
 		"platform":       runtime.GOOS + "/" + runtime.GOARCH,
 		"timestamp":      time.Now().Format("2006-01-02 15:04:05"),
+	})
+}
+
+// noStaleCache 给所有响应加 `Cache-Control: no-cache`（是"每次都要重新验证"，
+// 不是"不缓存"）：命中缓存时浏览器会带 If-Modified-Since 回来，未变更仍是 304，代价极小。
+//
+// 为什么必须有：本应用是**单二进制内嵌前端**，升级后 HTML 与 ES 模块的版本必须一致。
+// 而 http.FileServerFS 只发 Last-Modified/Date，浏览器会按启发式规则（约 Last-Modified
+// 距今时间的 10%）自行认定新鲜，于是升级后可能**新的 HTML 配旧的 JS**（或反过来）——
+// 表现是「点了没反应」「功能像是没更新」。这不是理论风险：实测中一个长期开着的浏览器
+// 命中缓存拿到了旧版 lobby.js（transferSize=0，4164 字节），而服务端已是 4520 字节，
+// 于是新加的「自定义残局」入口点了弹不出摆局屏。GET /api/* 同理（残局列表等会读到陈旧数据）。
+func noStaleCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -319,7 +338,20 @@ func (s *Server) handlePuzzleSave(w http.ResponseWriter, r *http.Request) {
 		Side string `json:"side"`
 		Goal string `json:"goal"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+	// 先校验**原始请求体**是合法 UTF-8：JSON 必须是 UTF-8（RFC 8259），而
+	// encoding/json 在解码阶段就会把串里的非法字节静默换成替换符 U+FFFD ——
+	// 等解码后拿到 name 再判就晚了，用户得到的是一个乱码名字而不是一条明确的错误。
+	// 浏览器总会发合法 UTF-8，但脚本/其它程序可能按本地编码（如 GBK）发过来。
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体读取失败")
+		return
+	}
+	if !utf8.Valid(raw) {
+		writeErr(w, http.StatusBadRequest, "请求体不是合法的 UTF-8 文本（请检查客户端编码）")
+		return
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}

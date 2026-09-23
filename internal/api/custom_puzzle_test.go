@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -350,6 +351,34 @@ func TestCustomSaveNameTruncatesByRune(t *testing.T) {
 	code3, body3 := postJSON(t, ts, "/api/puzzles", `{"name":"   ","fen":"`+goodFEN+`","side":"red","goal":"win"}`)
 	if code3 != http.StatusOK || body3["name"] == "" {
 		t.Errorf("空名字应兜底为非空，实际 %d %v", code3, body3["name"])
+	}
+}
+
+// TestCustomSaveRejectsInvalidUTF8Name 非法 UTF-8 的名字必须被拒，而不是静默存成乱码。
+//
+// 浏览器总会发合法 UTF-8，但脚本/压测/其它程序可能把 GBK 之类的字节原样发来；
+// 放行的话 []rune 转换会把非法字节变成替换符 U+FFFD，用户看到的就是个乱码名字。
+// （这个缺陷是黑盒测试里用 curl 发中文名时暴露的：curl 在 GBK 控制台下把字节发坏了。）
+func TestCustomSaveRejectsInvalidUTF8Name(t *testing.T) {
+	ts, store, _ := customServer(t)
+	defer ts.Close()
+
+	raw := []byte(`{"name":"`)
+	raw = append(raw, 0xD6, 0xD0, 0xCE, 0xC4) // "中文" 的 GBK 字节，不是合法 UTF-8
+	raw = append(raw, []byte(`","fen":"`+goodFEN+`","side":"red","goal":"win"}`)...)
+
+	resp, err := http.Post(ts.URL+"/api/puzzles", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法 UTF-8 名字应 400，实际 %d: %v", resp.StatusCode, body)
+	}
+	if store.Count() != 0 {
+		t.Fatalf("被拒的名字不应入库，实际 %d 条", store.Count())
 	}
 }
 

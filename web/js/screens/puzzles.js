@@ -81,11 +81,10 @@ function render(diff, loadError) {
     const custom = isCustom(p);
     const card = document.createElement('button');
     card.className = 'puzzle-card';
-    // 自摆残局没有步数正解（parMoves=0）也不评星，因此meta 里不能显示
+    // 自摆残局没有步数正解（parMoves=0）也不评星，因此 meta 里不能显示
     // 「最少 0 步」，右侧也不能显示 ☆☆☆ —— 那会让人以为被评了 0 星。
-    const meta = custom
-      ? `${p.difficulty} · 自摆`
-      : `${p.difficulty} · 最少 ${p.parMoves} 步`;
+    // meta 只给难度，右上角的「自摆」徽标已足够标识来源，避免同一句话出现两次。
+    const meta = custom ? p.difficulty : `${p.difficulty} · 最少 ${p.parMoves} 步`;
     card.innerHTML = `
       <div class="puzzle-name">${escapeHTML(p.name)}</div>
       <div class="puzzle-meta">
