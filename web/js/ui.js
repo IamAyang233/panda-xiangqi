@@ -1,5 +1,5 @@
 // 屏幕路由与通用 UI 工具。
-const SCREENS = ['lobby', 'game', 'puzzles', 'about'];
+const SCREENS = ['lobby', 'game', 'puzzles', 'setup', 'about'];
 let current = 'lobby';   // 与 index.html 初始可见的 screen 一致
 
 export function showScreen(name) {

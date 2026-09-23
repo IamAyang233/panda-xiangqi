@@ -2,6 +2,7 @@
 import { showScreen, currentScreen, toast, confirmDialog } from './ui.js';
 import { initLobby } from './screens/lobby.js';
 import { initPuzzles, refresh as refreshPuzzles, siblingOf } from './screens/puzzles.js';
+import { initSetup } from './screens/setup.js';
 import { initSettings } from './screens/settings.js';
 import { initAbout } from './screens/about.js';
 import { GameScreen } from './screens/game.js';
@@ -15,6 +16,11 @@ initLobby(async (mode, opts) => {
 });
 
 initPuzzles(async (mode, opts) => {
+  await game.start(mode, opts);
+});
+
+// 摆局屏：摆好并保存后直接进入挑战（保存由 setup 屏自己做，这里只负责开局）
+initSetup(async (mode, opts) => {
   await game.start(mode, opts);
 });
 

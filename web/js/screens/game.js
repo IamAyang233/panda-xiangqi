@@ -18,6 +18,11 @@ const reasonText = {
   repetition: '三次重复局面', long_check: '长将判负', '60_moves': '六十回合未吃子', insufficient: '双方无进攻子力',
 };
 
+// 残局名来自用户输入（自摆残局可自己起名），拼进 innerHTML 前必须转义。
+const escapeText = (s) => String(s).replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
 export class GameScreen {
   constructor() {
     this.canvas = $('board-canvas');
@@ -66,7 +71,8 @@ export class GameScreen {
       this.renderer.setFlipped(!this.renderer.flipped);
     };
     $('btn-exit').onclick = async () => {
-      const back = this.mode === 'puzzle' ? '残局列表' : '大厅';
+      // 自摆残局没有「残局列表」这一层，它的上一层是大厅
+      const back = this.mode === 'puzzle' && !this.isCustomPuzzle() ? '残局列表' : '大厅';
       if (this.conn && !this.gameOver && this.moves.length) {
         if (!(await confirmDialog(`对局进行中，确定返回${back}？`, { okText: `返回${back}` }))) return;
       }
@@ -89,8 +95,10 @@ export class GameScreen {
     this.conn = null;
     this._setBoardLoading(false); // 切关等待中途退出时别把遮罩留在那儿
     store.clearCurrentGame();
-    // 逐层返回：残局对局回到残局列表（保留筛选与进度），其余模式回大厅
-    const back = this.mode === 'puzzle' ? 'puzzles' : 'lobby';
+    // 逐层返回：内置残局对局回到残局列表（保留筛选与进度），其余回大厅。
+    // 自摆残局虽然也是 puzzle 模式，但它没有「残局列表里的位置」（不参与逐关浏览），
+    // 回到大厅才是它的上一层 —— 否则会被丢进内置残局列表，看着像串到别的功能里了。
+    const back = this.mode === 'puzzle' && !this.isCustomPuzzle() ? 'puzzles' : 'lobby';
     showScreen(back);
     if (back === 'puzzles') this.onExitToPuzzles?.();
   }
@@ -235,17 +243,26 @@ export class GameScreen {
     return true;
   }
 
+  // isCustomPuzzle 自摆残局（摆局屏保存后按 id 进入，id 统一带 custom- 前缀）。
+  // 它与内置残局共用 ModePuzzle 链路，但有三处不同：没有相邻关可切、没有步数正解、
+  // 不评星 —— 所以界面上要区别对待。
+  isCustomPuzzle() {
+    return this.mode === 'puzzle' && String(this.puzzleId || '').startsWith('custom-');
+  }
+
   _setupUI(mode, opts) {
     const isPuzzle = mode === 'puzzle';
+    const isCustom = isPuzzle && String(opts.puzzleId || '').startsWith('custom-');
     $('btn-restart').hidden = !isPuzzle;
     $('btn-resign').hidden = isPuzzle;
     $('btn-hint').hidden = false;
     $('btn-flip').hidden = false;
     $('puzzle-goal').hidden = !isPuzzle;
-    // 逐关切换只在残局模式出现；返回按钮的目标随模式变化（残局 → 残局列表）
-    $('btn-prev-puzzle').hidden = !isPuzzle;
-    $('btn-next-puzzle').hidden = !isPuzzle;
-    const exitLabel = isPuzzle ? '返回残局列表' : '返回大厅';
+    // 逐关切换只在「内置残局」出现：自摆残局不属于任何关卡序列，没有上一关/下一关。
+    $('btn-prev-puzzle').hidden = !isPuzzle || isCustom;
+    $('btn-next-puzzle').hidden = !isPuzzle || isCustom;
+    // 返回目标随之变化：内置残局回列表，自摆残局回大厅（它是从大厅摆局屏来的）
+    const exitLabel = isPuzzle && !isCustom ? '返回残局列表' : '返回大厅';
     $('btn-exit-label').textContent = exitLabel;
     $('btn-result-exit-label').textContent = exitLabel;
     // LLM 模式：解说条常驻（固定占位，不遮挡棋盘）；其他模式隐藏
@@ -262,7 +279,8 @@ export class GameScreen {
       engine: ['本地引擎', `第 ${opts.level || 4} 档`],
       llm: ['大模型棋手', store.llm.model || '未命名模型'],
       local_2p: ['黑方玩家', '同屏对战'],
-      puzzle: ['残局守方', '引擎抵抗'],
+      // 自摆残局的守方档位就是玩家在摆局时选的那一档（内置残局才是按难度映射）
+      puzzle: ['残局守方', isCustom ? `第 ${opts.level || 4} 档` : '引擎抵抗'],
     };
     const [oppName, oppSub] = names[mode];
     const youBlack = this.humanSide === 'black';
@@ -481,8 +499,9 @@ export class GameScreen {
       title = m.result === 'red_win' ? '红方胜' : m.result === 'black_win' ? '黑方胜' : '和棋';
       cls = m.result === 'draw' ? 'draw' : 'win';
     } else if (isPuzzle) {
-      // 通关与否由后端 m.stars 判定（覆盖红胜/黑胜/和棋三种达成方式）。
-      if (m.stars) { title = '通关成功'; cls = 'win'; }
+      // 通关与否由服务端判定（m.cleared），不再用「有没有 stars」反推：
+      // 自摆残局不评星、不下发 stars，用 stars 判断会把胜利显示成「挑战失败」。
+      if (m.cleared) { title = '通关成功'; cls = 'win'; }
       else { title = '挑战失败'; cls = 'lose'; }
     } else if (m.result === 'draw') {
       title = '和棋'; cls = 'draw';
@@ -600,13 +619,25 @@ export class GameScreen {
     const aim = this.puzzle.goal === 'win' ? '胜' : '和';
     const goal = `${side}${aim}`;
     const failed = this.puzzle.failed ? '<b style="color:#e05a3a">（已偏离正解，可悔棋或重开）</b>' : '';
+    el.hidden = false;
+
+    // 自摆残局：没有正解、没有步数标准、不评星，因此不显示「第 N/M 关」「最少 N 步」
+    // 和星级说明 —— 那些数字对自摆局面没有意义，摆出来只会让人以为被评了星。
+    if (this.isCustomPuzzle()) {
+      // 名字取自服务端 state.puzzle.name：残局名字随对局下发，不依赖「残局列表是否
+      // 已经刷新过」（自摆局刚保存就开局时，前端列表里还没有它，nameOf 会是空串）。
+      const title = this.puzzle.name || nameOf(this.puzzleId);
+      el.innerHTML = `${title ? `<div class="puzzle-pos">${escapeText(title)}</div>` : ''}目标：<b>${goal}</b> · 已走 <b>${this.puzzle.step}</b> 步${failed}
+        <br>自摆局面不评星，练手为主`;
+      return;
+    }
+
     // 逐关浏览需要知道"我在第几关"：显示 第 N/M 关 + 关名
     const pos = this.puzzleId ? positionOf(this.puzzleId) : null;
     const title = this.puzzleId ? nameOf(this.puzzleId) : '';
     const head = pos
       ? `<div class="puzzle-pos">第 <b>${pos.index}</b>/<b>${pos.total}</b> 关${title ? ` · ${title}` : ''}</div>`
       : '';
-    el.hidden = false;
     el.innerHTML = `${head}目标：<b>${goal}</b> · 最少 <b>${this.puzzle.parMoves}</b> 步 · 已走 <b>${this.puzzle.step}</b> 步${failed}
       <br>不用提示且步数达标 = ★★★`;
   }

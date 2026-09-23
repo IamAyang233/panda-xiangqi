@@ -65,6 +65,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 /* ---------- 屏幕 ---------- */
 .screen { flex: 1; overflow: hidden; position: relative; }
 #screen-lobby, #screen-puzzles { overflow-y: auto; }
+/* 摆局屏：标题行固定，棋盘+侧栏填满剩余高度（.game-layout 默认 height:100%
+   会和标题行叠加，导致底部操作条被 overflow:hidden 裁掉） */
+#screen-setup { overflow: hidden; display: flex; flex-direction: column; }
 
 /* ---------- 大厅 ---------- */
 .hero { text-align: center; padding: 40px 20px 22px; position: relative; }
@@ -346,6 +349,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   border: 1px solid var(--line); border-radius: var(--radius);
   padding: 16px; text-align: left; color: var(--text);
   transition: all 0.16s;
+  position: relative;   /* 自定义残局的删除按钮（右上角）靠它定位 */
 }
 .puzzle-card:hover { transform: translateY(-3px); border-color: var(--gold-soft); box-shadow: var(--shadow); }
 .puzzle-name { font-size: 16px; font-weight: 600; letter-spacing: 1px; margin-bottom: 4px; }
@@ -358,6 +362,64 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .puzzle-goal-tag.black.win { color: #6fa0e6; background: rgba(91,141,214,0.12); border-color: #5b8dd6; }
 .puzzle-goal-tag.black.draw { color: #6fa0e6; border-color: #5b8dd6; }
 .puzzle-stars { color: var(--gold); font-size: 15px; letter-spacing: 3px; }
+/* 自定义残局不评星（无步数正解），用「自摆」标记代替星级，避免常显 ☆☆☆ */
+.puzzle-own {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+  color: var(--text-dim); border: 1px dashed var(--line);
+}
+/* 删除按钮：默认半透明，悬停卡片时才明显，免得列表看着像一排删除键 */
+.puzzle-del {
+  position: absolute; top: 8px; right: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  color: var(--text-dim); opacity: 0.55;
+  transition: all 0.15s;
+}
+.puzzle-del:hover { opacity: 1; color: var(--danger, #e06c75); border-color: var(--danger, #e06c75); background: rgba(224,90,58,0.1); }
+.puzzle-del .icon { width: 16px; height: 16px; }
+
+/* ---------- 摆局屏 ---------- */
+.setup-layout { flex: 1; min-height: 0; height: auto; align-items: stretch; }
+.setup-hint { font-size: 12px; color: var(--text-dim); }
+.setup-panel { display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+/* 只有中间设置区滚动；校验条与「保存并挑战」常驻底部，不被滚出视野 */
+.setup-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.setup-panel .settings-section { border-top: 1px solid var(--line); padding: 12px 0; }
+.setup-panel .settings-section:first-child { border-top: none; }
+.setup-panel h3 { font-size: 13px; margin: 10px 0 6px; }
+.palette-side { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.palette-label { font-size: 12px; color: var(--text-dim); width: 30px; flex: 0 0 auto; }
+.palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.palette-btn {
+  appearance: none; cursor: pointer; padding: 2px; background: transparent;
+  border: 1px solid var(--line); border-radius: 50%;
+  transition: all 0.14s; line-height: 0;
+}
+.palette-btn:hover { border-color: var(--gold-soft); }
+.palette-btn.active {
+  border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-glow, rgba(212,169,65,.35));
+}
+.palette-piece {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", serif;
+  font-size: 17px; font-weight: 700;
+  background: linear-gradient(160deg, #f7e7c8, #e2c390);
+  border: 1px solid #a9793f;
+}
+.palette-piece.red { color: #c93a20; }
+.palette-piece.black { color: #2f2318; }
+.setup-tools { flex-wrap: wrap; gap: 6px; }
+.setup-tools .ctl-btn.active-pick { border-color: var(--gold-soft); color: var(--gold); }
+.setup-status {
+  margin: 10px 0; padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
+  border: 1px solid var(--line); color: var(--text-dim); line-height: 1.6;
+}
+.setup-status.bad { color: #f0b3a3; border-color: rgba(224,90,58,0.45); background: rgba(224,90,58,0.08); }
+.setup-status.good { color: #9fd8a0; border-color: rgba(126,201,126,0.45); background: rgba(126,201,126,0.08); }
+.setup-actions { margin-top: auto; padding-top: 10px; gap: 8px; }
+.setup-actions .ctl-btn { flex: 1; }
+.setup-actions .ctl-btn:disabled { opacity: 0.45; cursor: default; }
 
 /* ---------- 自定义滚动条（替代浏览器原生样式） ---------- */
 .move-list, .settings-card, #screen-lobby, #screen-puzzles, .puzzle-grid {
@@ -511,6 +573,8 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .mode-grid { grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px auto; padding: 0 12px; }
   .mode-card { padding: 14px 12px 12px; }
   .mode-icon { width: 44px; height: 44px; margin-bottom: 8px; }
+  /* 摆局屏在手机上：侧栏给足高度，否则常驻的校验条和操作条会把设置区挤没 */
+  .setup-layout .side-panel { max-height: 46vh; }
   .mode-icon .icon { width: 24px; height: 24px; }
   .mode-name { font-size: 16px; }
   .mode-desc { font-size: 12px; }

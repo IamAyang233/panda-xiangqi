@@ -30,6 +30,17 @@ export async function validateLLM(cfg) {
   return api('/api/llm/validate', cfg);
 }
 
+// savePuzzle 保存自摆残局。服务端做四条硬校验，失败会抛带原因的 Error。
+export async function savePuzzle({ name, fen, side, goal }) {
+  return api('/api/puzzles', { name, fen, side, goal });
+}
+
+// deletePuzzle 删除自定义残局。用 POST（与 undo/hint/resign 等变更动作一致），
+// 路径里的 id 由服务端校验必须是自定义库条目，内置残局会被 403 拒绝。
+export async function deletePuzzle(id) {
+  return api(`/api/puzzles/${encodeURIComponent(id)}/delete`, {});
+}
+
 // ---- 心跳与死连接检测 ----
 // 背景：应用经 fnOS 网关反代访问，网关对空闲连接有读超时（nginx 类默认约 60s）。
 // 下棋存在大量无消息时段（读讲解/思考/切后台），连接一旦空闲就被网关掐掉，

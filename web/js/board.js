@@ -34,3 +34,26 @@ export function parseSq(name) {
   if (!/^[a-i][0-9]$/.test(name)) return null;
   return { f: name.charCodeAt(0) - 97, r: +name[1] };
 }
+
+const typeToFen = { 1: 'K', 2: 'A', 3: 'B', 4: 'N', 5: 'R', 6: 'C', 7: 'P' };
+
+// boardToFEN -> FEN 字符串，与 parseFEN 严格互逆。
+// board 是 'f,r' -> {color,type}，turn 为 'red'|'black'；红方大写、黑方小写。
+// 空行用数字压缩（9 表示整行全空），行序按 r 从 9 到 0（与 parseFEN 的 9-i 对应）。
+export function boardToFEN(board, turn = 'red') {
+  const rows = [];
+  for (let r = RANKS - 1; r >= 0; r--) {
+    let row = '';
+    let empty = 0;
+    for (let f = 0; f < FILES; f++) {
+      const p = board.get(`${f},${r}`);
+      if (!p) { empty++; continue; }
+      if (empty) { row += empty; empty = 0; }
+      const ch = typeToFen[p.type] || '';
+      row += p.color === 'red' ? ch : ch.toLowerCase();
+    }
+    if (empty) row += empty;
+    rows.push(row || String(FILES));
+  }
+  return `${rows.join('/')} ${turn === 'black' ? 'b' : 'w'}`;
+}

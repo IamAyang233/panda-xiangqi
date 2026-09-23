@@ -3,6 +3,7 @@ import { store } from '../store.js';
 import { sfx } from '../audio.js';
 import { toast, showScreen } from '../ui.js';
 import { api } from '../net.js';
+import { showPuzzles } from './puzzles.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,7 +34,13 @@ export function initLobby(onStart) {
       sfx.play('button');
       const mode = card.dataset.mode;
       if (mode === 'puzzle') {
-        showScreen('puzzles');
+        // 进列表前刷新：自定义残局是全服共享的，刚保存/别人新存的要能立刻看到
+        await showPuzzles();
+        return;
+      }
+      if (mode === 'custom') {
+        // 自定义残局：进摆局屏自己摆，摆好保存后按 id 走与内置残局相同的挑战链路。
+        showScreen('setup');
         return;
       }
       if (mode === 'pony') {

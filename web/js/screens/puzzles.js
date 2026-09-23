@@ -1,7 +1,8 @@
 // 残局浏览：分级筛选、星级展示、进入挑战。
-import { listPuzzles } from '../net.js';
+import { listPuzzles, deletePuzzle } from '../net.js';
 import { store } from '../store.js';
 import { sfx } from '../audio.js';
+import { toast, confirmDialog, showScreen } from '../ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -45,6 +46,14 @@ export async function refresh() {
   render(active ? active.dataset.diff : '', err);
 }
 
+// showPuzzles 进入残局列表前先刷新一次。
+// 必要性：自定义残局存在服务端、全服共享，本页启动时拉的列表里没有「刚在摆局屏
+// 保存的那一局」，别的设备新存的局面也不会自己出现；不刷新的话「自定义」页会是空的。
+export async function showPuzzles() {
+  showScreen('puzzles');
+  await refresh();
+}
+
 function starsHTML(n) {
   // ⚠️ 星数必须先夹到 [0,3]：localStorage 里若是旧版本/被手工改过的脏数据
   // （>3 或 NaN），'☆'.repeat(3 - n) 会得到负数并抛 RangeError，
@@ -60,26 +69,49 @@ function goalLabel(p) {
   return `${side}${aim}`;
 }
 
+// 自定义残局：id 统一带 custom- 前缀（与服务端一致），只有它能被删除。
+const isCustom = (p) => String(p.id || '').startsWith('custom-');
+
 function render(diff, loadError) {
   currentFilter = diff || '';
   const grid = $('puzzle-grid');
   grid.innerHTML = '';
   const list = diff ? all.filter((p) => p.difficulty === diff) : all;
   for (const p of list) {
+    const custom = isCustom(p);
     const card = document.createElement('button');
     card.className = 'puzzle-card';
+    // 自摆残局没有步数正解（parMoves=0）也不评星，因此meta 里不能显示
+    // 「最少 0 步」，右侧也不能显示 ☆☆☆ —— 那会让人以为被评了 0 星。
+    const meta = custom
+      ? `${p.difficulty} · 自摆`
+      : `${p.difficulty} · 最少 ${p.parMoves} 步`;
     card.innerHTML = `
-      <div class="puzzle-name">${p.name}</div>
+      <div class="puzzle-name">${escapeHTML(p.name)}</div>
       <div class="puzzle-meta">
         <span class="puzzle-goal-tag ${p.goal} ${p.playerSide}">${goalLabel(p)}</span>
-        ${p.difficulty} · 最少 ${p.parMoves} 步
+        ${meta}
       </div>
-      ${starsHTML(store.stars(p.id))}
+      ${custom ? '<span class="puzzle-own">自摆</span>' : starsHTML(store.stars(p.id))}
     `;
     card.onclick = () => {
       sfx.play('button');
       onStart('puzzle', { puzzleId: p.id });
     };
+    if (custom) {
+      const del = document.createElement('span');
+      del.className = 'puzzle-del';
+      del.title = '删除这局';
+      del.setAttribute('role', 'button');
+      del.innerHTML = '<svg class="icon"><use href="#i-trash"/></svg>';
+      del.onclick = (e) => {
+        // 卡片本身是 button：不拦掉冒泡会把「删除」当成「进入挑战」
+        e.stopPropagation();
+        e.preventDefault();
+        removeCustom(p);
+      };
+      card.appendChild(del);
+    }
     grid.appendChild(card);
   }
   if (loadError) {
@@ -87,7 +119,37 @@ function render(diff, loadError) {
     grid.innerHTML =
       '<p style="color:var(--danger,#e06c75);padding:20px">残局列表加载失败，请检查网络或稍后重试。</p>';
   } else if (!list.length) {
-    grid.innerHTML = '<p style="color:var(--text-dim);padding:20px">该级别暂无残局</p>';
+    grid.innerHTML = diff === '自定义'
+      ? '<p style="color:var(--text-dim);padding:20px">还没有自定义残局。回大厅点「自定义残局」自己摆一个。</p>'
+      : '<p style="color:var(--text-dim);padding:20px">该级别暂无残局</p>';
+  }
+}
+
+// 卡面文案来自用户输入（名字）与服务端数据，插进 innerHTML 前必须转义，
+// 否则名字里带 < 就会破坏结构（甚至注入）。
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// removeCustom 删除一个自定义残局：二次确认 → 调接口 → 只从内存列表移除并重渲染
+// （不整页刷新，保持当前筛选页与滚动位置）。
+async function removeCustom(p) {
+  const ok = await confirmDialog(`删除后无法恢复，确定删除「${p.name}」吗？`, {
+    danger: true, okText: '删除',
+  });
+  if (!ok) return;
+  try {
+    await deletePuzzle(p.id);
+    all = all.filter((x) => x.id !== p.id);
+    const active = document.querySelector('#difficulty-tabs .tab.active');
+    render(active ? active.dataset.diff : '');
+    sfx.play('star');
+    toast('已删除', false, 1600);
+  } catch (e) {
+    toast(`删除失败：${e.message}`, true, 3200);
+    sfx.play('illegal');
   }
 }
 

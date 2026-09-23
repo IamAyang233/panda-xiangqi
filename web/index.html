@@ -47,6 +47,21 @@
       <circle cx="8.5" cy="8" r="3"/><path d="M2.8 20c.8-3.4 3-5.3 5.7-5.3s4.9 1.9 5.7 5.3"/>
       <circle cx="16.8" cy="9" r="2.4"/><path d="M16 14.6c2.6.4 4.7 2.3 5.4 5.2"/>
     </symbol>
+    <symbol id="i-brush" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15.5 3.5l5 5-8 8-5-5 8-8z"/><path d="M7.5 11.5l-3 6.5 6.5-3"/>
+      <path d="M4 21h6"/>
+    </symbol>
+    <symbol id="i-eraser" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 20H5.5L3 17.5 13.5 7l5.5 5.5L13 18.5"/>
+      <path d="M13.5 7l3-3 5.5 5.5-3 3"/><path d="M8 20h11"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>
+      <path d="M10 11v6M14 11v6"/>
+    </symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9h10a5 5 0 0 1 0 10H9"/><path d="M8 5L4 9l4 4"/>
+    </symbol>
     <symbol id="i-piece" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="8.5" r="5.2"/><path d="M9.4 8.4h5.2M12 5.8v5.2"/><path d="M6.5 21h11M8.7 21c.4-2.6 1.6-4.4 3.3-4.4s2.9 1.8 3.3 4.4"/>
     </symbol>
@@ -131,6 +146,11 @@
         <div class="mode-name">残局挑战</div>
         <div class="mode-desc">经典杀型排局<br>三星评价 · 引擎验证</div>
       </button>
+      <button class="mode-card" data-mode="custom">
+        <div class="mode-icon"><svg class="icon"><use href="#i-brush"/></svg></div>
+        <div class="mode-name">自定义残局</div>
+        <div class="mode-desc">自己摆局面练杀法<br>可设执子方与目标</div>
+      </button>
       <button class="mode-card" data-mode="pony">
         <div class="mode-icon"><svg class="icon"><use href="#i-horse"/></svg></div>
         <div class="mode-name">小马冲冲</div>
@@ -210,9 +230,69 @@
         <button class="tab" data-diff="中级">中级</button>
         <button class="tab" data-diff="高级">高级</button>
         <button class="tab" data-diff="大师">大师</button>
+        <button class="tab" data-diff="自定义">自定义</button>
       </div>
     </div>
     <div class="puzzle-grid" id="puzzle-grid"></div>
+  </main>
+
+  <!-- 摆局（自定义残局） -->
+  <main id="screen-setup" class="screen" hidden>
+    <div class="puzzle-head">
+      <h2>摆放局面</h2>
+      <div class="setup-hint" id="setup-hint">先选一枚棋子，再点棋盘落子</div>
+    </div>
+    <div class="game-layout setup-layout">
+      <div class="board-panel">
+        <div class="board-wrap">
+          <canvas id="setup-canvas"></canvas>
+        </div>
+      </div>
+      <aside class="side-panel setup-panel">
+        <div class="setup-scroll">
+          <section class="settings-section">
+            <h3>棋子</h3>
+            <div class="palette-side">
+              <div class="palette-label">红方</div>
+              <div class="palette" id="palette-red"></div>
+            </div>
+            <div class="palette-side">
+              <div class="palette-label">黑方</div>
+              <div class="palette" id="palette-black"></div>
+            </div>
+            <div class="settings-row setup-tools">
+              <button class="ctl-btn" id="btn-eraser"><svg class="icon"><use href="#i-eraser"/></svg><span>橡皮</span></button>
+              <button class="ctl-btn" id="btn-undo-piece"><svg class="icon"><use href="#i-undo"/></svg><span>撤销</span></button>
+              <button class="ctl-btn" id="btn-clear-board"><svg class="icon"><use href="#i-trash"/></svg><span>清空</span></button>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3>对局设置</h3>
+            <label>局面名称<input id="setup-name" maxlength="40" placeholder="例如：单车例胜单士"></label>
+            <h3>谁先走</h3>
+            <div class="settings-row side-pick">
+              <button class="ctl-btn side-btn active" data-side="red">红先（我执红）</button>
+              <button class="ctl-btn side-btn" data-side="black">黑先（我执黑）</button>
+            </div>
+            <h3>你的目标</h3>
+            <div class="settings-row goal-pick">
+              <button class="ctl-btn goal-btn active" data-goal="win">取胜</button>
+              <button class="ctl-btn goal-btn" data-goal="draw">求和</button>
+            </div>
+            <h3>AI 难度（16 档）</h3>
+            <div class="level-grid" id="setup-levels"></div>
+          </section>
+        </div>
+
+        <!-- 校验条与主操作常驻底部：侧栏内容较长时，这两个不该被滚出视野 -->
+        <div class="setup-status" id="setup-status"></div>
+        <div class="settings-row setup-actions">
+          <button class="ctl-btn primary" id="btn-save-play" style="border-color:var(--gold-soft);color:var(--gold)">保存并挑战</button>
+          <button class="ctl-btn" id="btn-save-only">仅保存</button>
+        </div>
+      </aside>
+    </div>
   </main>
 
   <!-- 关于 -->
