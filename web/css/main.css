@@ -124,7 +124,11 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   height: 100%; display: flex; gap: 16px; padding: 14px 16px;
   max-width: 1200px; margin: 0 auto;
 }
-.board-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* min-height: 0 不可省：窄屏下 .game-layout 变纵向，此时 .board-panel 是纵向 flex 项，
+   其「自动最小尺寸」等于内容（棋盘 canvas 被 resize() 写死的固有高度，手机实测 567px），
+   于是它拒绝收缩，把下方的着法列表/侧栏顶出视口（实测底边 883 > 视口 844，列表被切掉）。
+   行布局下该属性无副作用。setup 屏早先也踩过同一个坑。 */
+.board-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .board-wrap { flex: 1; position: relative; display: grid; place-items: center; min-height: 0; }
 #board-canvas {
   max-width: 100%; max-height: 100%;
