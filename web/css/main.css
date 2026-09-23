@@ -389,6 +389,19 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
    等于内容（棋盘 canvas 的固有高度），会拒绝收缩、把侧栏挤成一条缝（实测 390x844 下
    侧栏只剩 128px、内部滚动区 0）。min-height:0 允许它收缩，高度链才回到由布局决定。 */
 .setup-layout .board-panel { min-height: 0; }
+/* 对局设置的折叠开关：只在竖排布局（≤860px，见下方媒体查询）出现，
+   桌面/平板横屏设置直接可见，不需要它。 */
+.setup-toggle {
+  display: none;
+  align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; margin: 6px 0 2px; padding: 8px 10px;
+  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); border-radius: 10px;
+  color: var(--gold); font-size: 13px; font-weight: 600; letter-spacing: 1px;
+  font-family: inherit; cursor: pointer;
+}
+.setup-toggle-mark { color: var(--text-dim); transition: transform .15s; }
+.setup-panel.collapsed .setup-toggle-mark { transform: rotate(-90deg); }
 .setup-hint { font-size: 12px; color: var(--text-dim); }
 .setup-panel { display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 /* 只有中间设置区滚动；校验条与「保存并挑战」常驻底部，不被滚出视野 */
@@ -611,12 +624,28 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .game-layout { flex-direction: column; padding: 8px; gap: 8px; }
   .side-panel { width: auto; max-height: 190px; }
   /* 摆局屏侧栏：本区间上层游戏屏会变纵向，摆局屏需要保持纵向（设置区内部滚动 +
-     底部校验条与操作条常驻），并自行给足高度 —— 基础样式的 190px 只够露出 51px
-     设置区；而更窄的 620px 块会把 .side-panel 压成横条，套过来会让内部滚动区按内容
-     全高撑开、把「保存并挑战」顶出屏幕。本条特异性更高（两个类），可稳定压过它。 */
+     底部校验条与操作条常驻）。这里不再固定 46vh —— 竖排布局下优先保证棋盘最大化，
+     侧栏改按内容高度（默认折叠设置后只占一条调色板 + 状态/操作），把高度全让给棋盘。
+     更窄的 620px 块会把 .side-panel 压成横条，套过来会让内部滚动区按内容全高撑开、
+     把「保存并挑战」顶出屏幕，本条特异性更高（两个类），可稳定压过它。 */
   .setup-layout .side-panel {
-    max-height: 46vh; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+    max-height: none; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+    padding: 10px; gap: 6px;
   }
+  .setup-toggle { display: flex; }
+  /* 折叠时隐藏一次性设置（名称/谁先走/目标/难度），调色板与状态条保持可见 */
+  .setup-panel.collapsed #setup-settings { display: none; }
+  /* 展开时给设置区一个上限，超出则内部滚动，避免把棋盘挤没 */
+  .setup-panel:not(.collapsed) .setup-scroll { max-height: 54vh; overflow-y: auto; }
+  /* 调色板压成窄条：每种颜色一排（7 枚正好一行放得下），横滑兜底 */
+  #setup-palette > h3 { display: none; }
+  #setup-palette .palette-side { margin-bottom: 4px; }
+  #setup-palette .palette-label { width: 26px; font-size: 11px; }
+  #setup-palette .palette { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  #setup-palette .palette-btn { flex: 0 0 auto; }
+  #setup-palette .palette-piece { width: 26px; height: 26px; font-size: 15px; }
+  #setup-palette .setup-tools { flex-wrap: nowrap; overflow-x: auto; margin-top: 2px; }
+  #setup-palette .setup-tools .ctl-btn { flex: 0 0 auto; padding: 6px 10px; min-height: 34px; }
   .puzzle-head { padding: 16px 16px 4px; gap: 12px; }
   .puzzle-grid { padding: 14px 16px 30px; }
 }
@@ -686,6 +715,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .mode-grid { grid-template-columns: 1fr; }
   .level-grid { grid-template-columns: repeat(3, 1fr); }
   .ctl-btn span { display: none; }          /* 窄屏仅保留图标 */
+  /* 例外：摆局屏的工具按钮（橡皮/撤销/清空）与操作按钮保留文字 ——
+     这三个动作靠图标不足以自解释；span 被隐藏时连可访问名也会一起丢掉。 */
+  .setup-tools .ctl-btn span { display: inline; }
   .ctl-btn { padding: 8px 11px; }
   .hero h1 { font-size: 30px; }
 }

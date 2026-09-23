@@ -32,6 +32,17 @@ let goal = 'win';
 let level = 4;
 let saving = false;
 
+// showSetup 进入摆局屏，并显式重算一次棋盘几何。
+//
+// 为什么必须显式调用：本模块的 renderer 是在页面初始化时构造的，那一刻屏幕还是
+// hidden（display:none），父容器尺寸为 0，几何被算成 0；屏幕变可见后若只依赖
+// ResizeObserver 的防抖回调，移动端实测会出现「棋盘整块空白、始终不画」。
+// 对局屏早就为同一个坑在 showScreen 之后显式调了一次 renderer.resize()。
+export function showSetup() {
+  showScreen('setup');
+  requestAnimationFrame(() => renderer?.resize());
+}
+
 export function initSetup(handler) {
   onStart = handler;
   renderer = new BoardRenderer($('setup-canvas'), {
@@ -76,6 +87,21 @@ export function initSetup(handler) {
 
   $('btn-save-play').onclick = () => save(true);
   $('btn-save-only').onclick = () => save(false);
+
+  // 竖排布局（手机/平板竖屏）默认折叠「对局设置」：那是一次性设置，长期占着会把棋盘
+  // 压小；调色板、校验条与两个按钮保持常驻，随时可摆子/保存。宽屏下这条开关不显示，
+  // collapsed 类也只在该断点内生效（见 main.css）。
+  const panel = $('setup-panel');
+  const toggle = $('setup-toggle');
+  const setCollapsed = (on) => {
+    panel.classList.toggle('collapsed', on);
+    toggle.setAttribute('aria-expanded', String(!on));
+  };
+  setCollapsed(window.matchMedia('(max-width: 860px)').matches);
+  toggle.onclick = () => {
+    sfx.play('button');
+    setCollapsed(!panel.classList.contains('collapsed'));
+  };
 
   refreshStatus();
 

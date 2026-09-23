@@ -248,9 +248,9 @@
           <canvas id="setup-canvas"></canvas>
         </div>
       </div>
-      <aside class="side-panel setup-panel">
+      <aside class="side-panel setup-panel" id="setup-panel">
         <div class="setup-scroll">
-          <section class="settings-section">
+          <section class="settings-section" id="setup-palette">
             <h3>棋子</h3>
             <div class="palette-side">
               <div class="palette-label">红方</div>
@@ -267,7 +267,13 @@
             </div>
           </section>
 
-          <section class="settings-section">
+          <!-- 竖排布局（手机/平板竖屏）下默认折叠：一次性设置，不该长期占着棋盘的高度。
+               点这条标题展开。桌面和平板横屏不显示它（设置直接可见）。 -->
+          <button class="setup-toggle" id="setup-toggle" aria-expanded="true" aria-controls="setup-settings">
+            <span>对局设置</span><span class="setup-toggle-mark" aria-hidden="true">▾</span>
+          </button>
+
+          <section class="settings-section" id="setup-settings">
             <h3>对局设置</h3>
             <label>局面名称<input id="setup-name" maxlength="40" placeholder="例如：单车例胜单士"></label>
             <h3>谁先走</h3>

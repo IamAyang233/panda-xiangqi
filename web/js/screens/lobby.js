@@ -4,6 +4,7 @@ import { sfx } from '../audio.js';
 import { toast, showScreen } from '../ui.js';
 import { api } from '../net.js';
 import { showPuzzles } from './puzzles.js';
+import { showSetup } from './setup.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -40,7 +41,9 @@ export function initLobby(onStart) {
       }
       if (mode === 'custom') {
         // 自定义残局：进摆局屏自己摆，摆好保存后按 id 走与内置残局相同的挑战链路。
-        showScreen('setup');
+        // 用 showSetup() 而不是 showScreen('setup')：它会在屏幕可见后重算棋盘几何，
+        // 否则移动端会看到一块空白的棋盘（构造期父容器尺寸为 0）。
+        showSetup();
         return;
       }
       if (mode === 'pony') {
