@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/engine"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
@@ -306,6 +308,52 @@ func TestCreateGameFromCustomPuzzle(t *testing.T) {
 		t.Fatalf("不存在的 id 应 404，实际 %d", code)
 	}
 }
+
+// TestCustomSaveNameTruncatesByRune 超长名字必须按「字符」截断。
+//
+// 原先写的是 len(name) > 40 → name[:40]，而 Go 的 len 是字节数：中文一个字 3 字节，
+// 40 字节只有 13 个汉字，任何超过 13 字的中文名字都会被切成半个字，存下来是无效
+// UTF-8（前端显示为半字或替换符）；前端输入框限的却是 40 字符，两边口径也不一致。
+// 这个缺陷是对抗性黑盒测试（故意喂长中文名与标签）跑出来的。
+func TestCustomSaveNameTruncatesByRune(t *testing.T) {
+	ts, _, _ := customServer(t)
+	defer ts.Close()
+
+	cn := strings.Repeat("长", 60)
+	code, body := postJSON(t, ts, "/api/puzzles", `{"name":"`+cn+`","fen":"`+goodFEN+`","side":"red","goal":"win"}`)
+	if code != http.StatusOK {
+		t.Fatalf("超长名字应可保存，实际 %d: %v", code, body)
+	}
+	name, _ := body["name"].(string)
+	if got := len([]rune(name)); got != 40 {
+		t.Errorf("中文名应截到 40 个字符，实际 %d 字符 / %d 字节", got, len(name))
+	}
+	if !utf8.ValidString(name) {
+		t.Error("截断后必须是合法 UTF-8（按字节截断会切裂汉字）")
+	}
+	if strings.ContainsRune(name, '\uFFFD') {
+		t.Error("截断后不应含替换符 U+FFFD")
+	}
+
+	// 短于上限的名字必须一字不改（含标签与特殊字符；前端负责转义显示）
+	evil := `<img src=x onerror=alert(1)>「引」&<b>`
+	if len([]rune(evil)) > 40 {
+		t.Fatalf("用例自身有误：名字 %d 字符已超上限", len([]rune(evil)))
+	}
+	code2, body2 := postJSON(t, ts, "/api/puzzles", `{"name":`+strconv.Quote(evil)+`,"fen":"`+goodFEN+`","side":"red","goal":"win"}`)
+	if code2 != http.StatusOK {
+		t.Fatalf("含特殊字符的名字应可保存，实际 %d", code2)
+	}
+	if got, _ := body2["name"].(string); got != evil {
+		t.Errorf("短名字应原样保存\n  got=%q\n want=%q", got, evil)
+	}
+	code3, body3 := postJSON(t, ts, "/api/puzzles", `{"name":"   ","fen":"`+goodFEN+`","side":"red","goal":"win"}`)
+	if code3 != http.StatusOK || body3["name"] == "" {
+		t.Errorf("空名字应兜底为非空，实际 %d %v", code3, body3["name"])
+	}
+}
+
+// TestPuzzleStoreAddRejects 库层面的校验：非法局面与重复 id 都必须在入内存前被挡住。
 func TestPuzzleStoreAddRejects(t *testing.T) {
 	s := puzzle.NewEmpty()
 	p := &puzzle.Puzzle{ID: "custom-x", Name: "x", FEN: goodFEN, Difficulty: "自定义"}
