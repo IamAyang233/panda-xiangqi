@@ -573,8 +573,6 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .mode-grid { grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px auto; padding: 0 12px; }
   .mode-card { padding: 14px 12px 12px; }
   .mode-icon { width: 44px; height: 44px; margin-bottom: 8px; }
-  /* 摆局屏在手机上：侧栏给足高度，否则常驻的校验条和操作条会把设置区挤没 */
-  .setup-layout .side-panel { max-height: 46vh; }
   .mode-icon .icon { width: 24px; height: 24px; }
   .mode-name { font-size: 16px; }
   .mode-desc { font-size: 12px; }
@@ -593,6 +591,12 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .side-panel {
     max-height: none; flex-direction: row; flex-wrap: wrap;
     align-items: center; padding: 8px 10px; gap: 4px 8px;
+  }
+  /* 摆局屏侧栏必须保持纵向（设置区内部滚动 + 底部校验条与操作条常驻）：
+     上面那条「压成横条」是给对局屏的着法列表用的，套到这里会让滚动区
+     按内容全高撑开，把「保存并挑战」顶出屏幕（手机竖屏实测跑到 y=1593）。 */
+  .setup-layout .side-panel {
+    max-height: 46vh; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
   }
   .panel-title { font-size: 13px; }
   .side-panel #btn-exit { margin-left: auto; padding: 6px 10px; font-size: 12px; min-height: 34px; }

@@ -327,8 +327,10 @@ func (s *Server) handlePuzzleSave(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "自摆残局"
 	}
-	if len(name) > 40 {
-		name = name[:40]
+	// 按「字符」截断而不是字节：中文一个字 3 字节，按字节截会把一个字切成两半，
+	// 存进去就是无效 UTF-8（前端显示成半个字或替换符）。前端输入框限 40 字符，这里对齐。
+	if r := []rune(name); len(r) > 40 {
+		name = string(r[:40])
 	}
 	side := req.Side
 	if side != "black" {
