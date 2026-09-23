@@ -149,3 +149,47 @@ func TestCustomPuzzleNoDeviate(t *testing.T) {
 		}
 	}
 }
+
+// TestCustomPuzzleFirstSideRedWithBlackPlayer 「红先、我执黑」这种组合：
+// 服务端下发的 puzzle.firstSide 必须是 red（局面轮走方），而不是拿 playerSide 反推；
+// 并且开局该由 AI（红方）先动，等它应着后轮到玩家。
+//
+// 对局屏的「我执黑 · 红先」就靠这个字段显示，标错会让玩家以为是自己先走。
+func TestCustomPuzzleFirstSideRedWithBlackPlayer(t *testing.T) {
+	p := customFixture() // FEN 是红先（… w）
+	p.PlayerSide = "black"
+	conn := &recConn{}
+	sess := session.NewSession(session.ModePuzzle, game.Black, 4, llm.DefaultConfig(), p, engine.NewManager(""))
+	// 与 api.handleCreateGame 的调用顺序一致：建局后先拉一次「该 AI 先走吗」，
+	// 再让客户端 Join（Join 会下发当前完整 state）。少这一步 AI 永远不会动。
+	sess.StartIfAIToMove()
+	sess.Join(conn)
+	defer sess.Close()
+
+	// 首个 state 里的两个字段必须各说各话
+	conn.mu.Lock()
+	var pzInfo map[string]any
+	for _, m := range conn.msgs {
+		if msg, ok := m.(map[string]any); ok && msg["type"] == "state" {
+			if sub, ok := msg["puzzle"].(map[string]any); ok {
+				pzInfo = sub
+			}
+		}
+	}
+	conn.mu.Unlock()
+	if pzInfo == nil {
+		t.Fatal("首个 state 未带 puzzle 子对象")
+	}
+	if got := pzInfo["firstSide"]; got != "red" {
+		t.Errorf("firstSide 应为 red（FEN 红先），实际 %v", got)
+	}
+	if got := pzInfo["playerSide"]; got != "black" {
+		t.Errorf("playerSide 应为 black，实际 %v", got)
+	}
+
+	// AI（红）先动：等它走完，局面应轮到黑方（玩家）
+	waitPlayerTurn(t, sess, game.Black)
+	if _, ok := conn.lastMoveMsg(); !ok {
+		t.Error("AI 应先应着一手（着法列表为空）")
+	}
+}

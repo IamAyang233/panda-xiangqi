@@ -296,10 +296,7 @@ func (s *Server) handlePuzzle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "残局不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, puzzle.Public{
-		ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
-		PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
-	})
+	writeJSON(w, http.StatusOK, p.Public())
 }
 
 // lookupPuzzle 在两个库里查找（自定义 id 统一用 custom- 前缀，无歧义）。
@@ -421,10 +418,7 @@ func (s *Server) handlePuzzleSave(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "保存失败: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, puzzle.Public{
-		ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
-		PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves,
-	})
+	writeJSON(w, http.StatusOK, p.Public())
 }
 
 // handlePuzzleDelete POST /api/puzzles/{id}/delete —— 删除一个自定义残局。

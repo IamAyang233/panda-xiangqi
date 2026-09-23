@@ -412,9 +412,13 @@ export class GameScreen {
     // AI 走子后轮到人类：恢复悔棋按钮与状态栏（_onThinking 曾禁用/置思考中）。
     if (this.mode !== 'local_2p' && m.byHuman === false) {
       $('btn-undo').disabled = false;
-      const oppState = $('opp-state');
-      oppState.className = 'player-state';
-      oppState.textContent = '';
+      // AI 走完即轮到人类，这里要补上「轮到你」提示。
+      //
+      // 原来只恢复悔棋按钮，而完整轮次只在 state 消息里同步、普通走子并不重发 state，
+      // 于是人机/大模型/残局模式在 AI 应着之后状态栏一直空着。在「对手先走」的自摆局
+      // （红先·我执黑）里最明显：开局第一手就是 AI 走的，界面上却没有"该你了"的提示。
+      this._turn = this.humanSide === 'black' ? 'black' : 'red';
+      this._updateStates({ turn: this._turn, thinking: false });
     }
     sfx.play(captured ? 'capture' : 'move');
     // 残局目标栏：走子消息自带 step，无需等 state 全量同步即可刷新"已走 N 步"。
@@ -620,9 +624,12 @@ export class GameScreen {
   _renderPuzzleGoal() {
     const el = $('puzzle-goal');
     if (!this.puzzle) { el.hidden = true; return; }
-    const side = this.puzzle.playerSide === 'black' ? '黑先' : '红先';
-    const aim = this.puzzle.goal === 'win' ? '胜' : '和';
-    const goal = `${side}${aim}`;
+    // 两个独立维度：谁执子（playerSide）与局面谁先走（firstSide，服务端下发）。
+    // 用 playerSide 反推"红先/黑先"在「红先·我执黑」这类局上会标错。
+    const mine = this.puzzle.playerSide === 'black' ? '我执黑' : '我执红';
+    const first = (this.puzzle.firstSide || this.puzzle.playerSide) === 'black' ? '黑先' : '红先';
+    const aim = this.puzzle.goal === 'win' ? '取胜' : '求和';
+    const goal = `${mine} · ${first} · ${aim}`;
     const failed = this.puzzle.failed ? '<b style="color:#e05a3a">（已偏离正解，可悔棋或重开）</b>' : '';
     el.hidden = false;
 

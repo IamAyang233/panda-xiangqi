@@ -96,3 +96,63 @@ func TestListHidesSolution(t *testing.T) {
 		t.Error("不存在的残局不应返回")
 	}
 }
+
+// TestFirstSideIndependentOfPlayerSide 起始轮走方（firstSide）与执子方（playerSide）
+// 是两个独立维度，必须分别按 FEN 与 PlayerSide 计算，不能互相反推。
+//
+// 内置题目里就有一关是「执黑但红方先走」（黑方守和、红方先攻）；界面上显示
+// 「红先/黑先」必须用 firstSide，用 playerSide 反推会把它标反。
+func TestFirstSideIndependentOfPlayerSide(t *testing.T) {
+	const fenRedFirst = "3k5/9/9/9/9/9/9/9/R8/4K4 w"
+	const fenBlackFirst = "3k5/9/9/9/9/9/9/9/R8/4K4 b"
+	cases := []struct {
+		fen        string
+		playerSide string
+		wantFirst  string
+	}{
+		{fenRedFirst, "red", "red"},       // 红先、我执红（我先走）
+		{fenBlackFirst, "black", "black"}, // 黑先、我执黑（我先走）
+		{fenRedFirst, "black", "red"},     // 红先、我执黑（对手先走）
+		{fenBlackFirst, "red", "black"},   // 黑先、我执红（对手先走）
+	}
+	for _, c := range cases {
+		s := NewEmpty()
+		p := &Puzzle{ID: "custom-x", Name: "x", FEN: c.fen, PlayerSide: c.playerSide, Difficulty: "自定义"}
+		if err := s.Add(p); err != nil {
+			t.Fatalf("Add 失败: %v", err)
+		}
+		pub := p.Public()
+		if pub.FirstSide != c.wantFirst {
+			t.Errorf("FEN=%q 执子=%s：FirstSide 期望 %s，实际 %s", c.fen, c.playerSide, c.wantFirst, pub.FirstSide)
+		}
+		if pub.PlayerSide != c.playerSide {
+			t.Errorf("PlayerSide 应原样保留，期望 %s 实际 %s", c.playerSide, pub.PlayerSide)
+		}
+		// 列表视图也必须带 FirstSide（前端卡片标签用它）
+		got := s.List("")[0].FirstSide
+		if got != c.wantFirst {
+			t.Errorf("List 的 FirstSide 期望 %s，实际 %s", c.wantFirst, got)
+		}
+	}
+}
+
+// TestEmbeddedFirstSideMatchesFEN 内置题库每一条的 firstSide 都必须与它的 FEN 一致。
+func TestEmbeddedFirstSideMatchesFEN(t *testing.T) {
+	st, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range st.All() {
+		pos, err := game.ParseFEN(p.FEN)
+		if err != nil {
+			continue // 加载时已被跳过，这里不重复报
+		}
+		want := "red"
+		if pos.Turn == game.Black {
+			want = "black"
+		}
+		if got := p.Public().FirstSide; got != want {
+			t.Fatalf("%s: firstSide=%s 与 FEN 的轮走方 %s 不一致", p.ID, got, want)
+		}
+	}
+}

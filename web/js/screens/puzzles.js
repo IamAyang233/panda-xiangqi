@@ -64,9 +64,13 @@ function starsHTML(n) {
 }
 
 function goalLabel(p) {
-  const side = p.playerSide === 'black' ? '黑先' : '红先';
+  // 先/后由**局面的真实轮走方**决定（firstSide，服务端下发）；playerSide 是「我执哪方」，
+  // 两者可以不同（如"红先、我执黑"＝让 AI 先动的练习局）。只有不一致时才额外标出执子方。
+  const first = (p.firstSide || p.playerSide) === 'black' ? '黑先' : '红先';
   const aim = p.goal === 'win' ? '胜' : '和';
-  return `${side}${aim}`;
+  const mine = p.playerSide === 'black' ? '黑' : '红';
+  const differs = !!p.firstSide && p.firstSide !== p.playerSide;
+  return differs ? `执${mine}·${first}${aim}` : `${first}${aim}`;
 }
 
 // 自定义残局：id 统一带 custom- 前缀（与服务端一致），只有它能被删除。

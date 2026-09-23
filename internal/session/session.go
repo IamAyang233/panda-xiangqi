@@ -74,6 +74,12 @@ type Session struct {
 	pzConsumed []bool
 	pzFail     bool
 	hintUsed   bool
+	// pzFirstSide 残局起始局面的轮走方（"red"/"black"）。
+	//
+	// 与 HumanSide **互相独立**：局面轮走方由 FEN 决定，我执哪方由 playerSide 决定，
+	// 两者可以不同（「红方先走、我执黑」＝让 AI 先动的练习局，内置题库里也有一关
+	// 是执黑而红先）。界面显示「红先/黑先」必须用这个值，不能用 HumanSide 反推。
+	pzFirstSide string
 
 	conns   map[Conn]struct{}
 	engines *engine.Manager
@@ -111,6 +117,7 @@ func NewSession(mode string, humanSide int, level int, llmCfg llm.Config, pz *pu
 			pos = game.NewPosition()
 		}
 		s.pos = pos
+		s.pzFirstSide = sideName(pos.Turn) // 起始轮走方随对局下发，供界面显示「红先/黑先」
 	} else {
 		s.pos = game.NewPosition()
 	}
@@ -215,8 +222,10 @@ func (s *Session) buildStateLocked() map[string]any {
 	if s.Mode == ModePuzzle && s.pz != nil {
 		msg["puzzle"] = map[string]any{
 			"id": s.pz.ID, "name": s.pz.Name, "goal": s.pz.Goal, "playerSide": s.pz.PlayerSide,
-			"step":   s.playerMoveCountLocked(),
-			"failed": s.pzFail, "hintUsed": s.hintUsed, "parMoves": s.pz.ParMoves,
+			// firstSide 是起始局面的轮走方，与 playerSide 相互独立（见字段注释）
+			"firstSide": s.pzFirstSide,
+			"step":      s.playerMoveCountLocked(),
+			"failed":    s.pzFail, "hintUsed": s.hintUsed, "parMoves": s.pz.ParMoves,
 		}
 	}
 	return msg

@@ -276,11 +276,17 @@
           <section class="settings-section" id="setup-settings">
             <h3>对局设置</h3>
             <label>局面名称<input id="setup-name" maxlength="40" placeholder="例如：单车例胜单士"></label>
-            <h3>谁先走</h3>
-            <div class="settings-row side-pick">
-              <button class="ctl-btn side-btn active" data-side="red">红先（我执红）</button>
-              <button class="ctl-btn side-btn" data-side="black">黑先（我执黑）</button>
+            <h3>局面谁先走</h3>
+            <div class="settings-row first-pick">
+              <button class="ctl-btn first-btn active" data-first="red">红方先走</button>
+              <button class="ctl-btn first-btn" data-first="black">黑方先走</button>
             </div>
+            <h3>我执哪方</h3>
+            <div class="settings-row side-pick">
+              <button class="ctl-btn side-btn active" data-side="red">我执红</button>
+              <button class="ctl-btn side-btn" data-side="black">我执黑</button>
+            </div>
+            <p class="setup-note" id="setup-turn-note"></p>
             <h3>你的目标</h3>
             <div class="settings-row goal-pick">
               <button class="ctl-btn goal-btn active" data-goal="win">取胜</button>

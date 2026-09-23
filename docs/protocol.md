@@ -11,9 +11,9 @@
 | `POST /api/games/{id}/undo` | — | `{ok: bool, reason?: string}`（思考中不可悔棋） |
 | `POST /api/games/{id}/hint` | — | `{from: string, to: string, cn: string}` |
 | `POST /api/games/{id}/resign` | — | `{ok: bool}` |
-| `GET /api/puzzles?difficulty=入门\|初级\|中级\|高级\|大师\|自定义` | — | `[{id, name, source?, difficulty, playerSide, goal, parMoves, tags?}]`（不含答案） |
-| `GET /api/puzzles/{id}` | — | `{id, name, difficulty, playerSide, goal, parMoves, tags?}`（不含答案） |
-| `POST /api/puzzles` | `{name?, fen, side: "red"\|"black", goal: "win"\|"draw"}` | `{id, name, difficulty, playerSide, goal, parMoves}`；保存一个**自摆残局** |
+| `GET /api/puzzles?difficulty=入门\|初级\|中级\|高级\|大师\|自定义` | — | `[{id, name, source?, difficulty, playerSide, goal, firstSide, parMoves, tags?}]`（不含答案） |
+| `GET /api/puzzles/{id}` | — | `{id, name, difficulty, playerSide, goal, firstSide, parMoves, tags?}`（不含答案） |
+| `POST /api/puzzles` | `{name?, fen, side: "red"\|"black", goal: "win"\|"draw"}` | `{id, name, difficulty, playerSide, goal, firstSide, parMoves}`；保存一个**自摆残局** |
 | `POST /api/puzzles/{id}/delete` | — | `{ok: true}`；仅可删除自定义残局 |
 | `POST /api/llm/validate` | `LLMConfig` | `{ok: bool, message: string, latencyMs: number}` |
 
@@ -78,8 +78,18 @@ API Key 仅存浏览器 localStorage，服务端只做内存透传，不落盘�
 残局模式（`mode == "puzzle"`）的 `state` 额外携带：
 
 ```json
-"puzzle": {"id": "custom-...", "name": "自摆残局 09-22 18:40", "goal": "win", "playerSide": "red", "step": 0, "failed": false, "hintUsed": false, "parMoves": 0}
+"puzzle": {"id": "custom-...", "name": "自摆残局 09-22 18:40", "goal": "win", "playerSide": "red", "firstSide": "red", "step": 0, "failed": false, "hintUsed": false, "parMoves": 0}
 ```
+
+`playerSide` 与 `firstSide` 是**两个独立维度**：
+
+- `playerSide`：玩家执哪一方（用户在建局时选）；
+- `firstSide`：起始局面的轮走方（由 FEN 决定，服务端从局面解析得出）。
+
+两者可以不同，共四种组合 —— 「红先·我执红」与「黑先·我执黑」是"玩家先走"，
+「红先·我执黑」与「黑先·我执红」是"对手（AI）先走"（摆中局练防守反击、或复现
+"黑方守和"这类残局；内置题库里也有一关是执黑而红先）。因此**界面显示「红先/黑先」
+必须用 `firstSide`**，用 `playerSide` 反推会在这两种局上标反。
 
 `game_over.cleared`（v2 新增）：残局模式下的「是否通关」，**显式下发**。
 前端不再用「有没有 `stars`」反推通关 —— 自摆残局不评星（无 `stars`），

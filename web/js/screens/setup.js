@@ -27,7 +27,8 @@ let renderer = null;
 let onStart = null;      // 由 main.js 注入：onStart(mode, opts) 进入对局
 let brush = null;        // {color,type} 或 null（橡皮）
 let history = [];        // 撤销栈：{f,r,prev}，prev=null 表示该格原为空
-let side = 'red';
+let firstSide = 'red';  // 局面轮走方（写进 FEN）
+let side = 'red';       // 我执哪方（playerSide）
 let goal = 'win';
 let level = 4;
 let saving = false;
@@ -66,13 +67,25 @@ export function initSetup(handler) {
       refreshStatus();
     }
   };
+  // 「局面谁先走」与「我执哪方」是两个独立维度，可以组合出四种局面：
+  // 前两者是"我先走"，后两者是"对手先走"（让 AI 先动的练习局，例如摆一个中局
+  // 让对手先攻、我练防守反击）。写 FEN 用 firstSide，提交 playerSide 用 side。
+  document.querySelectorAll('#screen-setup .first-btn').forEach((b) => {
+    b.onclick = () => {
+      sfx.play('button');
+      document.querySelectorAll('#screen-setup .first-btn').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      firstSide = b.dataset.first;
+      refreshStatus();
+    };
+  });
   document.querySelectorAll('#screen-setup .side-btn').forEach((b) => {
     b.onclick = () => {
       sfx.play('button');
       document.querySelectorAll('#screen-setup .side-btn').forEach((x) => x.classList.remove('active'));
       b.classList.add('active');
       side = b.dataset.side;
-      refreshStatus(); // 轮走方变了，照面/无着法判定的前提也跟着变
+      refreshStatus(); // 我执方变了，对局里谁先动也随之改变（提示行要跟着更新）
     };
   });
   document.querySelectorAll('#screen-setup .goal-btn').forEach((b) => {
@@ -110,7 +123,7 @@ export function initSetup(handler) {
     renderer,
     brush: () => brush,
     place: (f, r) => onSquare(f, r),
-    fen: () => boardToFEN(renderer.board, side),
+    fen: () => boardToFEN(renderer.board, firstSide),
     status: () => validate(),
     reset: () => { resetBoard(); refreshStatus(); },
   };
@@ -220,7 +233,7 @@ function inPalace(p, color) {
 // 客户端预检：与服务的四条硬校验同口径，但**只是提示**（服务端才是唯一防线）。
 // 逐条说清缺什么，而不是只给一句「局面不合法」——摆局最容易缺的就是王。
 function validate() {
-  const fen = boardToFEN(renderer.board, side);
+  const fen = boardToFEN(renderer.board, firstSide);
   const errs = [];
   const rk = countPieces(renderer.board, 'red', 1);
   const bk = countPieces(renderer.board, 'black', 1);
@@ -255,6 +268,19 @@ function refreshStatus() {
   const ok = errs.length === 0;
   $('btn-save-play').disabled = !ok;
   $('btn-save-only').disabled = !ok;
+  updateTurnNote();
+}
+
+// 「谁先走 × 我执哪方」共四种组合，其中两种是"对手先动"；光看两组按钮不容易想明白，
+// 这里用一句话把结果说清楚。
+function updateTurnNote() {
+  const el = $('setup-turn-note');
+  if (!el) return;
+  const first = firstSide === 'black' ? '黑方' : '红方';
+  const me = side === 'black' ? '黑方' : '红方';
+  el.textContent = firstSide === side
+    ? `开局由${first}先走 —— 你先动`
+    : `开局由${first}先走，你执${me} —— 对手（AI）先动`;
 }
 
 function defaultName() {

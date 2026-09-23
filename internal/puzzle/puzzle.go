@@ -27,6 +27,18 @@ type Puzzle struct {
 	Solution   []string `json:"solution,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	Verified   bool     `json:"verified,omitempty"`
+
+	// firstSide 起始局面的轮走方（red/black），加载时由 FEN 算出，不参与 JSON 读写。
+	// 单独放一个非导出字段是为了不污染落盘格式，同时避免每次列表请求都重新解析 FEN。
+	firstSide string
+}
+
+// firstSideOf 起始局面的轮走方。与 PlayerSide 无关（两者可以不同）。
+func firstSideOf(pos *game.Position) string {
+	if pos.Turn == game.Black {
+		return "black"
+	}
+	return "red"
 }
 
 // Public 对外视图（不含答案）。
@@ -39,6 +51,10 @@ type Public struct {
 	Goal       string   `json:"goal"`
 	ParMoves   int      `json:"parMoves"`
 	Tags       []string `json:"tags,omitempty"`
+	// FirstSide 起始局面的轮走方（red | black），与 PlayerSide **相互独立**：
+	// 「红先、我执黑」＝让 AI 先动的练习局。界面显示「红先/黑先」必须用它，
+	// 用 PlayerSide 反推会在这种局上标错。只暴露一个字，不泄露局面与正解。
+	FirstSide string `json:"firstSide,omitempty"`
 }
 
 // Store 残局库。
@@ -87,6 +103,8 @@ func NewStore(fsys fs.FS) (*Store, error) {
 			} else if err := pos.LegalPosition(); err != nil {
 				log.Printf("puzzle: %s 跳过（局面非法: %v）", p.ID, err)
 				continue
+			} else {
+				p.firstSide = firstSideOf(pos) // 轮走方在此一次算好，列表请求就不必再解析 FEN
 			}
 			s.add(p)
 		}
@@ -133,6 +151,8 @@ func (s *Store) Add(p *Puzzle) error {
 		return fmt.Errorf("FEN 无法解析: %w", err)
 	} else if err := pos.LegalPosition(); err != nil {
 		return fmt.Errorf("局面非法: %w", err)
+	} else {
+		p.firstSide = firstSideOf(pos)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,6 +180,18 @@ func (s *Store) Remove(id string) bool {
 	return true
 }
 
+// Public 返回不含答案的对外视图。
+//
+// 用方法而不是在各处手抄字段列表：手抄的地方每加一个字段就会漏一处
+// （FirstSide 就是这么漏掉过一次），集中在这里最省事。
+func (p *Puzzle) Public() Public {
+	return Public{
+		ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
+		PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
+		FirstSide: p.firstSide,
+	}
+}
+
 // List 按难度列出（difficulty 为空返回全部）。
 func (s *Store) List(difficulty string) []Public {
 	s.mu.RLock()
@@ -169,10 +201,7 @@ func (s *Store) List(difficulty string) []Public {
 		if difficulty != "" && p.Difficulty != difficulty {
 			continue
 		}
-		out = append(out, Public{
-			ID: p.ID, Name: p.Name, Source: p.Source, Difficulty: p.Difficulty,
-			PlayerSide: p.PlayerSide, Goal: p.Goal, ParMoves: p.ParMoves, Tags: p.Tags,
-		})
+		out = append(out, p.Public())
 	}
 	return out
 }
