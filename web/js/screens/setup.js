@@ -23,6 +23,23 @@ const levelNames = [
 
 const EMPTY_FEN = '9/9/9/9/9/9/9/9/9/9 w';
 
+// 每方各棋子的数量上限（象棋标准套数）。内置题库实测单方数量恰好都不超过它，
+// 所以这套限制与既有内容是同一口径：摆局时不会出现"能摆但和题库玩法不一致"的局面。
+const MAX_COUNT = { 1: 1, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 5 }; // 帅 仕 相 马 车 炮 兵
+
+// 摆位点位表与服务端 game.ValidatePlacement 完全同口径（同一套点位与镜像方式），
+// 这样前端拦下的恰好是服务端会拒的，不会出现"放得上去却存不进来"。
+// 注意：九宫判定复用文件下方既有的 inPalace(p, color)，别在这里再声明一个同名常量
+// —— 模块级重复声明是 SyntaxError，整个文件都不会执行。
+const ADVISOR_POINTS = [[3, 0], [5, 0], [4, 1], [3, 2], [5, 2]];
+const ELEPHANT_POINTS = [[2, 0], [6, 0], [0, 2], [4, 2], [8, 2], [2, 4], [6, 4]];
+const ownSide = (color, r) => (color === 'red' ? r <= 4 : r >= 5);
+// 黑方点位按 9-rank 镜像（与服务端 mirrorRank 一致）
+const onMirroredPoint = (points, color, f, r) => {
+  const rr = color === 'red' ? r : 9 - r;
+  return points.some(([x, y]) => x === f && y === rr);
+};
+
 let renderer = null;
 let onStart = null;      // 由 main.js 注入：onStart(mode, opts) 进入对局
 let brush = null;        // {color,type} 或 null（橡皮）
@@ -37,11 +54,16 @@ let saving = false;
 //
 // 为什么必须显式调用：本模块的 renderer 是在页面初始化时构造的，那一刻屏幕还是
 // hidden（display:none），父容器尺寸为 0，几何被算成 0；屏幕变可见后若只依赖
-// ResizeObserver 的防抖回调，移动端实测会出现「棋盘整块空白、始终不画」。
+// ResizeObserver 的防抖回调，实测会出现「棋盘整块空白、始终不画」。
 // 对局屏早就为同一个坑在 showScreen 之后显式调了一次 renderer.resize()。
+// 这里连补三拍（同步 / 下一帧 / 120ms 后）：部分 WebView 里屏幕刚可见时布局还没稳定，
+// 前两拍仍会读到 0 尺寸而提前返回。
 export function showSetup() {
   showScreen('setup');
-  requestAnimationFrame(() => renderer?.resize());
+  const kick = () => { try { renderer?.resize(); } catch { /* 忽略：下一拍还会再试 */ } };
+  kick();
+  requestAnimationFrame(kick);
+  setTimeout(kick, 120);
 }
 
 export function initSetup(handler) {
@@ -125,6 +147,9 @@ export function initSetup(handler) {
     place: (f, r) => onSquare(f, r),
     fen: () => boardToFEN(renderer.board, firstSide),
     status: () => validate(),
+    // 放子拦截的判定，供自动化断言直接核对（不依赖 toast 文案）
+    why: (color, type, f, r) => placementError({ color, type }, f, r),
+    left: (color, type) => MAX_COUNT[type] - countPieces(renderer.board, color, type),
     reset: () => { resetBoard(); refreshStatus(); },
   };
 }
@@ -139,11 +164,58 @@ function renderPalette() {
       btn.className = 'palette-btn';
       btn.dataset.color = color;
       btn.dataset.type = String(i + 1);
-      btn.innerHTML = `<span class="palette-piece ${color}">${ch}</span>`;
+      // 右上角小徽标显示"还能放几枚"；aria-label 显式给出棋子名，
+      // 免得徽标里的数字混进可访问名（那样读屏会念成"帅 1"）。
+      btn.setAttribute('aria-label', ch);
+      btn.innerHTML = `<span class="palette-piece ${color}">${ch}</span><span class="palette-left" hidden></span>`;
       btn.onclick = () => { sfx.play('button'); setBrush({ color, type: i + 1 }); };
       box.appendChild(btn);
     });
   }
+}
+
+// refreshPalette 按盘面刷新每个画笔的剩余数量：用满即置灰禁用（双保险：
+// 即便仍能点选，onSquare 里的 placementError 也会拦住并给出原因）。
+function refreshPalette() {
+  for (const color of ['red', 'black']) {
+    document.querySelectorAll(`#palette-${color} .palette-btn`).forEach((btn) => {
+      const type = +btn.dataset.type;
+      const left = Math.max(0, MAX_COUNT[type] - countPieces(renderer.board, color, type));
+      const badge = btn.querySelector('.palette-left');
+      if (badge) {
+        badge.textContent = String(left);
+        badge.hidden = left === 0;
+      }
+      btn.classList.toggle('exhausted', left === 0);
+      btn.disabled = left === 0;
+    });
+  }
+  // 当前画笔若刚好放满，清掉选中态：否则会出现"选了却每次都被拦"的困惑
+  if (brush && MAX_COUNT[brush.type] - countPieces(renderer.board, brush.color, brush.type) <= 0) {
+    setBrush(null);
+  }
+}
+
+// placementError 返回不能在此处放该子的原因（null = 可以放）。
+// 数量上限与点位规则都对着服务端口径写，保证"前端放行 = 服务端接受"。
+function placementError(b, f, r) {
+  const sideCN = b.color === 'red' ? '红方' : '黑方';
+  const name = pieceChars[b.color][b.type - 1];
+  const max = MAX_COUNT[b.type];
+  if (countPieces(renderer.board, b.color, b.type) >= max) {
+    return `${sideCN}${name}最多 ${max} 枚，已经放满了`;
+  }
+  if (b.type === 1 && !inPalace({ f, r }, b.color)) {
+    return `${name}只能放在九宫内（左右第 4~6 列、${b.color === 'red' ? '下方' : '上方'}三行）`;
+  }
+  if (b.type === 2 && !onMirroredPoint(ADVISOR_POINTS, b.color, f, r)) {
+    return `${name}只能放在九宫的斜线点上（宫心与四角）`;
+  }
+  if (b.type === 3) {
+    if (!ownSide(b.color, r)) return `${name}不能过河`;
+    if (!onMirroredPoint(ELEPHANT_POINTS, b.color, f, r)) return `${name}只能落在自己的象位（7 个点）`;
+  }
+  return null;
 }
 
 function renderLevels() {
@@ -181,6 +253,7 @@ function setBrush(b) {
 }
 
 // 点击棋盘：有棋子则删除（任何画笔下都允许，比先切橡皮少一步），空格则放当前画笔。
+// 放子前先过 placementError：数量超限、将不出九宫、士象点位不对的，当场拦下并说明原因。
 function onSquare(f, r) {
   const key = `${f},${r}`;
   const prev = renderer.board.get(key) || null;
@@ -188,6 +261,13 @@ function onSquare(f, r) {
     history.push({ f, r, prev });
     renderer.board.delete(key);
   } else if (brush) {
+    const why = placementError(brush, f, r);
+    if (why) {
+      toast(why, true, 2600);
+      sfx.play('illegal');
+      refreshPalette();
+      return;
+    }
     history.push({ f, r, prev: null });
     renderer.board.set(key, { color: brush.color, type: brush.type });
   } else {
@@ -268,6 +348,7 @@ function refreshStatus() {
   const ok = errs.length === 0;
   $('btn-save-play').disabled = !ok;
   $('btn-save-only').disabled = !ok;
+  refreshPalette();   // 画笔剩余数量跟着盘面走
   updateTurnNote();
 }
 

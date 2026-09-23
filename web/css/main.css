@@ -416,6 +416,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   appearance: none; cursor: pointer; padding: 2px; background: transparent;
   border: 1px solid var(--line); border-radius: 50%;
   transition: all 0.14s; line-height: 0;
+  position: relative;   /* 右上角"还能放几枚"徽标靠它定位 */
 }
 .palette-btn:hover { border-color: var(--gold-soft); }
 .palette-btn.active {
@@ -431,6 +432,17 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 }
 .palette-piece.red { color: #c93a20; }
 .palette-piece.black { color: #2f2318; }
+/* 画笔右上角：还能放几枚（放满则隐藏徽标并置灰，按钮 disabled） */
+.palette-left {
+  position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px;
+  padding: 0 3px; border-radius: 8px; background: var(--gold); color: #2c1d10;
+  font-size: 10px; font-weight: 700; line-height: 15px; text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 3px rgba(0,0,0,.5);
+}
+.palette-btn.exhausted { cursor: default; }
+.palette-btn.exhausted .palette-piece { opacity: .32; filter: grayscale(1); }
+.palette-btn:disabled { border-color: var(--line); }
 .setup-tools { flex-wrap: wrap; gap: 6px; }
 .setup-tools .ctl-btn.active-pick { border-color: var(--gold-soft); color: var(--gold); }
 /* 难度滑动条：替掉原来 16 个按钮（在 240px 侧栏里要占 277px 高） */
@@ -636,6 +648,15 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
     padding: 10px; gap: 6px;
   }
   .setup-toggle { display: flex; }
+  /* 窄屏下这两处文案会随操作变化（"还差：缺少红方帅；缺少黑方将" → "缺少黑方将" →
+     "局面就绪…"，以及切换画笔时的提示语）。行数一变就会把下方棋盘的高度挤动一下，
+     棋盘随之重算尺寸 —— 视觉上就是"放子时上下抖动"。
+     状态条给两行固定高度（提示语可能较长，换行可读性更好）；
+     提示行固定单行 + 省略号（它只是操作指引，截断比抖动好）。 */
+  #screen-setup .setup-status { min-height: 56px; }
+  #screen-setup #setup-hint {
+    min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   /* 折叠时隐藏一次性设置（名称/谁先走/目标/难度），调色板与状态条保持可见 */
   .setup-panel.collapsed #setup-settings { display: none; }
   /* 展开时给设置区一个上限，超出则内部滚动，避免把棋盘挤没 */
