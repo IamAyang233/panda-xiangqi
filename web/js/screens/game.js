@@ -279,8 +279,10 @@ export class GameScreen {
       engine: ['本地引擎', `第 ${opts.level || 4} 档`],
       llm: ['大模型棋手', store.llm.model || '未命名模型'],
       local_2p: ['黑方玩家', '同屏对战'],
-      // 自摆残局的守方档位就是玩家在摆局时选的那一档（内置残局才是按难度映射）
-      puzzle: ['残局守方', isCustom ? `第 ${opts.level || 4} 档` : '引擎抵抗'],
+      // 自摆残局的守方档位就是玩家在摆局时选的那一档（内置残局才是按难度映射）。
+      // 注意：这个 sub 文案当前界面并不显示（#opp-state 是「思考中」等动态状态位），
+      // 守方档位改在目标栏里显示，取服务端下发的 level（权威值，见 _applyState）。
+      puzzle: ['残局守方', '引擎抵抗'],
     };
     const [oppName, oppSub] = names[mode];
     const youBlack = this.humanSide === 'black';
@@ -347,6 +349,9 @@ export class GameScreen {
     this.renderer.dirty = true;
     this.moves = m.moves || [];
     this.gameOver = m.status === 'over';
+    // 服务端下发的档位（守方实际采用的难度）。自摆残局的档位显示取这里，
+    // 而不是玩家提交时的 opts —— 以服务端实际生效的值为准。
+    if (m.level) this.level = m.level;
     this._renderMoves();
     this._updateStates(m);
     if (m.puzzle) {
@@ -624,10 +629,9 @@ export class GameScreen {
     // 自摆残局：没有正解、没有步数标准、不评星，因此不显示「第 N/M 关」「最少 N 步」
     // 和星级说明 —— 那些数字对自摆局面没有意义，摆出来只会让人以为被评了星。
     if (this.isCustomPuzzle()) {
-      // 名字取自服务端 state.puzzle.name：残局名字随对局下发，不依赖「残局列表是否
-      // 已经刷新过」（自摆局刚保存就开局时，前端列表里还没有它，nameOf 会是空串）。
       const title = this.puzzle.name || nameOf(this.puzzleId);
-      el.innerHTML = `${title ? `<div class="puzzle-pos">${escapeText(title)}</div>` : ''}目标：<b>${goal}</b> · 已走 <b>${this.puzzle.step}</b> 步${failed}
+      // 显示守方实际档位：玩家在摆局屏用滑块选的难度要能在这里得到确认
+      el.innerHTML = `${title ? `<div class="puzzle-pos">${escapeText(title)}</div>` : ''}目标：<b>${goal}</b> · 守方 <b>第 ${this.level || 4} 档</b> · 已走 <b>${this.puzzle.step}</b> 步${failed}
         <br>自摆局面不评星，练手为主`;
       return;
     }

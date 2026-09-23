@@ -281,7 +281,15 @@
               <button class="ctl-btn goal-btn" data-goal="draw">求和</button>
             </div>
             <h3>AI 难度（16 档）</h3>
-            <div class="level-grid" id="setup-levels"></div>
+            <div class="level-slider">
+              <input type="range" id="setup-level" min="1" max="16" step="1" value="4"
+                     aria-label="AI 难度" aria-valuetext="第 4 档 业余三级">
+              <div class="level-slider-meta">
+                <span>1·入门</span>
+                <span class="lv-now" id="setup-level-now">4 · 业余三级</span>
+                <span>16·特大全力</span>
+              </div>
+            </div>
           </section>
         </div>
 

@@ -108,20 +108,24 @@ function renderPalette() {
 }
 
 function renderLevels() {
-  $('setup-levels').innerHTML = '';
-  levelNames.forEach(([v, n]) => {
-    const b = document.createElement('button');
-    b.className = `ctl-btn lv-btn${v === 4 ? ' active' : ''}`;
-    b.dataset.lv = String(v);
-    b.textContent = `${v}·${n}`;
-    b.onclick = () => {
-      sfx.play('button');
-      document.querySelectorAll('#setup-levels .lv-btn').forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      level = v;
-    };
-    $('setup-levels').appendChild(b);
-  });
+  const el = $('setup-level');
+  const now = $('setup-level-now');
+  const nameOf = (v) => (levelNames.find(([n]) => n === v) || [0, ''])[1];
+  const sync = () => {
+    level = +el.value;
+    const name = nameOf(level);
+    now.textContent = `${level} · ${name}`;
+    // 让读屏软件念出档位名，而不是只念一个数字
+    el.setAttribute('aria-valuetext', `第 ${level} 档 ${name}`);
+  };
+  el.value = String(level);
+  sync();
+  el.oninput = () => {
+    const prev = now.textContent;
+    sync();
+    // 拖动时 input 事件很密集，只在**档位真的变了**时给一声，避免连响成噪声
+    if (prev !== now.textContent) sfx.play('button');
+  };
 }
 
 function setBrush(b) {

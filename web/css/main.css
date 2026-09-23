@@ -255,7 +255,8 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .panel-title { font-size: 15px; font-weight: 600; letter-spacing: 2px; color: var(--gold); }
 .move-list {
   flex: 1; overflow-y: auto; min-height: 0;
-  font-size: 14px; line-height: 2; scrollbar-width: thin;
+  /* 滚动条样式见下方公共规则；此处不写 scrollbar-width（Chromium 会因此忽略伪元素样式） */
+  font-size: 14px; line-height: 2;
 }
 .move-list .mv-row { display: flex; gap: 8px; padding: 0 4px; border-radius: 6px; }
 .move-list .mv-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
@@ -419,6 +420,37 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .palette-piece.black { color: #2f2318; }
 .setup-tools { flex-wrap: wrap; gap: 6px; }
 .setup-tools .ctl-btn.active-pick { border-color: var(--gold-soft); color: var(--gold); }
+/* 难度滑动条：替掉原来 16 个按钮（在 240px 侧栏里要占 277px 高） */
+.level-slider { padding: 2px 2px 0; }
+.level-slider input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%; height: 20px; background: transparent; cursor: pointer;
+}
+.level-slider input[type=range]::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px; border: 1px solid var(--line);
+  background: linear-gradient(90deg, #6a4622, var(--gold-soft));
+}
+.level-slider input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 20px; height: 20px; margin-top: -8px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f7e7c8, var(--gold-soft));
+  border: 1px solid #4a3014; box-shadow: 0 2px 6px rgba(0,0,0,.5);
+}
+.level-slider input[type=range]::-moz-range-track {
+  height: 6px; border-radius: 3px; border: 1px solid var(--line);
+  background: linear-gradient(90deg, #6a4622, var(--gold-soft));
+}
+.level-slider input[type=range]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f7e7c8, var(--gold-soft));
+  border: 1px solid #4a3014;
+}
+.level-slider input[type=range]:focus-visible { outline: 2px solid var(--gold-soft); outline-offset: 3px; border-radius: 8px; }
+.level-slider-meta {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11px; color: var(--text-dim); margin-top: 4px;
+}
+.level-slider-meta .lv-now { color: var(--gold); font-size: 13px; font-weight: 700; white-space: nowrap; }
 .setup-status {
   margin: 10px 0; padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
   border: 1px solid var(--line); color: var(--text-dim); line-height: 1.6;
@@ -429,47 +461,64 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-actions .ctl-btn { flex: 1; }
 .setup-actions .ctl-btn:disabled { opacity: 0.45; cursor: default; }
 
-/* ---------- 自定义滚动条（替代浏览器原生样式） ---------- */
-.move-list, .settings-card, #screen-lobby, #screen-puzzles, .puzzle-grid {
-  scrollbar-width: thin;
-  scrollbar-color: var(--gold-soft) transparent;
-}
+/* ---------- 自定义滚动条（替代浏览器原生样式） ----------
+   ⚠️ 不要在这些元素上写 scrollbar-width / scrollbar-color：Chrome 121+ 一旦看到
+   这两个标准属性取非 auto 值，就会**整体忽略 ::-webkit-scrollbar 伪元素规则**，
+   于是拿到的是系统原生的细滚动条（只有颜色被改），而不是下面这套 6px 圆角样式
+   —— 实测 .setup-scroll 的滚动条占位宽度是 10px 而不是 6px，就是这么来的。
+   Firefox 不认 ::-webkit-scrollbar，单独用 @supports 给它标准属性兜底。 */
 .move-list::-webkit-scrollbar,
 .settings-card::-webkit-scrollbar,
 #screen-lobby::-webkit-scrollbar,
 #screen-puzzles::-webkit-scrollbar,
-.puzzle-grid::-webkit-scrollbar {
+.puzzle-grid::-webkit-scrollbar,
+.setup-scroll::-webkit-scrollbar,
+.about-wrap::-webkit-scrollbar {
   width: 6px; height: 6px;
 }
 .move-list::-webkit-scrollbar-thumb,
 .settings-card::-webkit-scrollbar-thumb,
 #screen-lobby::-webkit-scrollbar-thumb,
 #screen-puzzles::-webkit-scrollbar-thumb,
-.puzzle-grid::-webkit-scrollbar-thumb {
+.puzzle-grid::-webkit-scrollbar-thumb,
+.setup-scroll::-webkit-scrollbar-thumb,
+.about-wrap::-webkit-scrollbar-thumb {
   background: var(--gold-soft); border-radius: 3px;
 }
 .move-list::-webkit-scrollbar-thumb:hover,
 .settings-card::-webkit-scrollbar-thumb:hover,
 #screen-lobby::-webkit-scrollbar-thumb:hover,
-#screen-puzzles::-webkit-scrollbar-thumb:hover {
+#screen-puzzles::-webkit-scrollbar-thumb:hover,
+.puzzle-grid::-webkit-scrollbar-thumb:hover,
+.setup-scroll::-webkit-scrollbar-thumb:hover,
+.about-wrap::-webkit-scrollbar-thumb:hover {
   background: var(--gold);
 }
 .move-list::-webkit-scrollbar-track,
 .settings-card::-webkit-scrollbar-track,
 #screen-lobby::-webkit-scrollbar-track,
 #screen-puzzles::-webkit-scrollbar-track,
-.puzzle-grid::-webkit-scrollbar-track {
+.puzzle-grid::-webkit-scrollbar-track,
+.setup-scroll::-webkit-scrollbar-track,
+.about-wrap::-webkit-scrollbar-track {
   background: rgba(255,255,255,0.04); border-radius: 3px;
+}
+/* Firefox 兜底：-moz-appearance 是 Firefox 独有，Chromium 不会命中这条分支 */
+@supports (-moz-appearance: none) {
+  .move-list, .settings-card, #screen-lobby, #screen-puzzles, .puzzle-grid,
+  .setup-scroll, .about-wrap {
+    scrollbar-width: thin;
+    scrollbar-color: var(--gold-soft) transparent;
+  }
 }
 
 /* ---------- 关于页 ---------- */
 .about-wrap {
   max-width: 640px; margin: 0 auto; padding: 26px 22px 60px;
   overflow-y: auto; height: 100%;
-  scrollbar-width: thin; scrollbar-color: var(--gold-soft) transparent;
+  /* 滚动条样式统一在上面的公共规则里（含 .about-wrap），这里不再重复声明，
+     尤其不要再写 scrollbar-width/color —— 那会让 Chromium 忽略伪元素样式 */
 }
-.about-wrap::-webkit-scrollbar { width: 6px; }
-.about-wrap::-webkit-scrollbar-thumb { background: var(--gold-soft); border-radius: 3px; }
 .about-hero { text-align: center; padding: 10px 0 22px; }
 .about-logo {
   width: 84px; height: 84px; margin: 0 auto 12px; border-radius: 50%;
