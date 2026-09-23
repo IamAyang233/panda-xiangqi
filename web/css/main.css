@@ -379,7 +379,15 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .puzzle-del .icon { width: 16px; height: 16px; }
 
 /* ---------- 摆局屏 ---------- */
-.setup-layout { flex: 1; min-height: 0; height: auto; align-items: stretch; }
+/* width:100% 不可省：#screen-setup 是 flex 纵向容器，而 .game-layout 带 margin:0 auto ——
+   在 flex 容器里 auto 外边距会压过 align-items:stretch，整块布局会收缩到「内容宽度」
+   （实测 588px），棋盘面板（flex:1、无固有宽度）被挤成 300px，棋盘明显偏小。
+   显式给 100% 宽（受 .game-layout 的 max-width 限制并居中）即恢复。 */
+.setup-layout { flex: 1; min-height: 0; height: auto; align-items: stretch; width: 100%; }
+/* 手机上 .setup-layout 变纵向 → .board-panel 成为纵向 flex 项，此时它的「自动最小尺寸」
+   等于内容（棋盘 canvas 的固有高度），会拒绝收缩、把侧栏挤成一条缝（实测 390x844 下
+   侧栏只剩 128px、内部滚动区 0）。min-height:0 允许它收缩，高度链才回到由布局决定。 */
+.setup-layout .board-panel { min-height: 0; }
 .setup-hint { font-size: 12px; color: var(--text-dim); }
 .setup-panel { display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 /* 只有中间设置区滚动；校验条与「保存并挑战」常驻底部，不被滚出视野 */
@@ -553,6 +561,13 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .hero-seal .icon { width: 32px; height: 32px; }
   .game-layout { flex-direction: column; padding: 8px; gap: 8px; }
   .side-panel { width: auto; max-height: 190px; }
+  /* 摆局屏侧栏：本区间上层游戏屏会变纵向，摆局屏需要保持纵向（设置区内部滚动 +
+     底部校验条与操作条常驻），并自行给足高度 —— 基础样式的 190px 只够露出 51px
+     设置区；而更窄的 620px 块会把 .side-panel 压成横条，套过来会让内部滚动区按内容
+     全高撑开、把「保存并挑战」顶出屏幕。本条特异性更高（两个类），可稳定压过它。 */
+  .setup-layout .side-panel {
+    max-height: 46vh; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+  }
   .puzzle-head { padding: 16px 16px 4px; gap: 12px; }
   .puzzle-grid { padding: 14px 16px 30px; }
 }
@@ -591,12 +606,6 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .side-panel {
     max-height: none; flex-direction: row; flex-wrap: wrap;
     align-items: center; padding: 8px 10px; gap: 4px 8px;
-  }
-  /* 摆局屏侧栏必须保持纵向（设置区内部滚动 + 底部校验条与操作条常驻）：
-     上面那条「压成横条」是给对局屏的着法列表用的，套到这里会让滚动区
-     按内容全高撑开，把「保存并挑战」顶出屏幕（手机竖屏实测跑到 y=1593）。 */
-  .setup-layout .side-panel {
-    max-height: 46vh; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
   }
   .panel-title { font-size: 13px; }
   .side-panel #btn-exit { margin-left: auto; padding: 6px 10px; font-size: 12px; min-height: 34px; }
