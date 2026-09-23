@@ -436,11 +436,13 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 }
 .palette-piece.red { color: #c93a20; }
 .palette-piece.black { color: #2f2318; }
-/* 画笔右上角：还能放几枚（放满则隐藏徽标并置灰，按钮 disabled） */
+/* 画笔右上角的「还能放几枚」徽标。刻意压在棋子内圈（右上 1px）而不是探出边界：
+   绝对定位的徽标同样计入 scrollWidth，探出 3px 就会让整排多出 3px 横向溢出，
+   于是一个根本不需要滚动的行也弹出横向滚动条。 */
 .palette-left {
-  position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px;
-  padding: 0 3px; border-radius: 8px; background: var(--gold); color: #2c1d10;
-  font-size: 10px; font-weight: 700; line-height: 15px; text-align: center;
+  position: absolute; top: 0; right: 0; min-width: 13px; height: 13px;
+  padding: 0 2px; border-radius: 7px; background: var(--gold); color: #2c1d10;
+  font-size: 9px; font-weight: 700; line-height: 13px; text-align: center;
   font-variant-numeric: tabular-nums;
   box-shadow: 0 1px 3px rgba(0,0,0,.5);
 }
@@ -449,30 +451,39 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .palette-btn:disabled { border-color: var(--line); }
 .setup-tools { flex-wrap: wrap; gap: 6px; }
 .setup-tools .ctl-btn.active-pick { border-color: var(--gold-soft); color: var(--gold); }
-/* 难度滑动条：替掉原来 16 个按钮（在 240px 侧栏里要占 277px 高） */
+/* 难度滑动条：替掉原来 16 个按钮（在 240px 侧栏里要占 277px 高）。
+   --fill 由 setup.js 按当前档位写入（滑块中心位置的精确百分比），
+   轨道据此把「已选段」画成亮金、「剩余段」画成暗棕 —— 只换颜色的等宽轨道
+   看起来仍像浏览器原生控件，有进度填充才一眼看出是设计过的。
+   accent-color 是兜底：若某条渲染路径回退到原生控件，也应是金色而非系统蓝。 */
 .level-slider { padding: 2px 2px 0; }
 .level-slider input[type=range] {
   -webkit-appearance: none; appearance: none;
   display: block; width: 100%; height: 20px; background: transparent; cursor: pointer;
+  accent-color: var(--gold-soft);
+  --fill: 25%;
 }
 .level-slider input[type=range]::-webkit-slider-runnable-track {
   height: 6px; border-radius: 3px; border: 1px solid var(--line);
-  background: linear-gradient(90deg, #6a4622, var(--gold-soft));
+  background: linear-gradient(90deg,
+    #d4a941 0%, #f0d9a8 var(--fill), rgba(255,255,255,.06) var(--fill), rgba(255,255,255,.06) 100%);
 }
 .level-slider input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 20px; height: 20px; margin-top: -8px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #f7e7c8, var(--gold-soft));
-  border: 1px solid #4a3014; box-shadow: 0 2px 6px rgba(0,0,0,.5);
+  background: radial-gradient(circle at 35% 30%, #fff6e2, #e8c58a 70%, #c99a4e);
+  border: 2px solid var(--gold);
+  box-shadow: 0 2px 6px rgba(0,0,0,.55), 0 0 8px var(--gold-glow);
 }
 .level-slider input[type=range]::-moz-range-track {
   height: 6px; border-radius: 3px; border: 1px solid var(--line);
-  background: linear-gradient(90deg, #6a4622, var(--gold-soft));
+  background: linear-gradient(90deg,
+    #d4a941 0%, #f0d9a8 var(--fill), rgba(255,255,255,.06) var(--fill), rgba(255,255,255,.06) 100%);
 }
 .level-slider input[type=range]::-moz-range-thumb {
-  width: 18px; height: 18px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #f7e7c8, var(--gold-soft));
-  border: 1px solid #4a3014;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff6e2, #e8c58a 70%, #c99a4e);
+  border: 2px solid var(--gold);
 }
 .level-slider input[type=range]:focus-visible { outline: 2px solid var(--gold-soft); outline-offset: 3px; border-radius: 8px; }
 .level-slider-meta {
@@ -505,7 +516,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 #screen-puzzles::-webkit-scrollbar,
 .puzzle-grid::-webkit-scrollbar,
 .setup-scroll::-webkit-scrollbar,
-.about-wrap::-webkit-scrollbar {
+.about-wrap::-webkit-scrollbar,
+.palette::-webkit-scrollbar,
+.setup-tools::-webkit-scrollbar {
   width: 6px; height: 6px;
 }
 .move-list::-webkit-scrollbar-thumb,
@@ -514,7 +527,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 #screen-puzzles::-webkit-scrollbar-thumb,
 .puzzle-grid::-webkit-scrollbar-thumb,
 .setup-scroll::-webkit-scrollbar-thumb,
-.about-wrap::-webkit-scrollbar-thumb {
+.about-wrap::-webkit-scrollbar-thumb,
+.palette::-webkit-scrollbar-thumb,
+.setup-tools::-webkit-scrollbar-thumb {
   background: var(--gold-soft); border-radius: 3px;
 }
 .move-list::-webkit-scrollbar-thumb:hover,
@@ -523,7 +538,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 #screen-puzzles::-webkit-scrollbar-thumb:hover,
 .puzzle-grid::-webkit-scrollbar-thumb:hover,
 .setup-scroll::-webkit-scrollbar-thumb:hover,
-.about-wrap::-webkit-scrollbar-thumb:hover {
+.about-wrap::-webkit-scrollbar-thumb:hover,
+.palette::-webkit-scrollbar-thumb:hover,
+.setup-tools::-webkit-scrollbar-thumb:hover {
   background: var(--gold);
 }
 .move-list::-webkit-scrollbar-track,
@@ -532,13 +549,15 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 #screen-puzzles::-webkit-scrollbar-track,
 .puzzle-grid::-webkit-scrollbar-track,
 .setup-scroll::-webkit-scrollbar-track,
-.about-wrap::-webkit-scrollbar-track {
+.about-wrap::-webkit-scrollbar-track,
+.palette::-webkit-scrollbar-track,
+.setup-tools::-webkit-scrollbar-track {
   background: rgba(255,255,255,0.04); border-radius: 3px;
 }
 /* Firefox 兜底：-moz-appearance 是 Firefox 独有，Chromium 不会命中这条分支 */
 @supports (-moz-appearance: none) {
   .move-list, .settings-card, #screen-lobby, #screen-puzzles, .puzzle-grid,
-  .setup-scroll, .about-wrap {
+  .setup-scroll, .about-wrap, .palette, .setup-tools {
     scrollbar-width: thin;
     scrollbar-color: var(--gold-soft) transparent;
   }
@@ -648,7 +667,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
      更窄的 620px 块会把 .side-panel 压成横条，套过来会让内部滚动区按内容全高撑开、
      把「保存并挑战」顶出屏幕，本条特异性更高（两个类），可稳定压过它。 */
   .setup-layout .side-panel {
-    max-height: none; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+    /* 折叠时侧栏按内容高度（很矮，高度全给棋盘）；展开设置时不超过 58vh，
+       给棋盘留出可见空间（实测无上限时展开后棋盘只剩 84px，基本看不见）。 */
+    max-height: 58vh; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
     padding: 10px; gap: 6px;
   }
   .setup-toggle { display: flex; }
@@ -665,11 +686,14 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   .setup-panel.collapsed #setup-settings { display: none; }
   /* 展开时给设置区一个上限，超出则内部滚动，避免把棋盘挤没 */
   .setup-panel:not(.collapsed) .setup-scroll { max-height: 54vh; overflow-y: auto; }
-  /* 调色板压成窄条：每种颜色一排（7 枚正好一行放得下），横滑兜底 */
+  /* 调色板压成窄条：每种颜色一排（7 枚正好一行放得下），横滑兜底。
+     间距收紧到 3px 是为了让 7 枚在 390px 宽下**不产生横向溢出** —— 溢出一出现就会
+     多出一条横向滚动条（哪怕只差 3px），既占高度又难看。窄到放不下时才滚动，
+     滚动条已纳入上面的自定义样式（细、金色）。 */
   #setup-palette > h3 { display: none; }
-  #setup-palette .palette-side { margin-bottom: 4px; }
+  #setup-palette .palette-side { margin-bottom: 4px; gap: 4px; }
   #setup-palette .palette-label { width: 26px; font-size: 11px; }
-  #setup-palette .palette { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  #setup-palette .palette { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; gap: 3px; }
   #setup-palette .palette-btn { flex: 0 0 auto; }
   #setup-palette .palette-piece { width: 26px; height: 26px; font-size: 15px; }
   #setup-palette .setup-tools { flex-wrap: nowrap; overflow-x: auto; margin-top: 2px; }

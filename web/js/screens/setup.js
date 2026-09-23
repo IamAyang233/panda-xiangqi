@@ -228,6 +228,16 @@ function renderLevels() {
     now.textContent = `${level} · ${name}`;
     // 让读屏软件念出档位名，而不是只念一个数字
     el.setAttribute('aria-valuetext', `第 ${level} 档 ${name}`);
+    // 轨道按当前档位填充进度（CSS 用 --fill 画「已选段/剩余段」）。
+    // 滑块的行程不是 0..宽，而是「半径..宽-半径」，所以按滑块中心位置算百分比，
+    // 否则填充边缘会与滑块错开。宽度拿不到时（屏幕还没显示）保持默认值。
+    const w = el.clientWidth;
+    if (w > 0) {
+      const R = 10; // 滑块半径，与 CSS 里的 20px 一致
+      const frac = (+el.value - +el.min) / (+el.max - +el.min);
+      const pct = ((R + frac * (w - 2 * R)) / w) * 100;
+      el.style.setProperty('--fill', Math.max(0, Math.min(100, pct)).toFixed(1) + '%');
+    }
   };
   el.value = String(level);
   sync();
