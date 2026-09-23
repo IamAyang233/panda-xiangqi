@@ -64,7 +64,11 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 
 /* ---------- 屏幕 ---------- */
 .screen { flex: 1; overflow: hidden; position: relative; }
-#screen-lobby, #screen-puzzles { overflow-y: auto; }
+/* scrollbar-gutter: stable 不可省：这两屏的内容是**居中**的，而纵向滚动条按内容
+   长短出现/消失（残局列表在「入门 68 张」与「自定义 1 张」之间切页签就会这样）。
+   不预留装订线时可用宽度来回变 6px，居中的内容就整块左右横移 3px —— 用户报的
+   「从内置残局切到自定义有横向抖动」就是这个（实测 .puzzle-grid x 87→90）。 */
+#screen-lobby, #screen-puzzles { overflow-y: auto; scrollbar-gutter: stable; }
 /* 摆局屏：标题行固定，棋盘+侧栏填满剩余高度（.game-layout 默认 height:100%
    会和标题行叠加，导致底部操作条被 overflow:hidden 裁掉） */
 #screen-setup { overflow: hidden; display: flex; flex-direction: column; }
@@ -567,6 +571,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .about-wrap {
   max-width: 640px; margin: 0 auto; padding: 26px 22px 60px;
   overflow-y: auto; height: 100%;
+  /* 同 #screen-lobby/#screen-puzzles：内容居中限宽，而更新日志是**异步**拉回来的，
+     拉回来前后高度差很大 —— 不预留装订线的话，日志一到整页就横移 3px。 */
+  scrollbar-gutter: stable;
   /* 滚动条样式统一在上面的公共规则里（含 .about-wrap），这里不再重复声明，
      尤其不要再写 scrollbar-width/color —— 那会让 Chromium 忽略伪元素样式 */
 }

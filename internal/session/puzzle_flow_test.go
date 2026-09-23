@@ -215,6 +215,11 @@ func TestPuzzleSessionDraw(t *testing.T) {
 	if got := goMsg["reason"]; got != game.ReasonRepetition {
 		t.Fatalf("期望 repetition, 实际 %v", got)
 	}
+	// 和棋关的**正向**判定：走成和棋就是通关。此前只有「和棋关赢了→不算通关」的负向用例，
+	// 真正走成和棋的那条分支没人验（用户赢得莫名其妙/拿不到三星都可能从这里漏出去）。
+	if got := goMsg["cleared"]; got != true {
+		t.Fatalf("和棋关走成和棋应算通关（cleared=true），实际 %v", got)
+	}
 }
 
 // waitGameOver 等待异步产生的 game_over（终局由守方应着触发时要等它落地）。

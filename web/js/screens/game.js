@@ -71,8 +71,8 @@ export class GameScreen {
       this.renderer.setFlipped(!this.renderer.flipped);
     };
     $('btn-exit').onclick = async () => {
-      // 自摆残局没有「残局列表」这一层，它的上一层是大厅
-      const back = this.mode === 'puzzle' && !this.isCustomPuzzle() ? '残局列表' : '大厅';
+      // 残局对局一律回残局列表（自摆残局落到「自定义」页），其余模式回大厅。
+      const back = this.mode === 'puzzle' ? '残局列表' : '大厅';
       if (this.conn && !this.gameOver && this.moves.length) {
         if (!(await confirmDialog(`对局进行中，确定返回${back}？`, { okText: `返回${back}` }))) return;
       }
@@ -95,12 +95,16 @@ export class GameScreen {
     this.conn = null;
     this._setBoardLoading(false); // 切关等待中途退出时别把遮罩留在那儿
     store.clearCurrentGame();
-    // 逐层返回：内置残局对局回到残局列表（保留筛选与进度），其余回大厅。
-    // 自摆残局虽然也是 puzzle 模式，但它没有「残局列表里的位置」（不参与逐关浏览），
-    // 回到大厅才是它的上一层 —— 否则会被丢进内置残局列表，看着像串到别的功能里了。
-    const back = this.mode === 'puzzle' && !this.isCustomPuzzle() ? 'puzzles' : 'lobby';
-    showScreen(back);
-    if (back === 'puzzles') this.onExitToPuzzles?.();
+    // 逐层返回：残局对局回到残局列表（保留筛选与进度），其余回大厅。
+    // 自摆残局也回列表，并要求落到「自定义」页 —— 用户就是从那儿进的局（或刚在
+    // 摆局屏保存完），回大厅等于把他翻到一半的位置丢掉；而且内置残局回列表、
+    // 自摆残局回大厅这种不一致会让人以为功能串了（用户实测反馈）。
+    if (this.mode === 'puzzle') {
+      showScreen('puzzles');
+      this.onExitToPuzzles?.(this.isCustomPuzzle() ? '自定义' : '');
+      return;
+    }
+    showScreen('lobby');
   }
 
   // start(mode, opts) 创建对局并连接。opts: {side, level, puzzleId, onExit}
@@ -261,8 +265,9 @@ export class GameScreen {
     // 逐关切换只在「内置残局」出现：自摆残局不属于任何关卡序列，没有上一关/下一关。
     $('btn-prev-puzzle').hidden = !isPuzzle || isCustom;
     $('btn-next-puzzle').hidden = !isPuzzle || isCustom;
-    // 返回目标随之变化：内置残局回列表，自摆残局回大厅（它是从大厅摆局屏来的）
-    const exitLabel = isPuzzle && !isCustom ? '返回残局列表' : '返回大厅';
+    // 残局对局一律回残局列表（自摆残局落到「自定义」页），文案与去向保持一致；
+    // 只有非残局模式才回大厅。
+    const exitLabel = isPuzzle ? '返回残局列表' : '返回大厅';
     $('btn-exit-label').textContent = exitLabel;
     $('btn-result-exit-label').textContent = exitLabel;
     // LLM 模式：解说条常驻（固定占位，不遮挡棋盘）；其他模式隐藏

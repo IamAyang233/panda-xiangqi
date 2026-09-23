@@ -1,7 +1,7 @@
 // 熊猫象棋前端入口。
 import { showScreen, currentScreen, toast, confirmDialog } from './ui.js';
 import { initLobby } from './screens/lobby.js';
-import { initPuzzles, refresh as refreshPuzzles, siblingOf } from './screens/puzzles.js';
+import { initPuzzles, refresh as refreshPuzzles, siblingOf, selectDiff } from './screens/puzzles.js';
 import { initSetup } from './screens/setup.js';
 import { initSettings } from './screens/settings.js';
 import { initAbout } from './screens/about.js';
@@ -38,8 +38,11 @@ game.onPuzzleStep = async (delta) => {
   await game.start('puzzle', { puzzleId: sib.id });
 };
 
-// 退出到残局列表时刷新星级/进度
-game.onExitToPuzzles = () => refreshPuzzles();
+// 退出到残局列表时刷新星级/进度；自摆残局会带上 '自定义'，先把页签切过去再渲染
+game.onExitToPuzzles = (diff) => {
+  if (diff) selectDiff(diff);
+  refreshPuzzles();
+};
 
 initSettings(() => {
   game.renderer.setTheme({

@@ -400,20 +400,7 @@ func (s *Session) finishLocked(result, reason string) []any {
 	s.reason = reason
 	msg := map[string]any{"type": "game_over", "result": result, "reason": reason}
 	if s.Mode == ModePuzzle && s.pz != nil {
-		cleared := false
-		if s.pz.Goal == "draw" {
-			// 和棋关：终局为和棋即算通过（含三次重复 / 60 回合 / 子力不足）。
-			cleared = result == game.ResultDraw
-		} else {
-			// 胜负关：玩家（执子方）将死、困毙对方，或对方长将被判负，即算通过。
-			// 长将判负（ReasonLongCheck）也是玩家按棋规取胜，漏掉它会让「靠长将
-			// 取胜」的玩家拿到 0 星并被显示为「挑战失败」。
-			playerWon := (result == game.ResultRedWin && s.HumanSide == game.Red) ||
-				(result == game.ResultBlackWin && s.HumanSide == game.Black)
-			cleared = playerWon && (reason == game.ReasonCheckmate ||
-				reason == game.ReasonStalemate ||
-				reason == game.ReasonLongCheck)
-		}
+		cleared := puzzleCleared(s.pz, s.HumanSide, result, reason)
 		// cleared 显式下发「是否通关」，不让前端靠「有没有 stars」反推：
 		// 自摆残局不评星（无 stars），用 stars 反推会把胜利误判成挑战失败。
 		msg["cleared"] = cleared
@@ -441,6 +428,25 @@ func (s *Session) finishLocked(result, reason string) []any {
 		}
 	}
 	return []any{msg}
+}
+
+// puzzleCleared 判断这一终局是否算玩家通关残局。
+//
+// 独立成纯函数是为了能穷举断言：这里的判定是「结果 × 原因 × 执子方 × 目标」的
+// 组合，而 2.0.3 出过一次事故 —— ReasonLongCheck 漏在白名单外，导致「靠长将取胜」
+// 的玩家被判挑战失败。这类漏项只能靠把组合列全来防。
+//
+// 和棋关（goal=draw）：终局为和棋即算通过（含三次重复 / 60 回合 / 子力不足）。
+// 胜负关：玩家（执子方）将死、困毙对方，或对方长将被判负，即算通过。
+func puzzleCleared(pz *puzzle.Puzzle, humanSide int, result, reason string) bool {
+	if pz.Goal == "draw" {
+		return result == game.ResultDraw
+	}
+	playerWon := (result == game.ResultRedWin && humanSide == game.Red) ||
+		(result == game.ResultBlackWin && humanSide == game.Black)
+	return playerWon && (reason == game.ReasonCheckmate ||
+		reason == game.ReasonStalemate ||
+		reason == game.ReasonLongCheck)
 }
 
 // ---------------------------------------------------------------- AI 应着

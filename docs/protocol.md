@@ -11,18 +11,27 @@
 | `POST /api/games/{id}/undo` | — | `{ok: bool, reason?: string}`（思考中不可悔棋） |
 | `POST /api/games/{id}/hint` | — | `{from: string, to: string, cn: string}` |
 | `POST /api/games/{id}/resign` | — | `{ok: bool}` |
+| `POST /api/games/{id}/restart` | — | `{ok: bool}`；残局重开（回到该关初始局面）。未知操作 404、会话状态冲突 409 |
+| `GET /api/status` | — | `{app, version, engine, uciAvailable, engineDiag, puzzles, customPuzzles, customDir, customWritable, sessions, gateway*, goVersion, platform, timestamp}` |
 | `GET /api/puzzles?difficulty=入门\|初级\|中级\|高级\|大师\|自定义` | — | `[{id, name, source?, difficulty, playerSide, goal, firstSide, parMoves, tags?}]`（不含答案） |
 | `GET /api/puzzles/{id}` | — | `{id, name, difficulty, playerSide, goal, firstSide, parMoves, tags?}`（不含答案） |
 | `POST /api/puzzles` | `{name?, fen, side: "red"\|"black", goal: "win"\|"draw"}` | `{id, name, difficulty, playerSide, goal, firstSide, parMoves}`；保存一个**自摆残局** |
 | `POST /api/puzzles/{id}/delete` | — | `{ok: true}`；仅可删除自定义残局 |
 | `POST /api/llm/validate` | `LLMConfig` | `{ok: bool, message: string, latencyMs: number}` |
+| `GET /api/update` | — | 转发 PanDa 更新服务，并附 `selfVersion`（本机版本，供前端比对） |
+| `POST /api/feedback` | `{category, title, desc, contact?, logs?}` | `{ok: bool, message: string}`（转发 PanDa 反馈系统） |
+
+> `/api/status` 的 `customDir` / `customWritable` 是**自定义残局降级为内存态的唯一对外通道**：
+> 目录不可写时 `customWritable=false`，此时保存只活在进程内存里，重启即丢。
 
 `LLMConfig`：`{baseURL, apiKey, model, temperature?, timeoutMs?, includeLegalMoves?}`。
 API Key 仅存浏览器 localStorage，服务端只做内存透传，不落盘不写日志。
 
 ### 自定义残局（v2 新增）
 
-- **落盘位置**：独立目录（配置项 `custom` / 环境变量 `QIJING_CUSTOM`，默认 `./custom-puzzles`），
+- **落盘位置**：独立目录（配置项 `custom` / `custom_dir` / `custom_puzzles` 等别名，或环境变量
+  `QIJING_CUSTOM`）。默认位置按「显式配置 ＞ 框架目录 ＞ 相对路径」解析：飞牛上未配置时为
+  `${TRIM_PKGVAR}/custom-puzzles`（数据卷内，升级替换应用目录不会带走），本地运行为 `./custom-puzzles`。
   与内置题库目录 `puzzles` **刻意分开** —— 后者是「整体替换内嵌题库」，写进去会让用户
   必须配该目录、否则 3576 关消失。
 - **全服共享**：存在服务端，任何客户端 `GET /api/puzzles` 都能看到，id 前缀统一为 `custom-`。
@@ -70,6 +79,7 @@ API Key 仅存浏览器 localStorage，服务端只做内存透传，不落盘�
 {"type": "undo_result", "ok": true, "moves": [{"from": "h2", "to": "e2", "cn": "炮二平五", "captured": "p"}]}
 {"type": "puzzle_event", "event": "deviate|solution_broken", "message": "..."}
 {"type": "error", "code": "illegal_move|not_your_turn|not_found|thinking|bad_message|unknown_type", "message": "..."}
+{"type": "error", "code": "legal|undo|hint|resign|restart", "message": "..."}   // 该操作自身失败时回显操作名
 {"type": "pong"}
 ```
 

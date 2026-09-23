@@ -11,9 +11,10 @@ port: 8080
 # 外置残局目录（覆盖内嵌残局；用于扩充残局内容）
 # puzzles: ./puzzles
 
-# 自定义残局目录（自摆局面保存到这里，全服共享）。默认 <工作目录>/custom-puzzles。
-# 建议 fpk 部署时指到数据卷目录，例如 /vol1/1000/panda-xiangqi-puzzles，
-# 否则应用升级可能连替换应用目录一起清掉这些局面。
+# 自定义残局目录（自摆局面保存到这里，全服共享）。
+# 默认位置：飞牛上为 ${TRIM_PKGVAR}/custom-puzzles（数据卷内，升级替换应用目录、
+# 甚至卸载都不会带走它），本地运行为 <工作目录>/custom-puzzles。
+# 显式配置（本项或 QIJING_CUSTOM）会覆盖默认值。
 # custom: ./custom-puzzles
 
 # 启动时自动打开浏览器（个人使用推荐 true；服务器部署设为 false）

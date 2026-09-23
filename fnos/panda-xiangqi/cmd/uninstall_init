@@ -1,3 +1,109 @@
 #!/bin/bash
-# 熊猫象棋生命周期钩子（占位）：无需额外安装/升级/卸载/配置处理。
+#
+# 熊猫象棋卸载钩子：按「卸载向导」（wizard/uninstall）里的选择处理自定义残局数据。
+#
+# 为什么放在 uninstall_init 而不是 uninstall_callback：应用数据在
+# ${TRIM_PKGVAR}（/var/apps/panda-xiangqi/var → /vol{n}/@appdata/panda-xiangqi，
+# 即数据卷上，所以卸载默认并不会带走它）。框架移除已安装文件之后，
+# /var/apps/panda-xiangqi 整棵树连同这条软链就没了，callback 阶段再拿不到路径。
+# init 阶段一切完好，删除在这里做。
+#
+# 安全取向（刻意写死）：只有向导里明确选到「删除」才动手；变量缺失、取值意外、
+# 路径是符号链接、目录里混进了非残局文件…… 一律保留数据并写日志。
+# 宁可留一坨数据，不可误删用户的别的东西。
+
+CHOICE="${wizard_keep_data:-keep}"
+PKGVAR="${TRIM_PKGVAR:-}"
+LOG_FILE="${PKGVAR:-/tmp}/app.log"
+
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# effective_custom_dir 复刻 Go 侧 config.Load 的口径：
+#   显式配置（config.yaml 的 custom 项 / QIJING_CUSTOM）＞ TRIM_PKGVAR ＞ 相对路径。
+# 前两者的目录由应用创建、可能落在数据卷上，需要按用户选择处理；相对路径落在应用
+# 目录内，会随卸载一起被移除，这里不用管（返回空串）。
+# 注意 Go 侧读的是工作目录下的 config.yaml —— 启动脚本会先 cd 到 ${TRIM_APPDEST}/server。
+#
+# 键名必须与 Go 侧 config.Load 完全同口径（custom / custom_dir / custom-dir /
+# custom_puzzles，且大小写不敏感）。这不是洁癖：少认一个别名，用户用别名配了
+# 自定义残局目录时，向导里选「删除」删的就是兜底目录 —— 点了删除却没删，
+# 而且是在数据已经不该留的时刻假装完成了。
+effective_custom_dir() {
+  local cfg line key val
+  for cfg in "${TRIM_APPDEST:-}/server/config.yaml" "${TRIM_PKGETC:-}/config.yaml"; do
+    [ -f "$cfg" ] || continue
+    while IFS= read -r line; do
+      # 与 Go 侧同样跳过空行与注释行
+      case "$line" in ''|'#'*) continue ;; esac
+      case "$line" in *:*) ;; *) continue ;; esac
+      key="${line%%:*}"
+      val="${line#*:}"
+      key="$(printf '%s' "$key" | tr -d '[:space:]' | tr 'A-Z' 'a-z')"
+      case "$key" in
+        custom|custom_dir|custom-dir|custom_puzzles) ;;
+        *) continue ;;
+      esac
+      val="$(printf '%s' "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      # 去引号（Go 侧是 strings.Trim(val, "\"'")）
+      val="$(printf '%s' "$val" | tr -d '"' | sed -e "s/^'//" -e "s/'\$//")"
+      if [ -n "$val" ]; then
+        printf '%s' "$val"
+        return 0
+      fi
+    done < "$cfg"
+  done
+  if [ -n "${QIJING_CUSTOM:-}" ]; then
+    printf '%s' "$QIJING_CUSTOM"
+    return 0
+  fi
+  if [ -n "$PKGVAR" ]; then
+    printf '%s' "${PKGVAR}/custom-puzzles"
+  fi
+}
+
+delete_custom() {
+  local dir="$1" n stray
+  if [ -z "$dir" ]; then
+    log_msg "卸载：未解析出自定义残局目录（相对路径随应用目录移除），无需操作"
+    return 0
+  fi
+  if [ ! -e "$dir" ]; then
+    log_msg "卸载：自定义残局目录不存在，无需删除（$dir）"
+    return 0
+  fi
+  if [ -L "$dir" ]; then
+    log_msg "卸载：自定义残局目录是符号链接，为免误删链接目标已保留（$dir）"
+    return 0
+  fi
+  if [ ! -d "$dir" ]; then
+    log_msg "卸载：自定义残局路径不是目录，已保留（$dir）"
+    return 0
+  fi
+  # 目录内容必须全是本应用写入的残局文件（<id>.json，可能残留 .json.tmp）。
+  # 用户若把 custom 指到一个共享目录，这条守卫会挡住整目录删除。
+  stray="$(find "$dir" -mindepth 1 -maxdepth 1 ! -name '*.json' ! -name '*.json.tmp' 2>/dev/null | head -n 1)"
+  if [ -n "$stray" ]; then
+    log_msg "卸载：自定义残局目录含非残局文件（$(basename "$stray")），为免误删已整体保留（$dir）"
+    return 0
+  fi
+  n="$(find "$dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d '[:space:]')"
+  if rm -rf "$dir"; then
+    log_msg "卸载：已按选择删除 ${n:-0} 个自定义残局（$dir）"
+  else
+    log_msg "卸载：删除自定义残局失败，数据已保留（$dir）"
+  fi
+}
+
+case "$CHOICE" in
+  delete|del|remove|clear|no|false|0)
+    log_msg "卸载：用户在向导中选择删除自定义残局数据"
+    delete_custom "$(effective_custom_dir)"
+    ;;
+  *)
+    log_msg "卸载：保留自定义残局数据（向导选择=${CHOICE:-未提供}）"
+    ;;
+esac
+
 exit 0

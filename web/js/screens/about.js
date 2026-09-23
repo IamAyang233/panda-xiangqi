@@ -64,7 +64,12 @@ async function checkUpdate() {
     data = { ok: false, message: '网络错误：' + e.message };
   }
   const self = data.selfVersion || '1.0.0';
-  $('about-version').textContent = 'PANDA XIANGQI';
+  // 顺带把本机版本显示出来。此前这一格是写死的品牌字串，界面上没有任何地方能看到
+  // 自己在跑哪一版，而「检查更新」只会说「已是最新版本」—— 装了哪个版本无从确认。
+  // 取不到版本时宁可不显示，也不把用于比较的兜底值 1.0.0 当成真版本露给用户。
+  $('about-version').textContent = data.selfVersion
+    ? `PANDA XIANGQI · v${data.selfVersion}`
+    : 'PANDA XIANGQI';
 
   const releases = Array.isArray(data.releases) ? data.releases : [];
   if (!data.ok) {

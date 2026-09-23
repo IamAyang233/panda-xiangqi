@@ -54,6 +54,15 @@ export async function showPuzzles() {
   await refresh();
 }
 
+// selectDiff 切换难度页签（只改选中态，渲染交给随后的 refresh）。
+// 用途：从自摆残局返回时直接落到「自定义」页 —— 用户是从那儿进的局，
+// 也可以是从摆局屏保存后直接来挑战的，落在默认的「全部」会让人以为局面没存上。
+export function selectDiff(diff) {
+  document.querySelectorAll('#difficulty-tabs .tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.diff === diff);
+  });
+}
+
 function starsHTML(n) {
   // ⚠️ 星数必须先夹到 [0,3]：localStorage 里若是旧版本/被手工改过的脏数据
   // （>3 或 NaN），'☆'.repeat(3 - n) 会得到负数并抛 RangeError，

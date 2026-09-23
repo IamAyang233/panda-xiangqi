@@ -1,0 +1,24 @@
+[
+  {
+    "stepTitle": "数据保留",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "「自定义残局」保存在应用的数据目录里（位于数据卷，不在程序目录内）。卸载不会自动清掉它：默认保留，以后重新安装即可继续看到并挑战这些局面。只在确定不再使用时才选「删除」——删除后无法恢复。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_keep_data",
+        "label": "自定义残局数据",
+        "initValue": "keep",
+        "options": [
+          { "label": "保留（推荐）", "value": "keep" },
+          { "label": "删除全部自定义残局", "value": "delete" }
+        ],
+        "rules": [
+          { "required": true, "message": "请选择卸载时如何处理自定义残局数据" }
+        ]
+      }
+    ]
+  }
+]

@@ -76,19 +76,26 @@ func NewStore(fsys fs.FS) (*Store, error) {
 		}
 		data, err := fs.ReadFile(fsys, path)
 		if err != nil {
-			return err
+			// 单个文件读不出来（权限/损坏）同样只跳过：目录里一条坏文件不该让
+			// 整库打不开，否则自定义残局目录里手滑放个坏文件就会让用户所有局面
+			// 一起消失（mustCustom 会把整体失败降级成内存态）。目录级错误仍由
+			// 上面的 err 分支整体失败——那种情况确实无从加载。
+			log.Printf("puzzle: %s 跳过（读取失败: %v）", path, err)
+			return nil
 		}
 		var list []*Puzzle
 		if err := json.Unmarshal(data, &list); err != nil { // 数组格式
 			var one Puzzle
 			if err2 := json.Unmarshal(data, &one); err2 != nil {
-				return fmt.Errorf("%s: %w", path, err)
+				log.Printf("puzzle: %s 跳过（JSON 无法解析: %v）", path, err)
+				return nil
 			}
 			list = []*Puzzle{&one}
 		}
 		for _, p := range list {
 			if p.ID == "" {
-				return fmt.Errorf("%s: 残局缺少 id", path)
+				log.Printf("puzzle: %s 跳过（残局缺少 id）", path)
+				continue
 			}
 			// 语义校验：FEN 语法合法还不够，局面本身必须能安全进入对局路径。
 			// 「非行棋方被将军」的摆局会让走子方可以吃将，而吃将会让 kingSq 悬空、
