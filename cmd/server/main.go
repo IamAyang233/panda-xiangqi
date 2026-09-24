@@ -17,6 +17,7 @@ import (
 	"github.com/IamAyang233/panda-xiangqi/internal/config"
 	"github.com/IamAyang233/panda-xiangqi/internal/engine"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
+	"github.com/IamAyang233/panda-xiangqi/internal/record"
 	"github.com/IamAyang233/panda-xiangqi/internal/session"
 )
 
@@ -59,6 +60,12 @@ func main() {
 		log.Printf("自定义残局目录: %s（%d 条）", customDir, custom.Count())
 	}
 
+	// 棋谱（对局记录）：同样独立目录、独立 Store。保存由用户在结算弹窗触发。
+	records, recordsDir := mustRecords(cfg.RecordsDir)
+	if recordsDir != "" {
+		log.Printf("棋谱目录: %s（%d 局）", recordsDir, records.Count())
+	}
+
 	engines := engine.NewManagerWithNNUE(cfg.EnginePath, cfg.NNUEPath)
 	defer engines.Close()
 	log.Printf("引擎: %s（内嵌 Go 引擎: %v，外置 UCI 兜底: %v）",
@@ -75,6 +82,8 @@ func main() {
 		Puzzles:       puzzles,
 		Custom:        custom,
 		CustomDir:     customDir,
+		Records:       records,
+		RecordsDir:    recordsDir,
 		Static:        static,
 		UpdateAPI:     cfg.UpdateAPI,
 		FeedbackToken: cfg.FeedbackToken,
@@ -213,6 +222,28 @@ func mustCustom(dir string) (*puzzle.Store, string) {
 	if st, err = puzzle.LoadDir(dir); err != nil {
 		log.Printf("自定义残局目录 %s 载入失败，本次仅内存保存: %v", dir, err)
 		return puzzle.NewEmpty(), ""
+	}
+	return st, dir
+}
+
+// mustRecords 载入棋谱目录，语义与 mustCustom 一致：目录不可用时降级为空库 +
+// 内存态，不让这一个附加功能把整个服务拖住；降级事实由 /api/status 的
+// recordsWritable 如实暴露。返回的 dir 为 "" 即表示内存态。
+func mustRecords(dir string) (*record.Store, string) {
+	if dir == "" {
+		return record.NewEmpty(), ""
+	}
+	st, err := record.LoadDir(dir)
+	if err == nil {
+		return st, dir
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("棋谱目录 %s 不可用，本次仅内存保存: %v", dir, err)
+		return record.NewEmpty(), ""
+	}
+	if st, err = record.LoadDir(dir); err != nil {
+		log.Printf("棋谱目录 %s 载入失败，本次仅内存保存: %v", dir, err)
+		return record.NewEmpty(), ""
 	}
 	return st, dir
 }

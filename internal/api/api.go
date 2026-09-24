@@ -17,6 +17,7 @@ import (
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 	"github.com/IamAyang233/panda-xiangqi/internal/llm"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
+	"github.com/IamAyang233/panda-xiangqi/internal/record"
 	"github.com/IamAyang233/panda-xiangqi/internal/session"
 )
 
@@ -27,6 +28,8 @@ type Server struct {
 	Puzzles       *puzzle.Store
 	Custom        *puzzle.Store // 自定义残局（自摆局面，全服共享、可增删）
 	CustomDir     string        // 自定义残局落盘目录；空表示内存态（不持久化）
+	Records       *record.Store // 棋谱（对局记录，全服共享、可删）
+	RecordsDir    string        // 棋谱落盘目录；空表示内存态（不持久化）
 	Static        fs.FS         // 前端资源（web/dist 或 web/）
 	UpdateAPI     string        // PanDa 推送更新服务入口
 	FeedbackToken string        // 反馈共享 Token
@@ -43,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/games/", s.handleGameAction)
 	mux.HandleFunc("/api/puzzles", s.handlePuzzleList)
 	mux.HandleFunc("/api/puzzles/", s.handlePuzzle)
+	mux.HandleFunc("/api/records", s.handleRecordList)
+	mux.HandleFunc("/api/records/", s.handleRecord)
 	mux.HandleFunc("/api/llm/validate", s.handleLLMValidate)
 	mux.HandleFunc("/api/update", s.handleUpdate)
 	mux.HandleFunc("/api/feedback", s.handleFeedback)
@@ -97,24 +102,35 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// 用户只会以为存好了，重启后才发现没了。
 		customWritable = puzzle.DirWritable(s.CustomDir)
 	}
+	recordCount, recordDir, recordWritable := 0, "", false
+	if s.Records != nil {
+		recordCount = s.Records.Count()
+	}
+	if s.RecordsDir != "" {
+		recordDir = s.RecordsDir
+		recordWritable = record.DirWritable(s.RecordsDir)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"app":            AppName,
-		"version":        AppVersion,
-		"engine":         s.Engines.EngineName(),
-		"uciAvailable":   s.Engines.HasUCI(),
-		"engineDiag":     s.Engines.Diagnostics(),
-		"puzzles":        s.Puzzles.Count(),
-		"customPuzzles":  customCount,
-		"customDir":      customDir,
-		"customWritable": customWritable,
-		"sessions":       s.Sessions.Count(),
-		"gatewayUser":    username,
-		"gatewayUid":     uid,
-		"gatewayIsAdmin": isAdmin,
-		"gatewayMode":    s.GatewayPrefix != "",
-		"goVersion":      runtime.Version(),
-		"platform":       runtime.GOOS + "/" + runtime.GOARCH,
-		"timestamp":      time.Now().Format("2006-01-02 15:04:05"),
+		"app":             AppName,
+		"version":         AppVersion,
+		"engine":          s.Engines.EngineName(),
+		"uciAvailable":    s.Engines.HasUCI(),
+		"engineDiag":      s.Engines.Diagnostics(),
+		"puzzles":         s.Puzzles.Count(),
+		"customPuzzles":   customCount,
+		"customDir":       customDir,
+		"customWritable":  customWritable,
+		"records":         recordCount,
+		"recordsDir":      recordDir,
+		"recordsWritable": recordWritable,
+		"sessions":        s.Sessions.Count(),
+		"gatewayUser":     username,
+		"gatewayUid":      uid,
+		"gatewayIsAdmin":  isAdmin,
+		"gatewayMode":     s.GatewayPrefix != "",
+		"goVersion":       runtime.Version(),
+		"platform":        runtime.GOOS + "/" + runtime.GOARCH,
+		"timestamp":       time.Now().Format("2006-01-02 15:04:05"),
 	})
 }
 
@@ -233,6 +249,12 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.Sessions.Get(parts[0])
 	if !ok {
 		writeErr(w, http.StatusNotFound, "对局不存在")
+		return
+	}
+	// 存棋谱单独走一个分支：它的响应体（要回记录 id）与失败语义（未终局是业务拒绝，
+	// 不是操作冲突）和其它动作都不同，硬塞进下面统一的 {ok:true}/409 会拧巴。
+	if parts[1] == "save" {
+		s.handleGameSave(w, sess)
 		return
 	}
 	var err error

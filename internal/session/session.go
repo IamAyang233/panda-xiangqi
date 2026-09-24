@@ -14,6 +14,7 @@ import (
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 	"github.com/IamAyang233/panda-xiangqi/internal/llm"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
+	"github.com/IamAyang233/panda-xiangqi/internal/record"
 )
 
 // Mode 对局模式。
@@ -24,11 +25,14 @@ const (
 	ModePuzzle = "puzzle"
 )
 
-// MoveRecord 着法记录（供 UI 着法列表与断线恢复）。
+// MoveRecord 着法记录（供 UI 着法列表、断线恢复与棋谱落盘）。
 type MoveRecord struct {
 	UCI string `json:"uci"`
 	CN  string `json:"cn"`
 	Red bool   `json:"red"` // 红方所走
+	// Captured 被吃子的 FEN 字符（无吃子为空）。走子那一刻就地取，
+	// 悔棋会把它从历史里删掉 —— 棋谱记录的是最终走出来的那条线。
+	Captured string `json:"captured,omitempty"`
 }
 
 // Conn 会话广播通道（由 api 层注入 WS 连接）。
@@ -47,8 +51,11 @@ type Session struct {
 	Level     int
 	HumanSide int // 人机/残局中人类的执子方（game.Red / game.Black）
 
-	mu          sync.Mutex
-	pos         *game.Position
+	mu  sync.Mutex
+	pos *game.Position
+	// startFEN 本局的起始局面（重放与棋谱落盘必需）：主模式即标准初始局面，
+	// 残局模式是关卡 FEN。开局时定下来就不变，Restart 会跟着重设。
+	startFEN    string
 	moves       []MoveRecord
 	result      string // game.Result*（空 = 进行中）
 	reason      string
@@ -121,6 +128,7 @@ func NewSession(mode string, humanSide int, level int, llmCfg llm.Config, pz *pu
 	} else {
 		s.pos = game.NewPosition()
 	}
+	s.startFEN = s.pos.FEN()
 	return s
 }
 
@@ -360,8 +368,14 @@ func (s *Session) solutionMoveAt(i int) string {
 func (s *Session) applyMoveLocked(m game.Move, consumedSolution bool) []any {
 	cn := s.pos.MoveToChinese(m)
 	red := s.pos.Turn == game.Red
-	s.pos.Make(m)
-	s.moves = append(s.moves, MoveRecord{UCI: m.String(), CN: cn, Red: red})
+	// Make 返回被吃子（game.Empty = 没吃着），转成 FEN 字符一并记进着法：
+	// 棋谱要能显示「吃了什么」，回放本身只靠 from→to 覆盖即可。
+	captured := s.pos.Make(m)
+	capFen := ""
+	if captured != game.Empty {
+		capFen = string(game.PieceToFen(captured))
+	}
+	s.moves = append(s.moves, MoveRecord{UCI: m.String(), CN: cn, Red: red, Captured: capFen})
 	s.pzConsumed = append(s.pzConsumed, consumedSolution)
 
 	st := s.pos.CheckStatus()
@@ -428,6 +442,38 @@ func (s *Session) finishLocked(result, reason string) []any {
 		}
 	}
 	return []any{msg}
+}
+
+// SnapshotRecord 导出一局棋谱（调用方：保存棋谱的 REST 端点）。
+//
+// 只有**已终局**的对局能导出 —— 这正是「棋谱只存下完的局」这条口径的落点：
+// 中途退出、断线、关页面都不会产生记录，因为那时候 result 还是空的。
+// 残局模式（含自定义残局）不导出：那是关卡，不进棋谱。
+func (s *Session) SnapshotRecord() (record.Record, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.result == "" || s.Mode == ModePuzzle {
+		return record.Record{}, false
+	}
+	moves := make([]record.Move, len(s.moves))
+	for i, m := range s.moves {
+		moves[i] = record.Move{UCI: m.UCI, CN: m.CN, Red: m.Red, Captured: m.Captured}
+	}
+	// 时间取**开局时刻**而不是保存时刻：用户可能看着结算弹窗过一会儿才点保存，
+	// 棋谱该记录的是「这盘棋是什么时候下的」。
+	return record.Record{
+		ID:        s.ID,
+		Name:      record.AutoName(s.Mode, s.Level, s.llmCfg.Model, s.created),
+		Mode:      s.Mode,
+		Level:     s.Level,
+		Model:     s.llmCfg.Model, // 只带模型名；API Key 绝不进棋谱
+		HumanSide: sideName(s.HumanSide),
+		StartFEN:  s.startFEN,
+		Moves:     moves,
+		Result:    s.result,
+		Reason:    s.reason,
+		Created:   s.created.Format("2006-01-02 15:04:05"),
+	}, true
 }
 
 // puzzleCleared 判断这一终局是否算玩家通关残局。
@@ -818,6 +864,7 @@ func (s *Session) Restart() error {
 		return errf("残局局面非法: %v", err)
 	}
 	s.pos = pos
+	s.startFEN = s.pos.FEN()
 	s.moves = nil
 	s.result = ""
 	s.reason = ""

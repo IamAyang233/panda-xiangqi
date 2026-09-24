@@ -5,6 +5,7 @@ import { toast, showScreen } from '../ui.js';
 import { api } from '../net.js';
 import { showPuzzles } from './puzzles.js';
 import { showSetup } from './setup.js';
+import { showRecords } from './records.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -44,6 +45,11 @@ export function initLobby(onStart) {
         // 用 showSetup() 而不是 showScreen('setup')：它会在屏幕可见后重算棋盘几何，
         // 否则移动端会看到一块空白的棋盘（构造期父容器尺寸为 0）。
         showSetup();
+        return;
+      }
+      if (mode === 'records') {
+        // 棋谱复盘：进列表前刷新（棋谱在服务端全服共享，别处刚存的要能看到）
+        await showRecords();
         return;
       }
       if (mode === 'pony') {

@@ -4,10 +4,10 @@ package puzzle
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/IamAyang233/panda-xiangqi/internal/filestore"
 	"io/fs"
 	"log"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 
@@ -237,70 +237,24 @@ func (s *Store) All() []*Puzzle {
 
 // ---------------------------------------------------------------- 落盘
 
-// SaveToDir 把一条残局写入目录（文件名 <id>.json），采用「临时文件 + rename」的原子写：
-// 断电或进程被杀时只可能留下临时文件，不会留下半截 JSON 让下次启动的加载器读到脏数据。
+// SaveToDir 把一条残局写入目录（文件名 <id>.json）。
+// 落盘原语走 filestore（原子写 + 失败清临时文件），与棋谱共用同一套实现。
 func SaveToDir(dir string, p *Puzzle) error {
-	if dir == "" {
-		return fmt.Errorf("目录为空")
-	}
 	if p == nil || p.ID == "" {
 		return fmt.Errorf("残局缺少 id")
 	}
-	// 目录必须已存在：由启动流程创建，这里不静默 MkdirAll，避免把写权限问题藏起来。
-	if st, err := os.Stat(dir); err != nil {
-		return fmt.Errorf("目录不可用: %w", err)
-	} else if !st.IsDir() {
-		return fmt.Errorf("目录不是一个文件夹: %s", dir)
-	}
-	data, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return fmt.Errorf("序列化失败: %w", err)
-	}
-	data = append(data, '\n')
-	tmp := filepath.Join(dir, p.ID+".json.tmp")
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("写入失败: %w", err)
-	}
-	if err := os.Rename(tmp, filepath.Join(dir, p.ID+".json")); err != nil {
-		// rename 失败时清理临时文件，避免下次加载把它当成残局（扩展名不匹配故不会被加载，
-		// 但仍应清掉，不为排查留垃圾）。
-		_ = os.Remove(tmp)
-		return fmt.Errorf("落盘失败: %w", err)
-	}
-	return nil
+	return filestore.SaveJSON(dir, p.ID, p)
 }
 
 // RemoveFromDir 删除目录里某条残局的磁盘文件。
 // 文件已不存在（例如被手工删过）时**不算错误**：调用方仍可据此摘除内存索引，
-// 否则「磁盘丢了但内存还在」会留下一个点开就 404 的幽灵条目。
+// 否则会留下一个「点开必错」的幽灵条目。
 func RemoveFromDir(dir string, id string) error {
-	if dir == "" {
-		return fmt.Errorf("目录为空")
-	}
 	if id == "" {
 		return fmt.Errorf("残局 id 为空")
 	}
-	path := filepath.Join(dir, id+".json")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除失败: %w", err)
-	}
-	return nil
+	return filestore.RemoveJSON(dir, id)
 }
 
 // DirWritable 目录是否可写（用于降级时如实向外报告，而不是静默变成"保存了其实没保存"）。
-func DirWritable(dir string) bool {
-	if dir == "" {
-		return false
-	}
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		return false
-	}
-	f, err := os.CreateTemp(dir, ".write-check-")
-	if err != nil {
-		return false
-	}
-	name := f.Name()
-	f.Close()
-	_ = os.Remove(name)
-	return true
-}
+func DirWritable(dir string) bool { return filestore.DirWritable(dir) }

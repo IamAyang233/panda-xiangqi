@@ -100,6 +100,9 @@
     <symbol id="i-next" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9.5 6l6 6-6 6"/>
     </symbol>
+    <symbol id="i-scroll" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 4h10a2 2 0 0 1 2 2v11a2 2 0 0 0 2 2H8a2 2 0 0 1-2-2V4z"/><path d="M9 8h6M9 12h6"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -150,6 +153,11 @@
         <div class="mode-icon"><svg class="icon"><use href="#i-brush"/></svg></div>
         <div class="mode-name">自定义残局</div>
         <div class="mode-desc">自己摆局面练杀法<br>可设执子方与目标</div>
+      </button>
+      <button class="mode-card" data-mode="records">
+        <div class="mode-icon"><svg class="icon"><use href="#i-scroll"/></svg></div>
+        <div class="mode-name">棋谱复盘</div>
+        <div class="mode-desc">回看每一局对局<br>关键手与 AI 讲解</div>
       </button>
       <button class="mode-card" data-mode="pony">
         <div class="mode-icon"><svg class="icon"><use href="#i-horse"/></svg></div>
@@ -202,6 +210,7 @@
         <div class="panel-title" id="panel-title">对局</div>
         <div class="move-list" id="move-list"></div>
         <div class="puzzle-goal" id="puzzle-goal" hidden></div>
+        <button id="btn-save-record" class="ctl-btn" hidden><svg class="icon"><use href="#i-scroll"/></svg><span id="btn-save-record-label">保存此局</span></button>
         <button id="btn-exit" class="ctl-btn danger"><svg class="icon"><use href="#i-exit"/></svg><span id="btn-exit-label">返回大厅</span></button>
       </aside>
     </div>
@@ -211,6 +220,7 @@
         <div class="result-title" id="result-title"></div>
         <div class="result-sub" id="result-sub"></div>
         <div class="result-actions">
+          <button id="btn-result-save" class="ctl-btn" hidden>保存此局</button>
           <button id="btn-result-restart" class="ctl-btn" hidden>再来一局</button>
           <button id="btn-result-close" class="ctl-btn">查看棋盘</button>
           <button id="btn-result-exit" class="ctl-btn danger"><span id="btn-result-exit-label">返回大厅</span></button>
@@ -316,6 +326,42 @@
   </main>
 
   <!-- 关于 -->
+  <!-- 棋谱复盘 -->
+  <main id="screen-records" class="screen" hidden>
+    <div id="record-list">
+      <div class="puzzle-head">
+        <h2>棋谱复盘</h2>
+        <span class="record-count" id="record-count"></span>
+      </div>
+      <div class="puzzle-grid" id="record-grid"></div>
+      <div class="record-more"><button id="btn-record-more" class="ctl-btn" hidden>加载更多</button></div>
+    </div>
+    <div class="game-layout record-layout" id="record-detail" hidden>
+      <div class="board-panel">
+        <div class="board-wrap"><canvas id="record-board"></canvas></div>
+        <div class="game-controls">
+          <button id="btn-rec-first" class="ctl-btn" title="回到开局"><svg class="icon"><use href="#i-prev"/></svg></button>
+          <button id="btn-rec-prev" class="ctl-btn"><span>上一手</span></button>
+          <span class="record-step" id="record-step">0 / 0</span>
+          <button id="btn-rec-next" class="ctl-btn"><span>下一手</span></button>
+          <button id="btn-rec-last" class="ctl-btn" title="跳到终局"><svg class="icon"><use href="#i-next"/></svg></button>
+          <button id="btn-rec-flip" class="ctl-btn" title="翻转视角"><svg class="icon"><use href="#i-flip"/></svg><span>翻转</span></button>
+          <button id="btn-rec-back" class="ctl-btn"><span>返回列表</span></button>
+        </div>
+      </div>
+      <aside class="side-panel">
+        <div class="panel-title" id="record-title">棋谱</div>
+        <div class="record-meta" id="record-meta"></div>
+        <div class="record-keys" id="record-keys"></div>
+        <div class="move-list" id="record-moves"></div>
+        <div class="record-review">
+          <div class="record-review-text" id="record-review-text">点某一手，再看「问 AI 讲解」。</div>
+          <button id="btn-rec-review" class="ctl-btn"><span id="btn-rec-review-label">问 AI 讲解这一手</span></button>
+        </div>
+      </aside>
+    </div>
+  </main>
+
   <main id="screen-about" class="screen" hidden>
     <div class="about-wrap">
       <div class="about-hero">

@@ -41,6 +41,29 @@ export async function deletePuzzle(id) {
   return api(`/api/puzzles/${encodeURIComponent(id)}/delete`, {});
 }
 
+// ---- 棋谱（对局记录）----
+// 棋谱没有「新建」接口：只能由对局产生，用户在结算弹窗点保存时走 saveRecord(gameId)。
+export async function saveRecord(gameId) {
+  return api(`/api/games/${encodeURIComponent(gameId)}/save`, {});
+}
+export async function listRecords(page = 0) {
+  return api('/api/records?page=' + page);
+}
+export async function getRecord(id) {
+  return api('/api/records/' + encodeURIComponent(id));
+}
+export async function deleteRecord(id) {
+  return api(`/api/records/${encodeURIComponent(id)}/delete`, {});
+}
+// analyzeRecord 让服务端算关键手（首次几秒，之后返回缓存）。
+export async function analyzeRecord(id) {
+  return api(`/api/records/${encodeURIComponent(id)}/analyze`, {});
+}
+// reviewRecord 问 AI 讲解某一手（一次调用可能几十秒）。
+export async function reviewRecord(id, index, llm) {
+  return api(`/api/records/${encodeURIComponent(id)}/review`, { index, llm });
+}
+
 // ---- 心跳与死连接检测 ----
 // 背景：应用经 fnOS 网关反代访问，网关对空闲连接有读超时（nginx 类默认约 60s）。
 // 下棋存在大量无消息时段（读讲解/思考/切后台），连接一旦空闲就被网关掐掉，

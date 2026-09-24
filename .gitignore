@@ -24,6 +24,10 @@ fnos/panda-xiangqi-arm/
 # 在仓库里跑服务时会写到这里，属用户数据、勿入库）。注意别加尾斜杠以外的变体。
 /custom-puzzles/
 
+# 棋谱默认目录（config 项 records / QIJING_RECORDS 的默认值 ./records，
+# 在仓库里跑服务时会写到这里，属用户数据、勿入库）
+/records/
+
 # 内置皮卡鱼引擎（官方 release 二进制 + NNUE 权重，体量大，单独放置、勿入库）
 dist-engines/
 

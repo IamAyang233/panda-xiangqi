@@ -1,5 +1,5 @@
 // 对局屏：四种模式的统一交互与状态同步。
-import { GameConn, createGame } from '../net.js';
+import { GameConn, createGame, saveRecord } from '../net.js';
 import { store } from '../store.js';
 import { sfx } from '../audio.js';
 import { BoardRenderer } from '../renderer.js';
@@ -82,6 +82,10 @@ export class GameScreen {
     $('btn-prev-puzzle').onclick = () => { sfx.play('button'); this.onPuzzleStep?.(-1); };
     $('btn-next-puzzle').onclick = () => { sfx.play('button'); this.onPuzzleStep?.(1); };
     $('btn-result-close').onclick = () => { $('result-overlay').hidden = true; };
+    // 保存棋谱：结算弹窗里的主入口 + 侧栏的补存入口（弹窗被「查看棋盘」收起后
+    // 就再也叫不回来，没有侧栏这个入口就等于永久放弃保存）
+    $('btn-result-save').onclick = () => this._saveRecord();
+    $('btn-save-record').onclick = () => this._saveRecord();
     $('btn-result-exit').onclick = () => { $('result-overlay').hidden = true; this.exit(); };
     $('btn-result-restart').onclick = () => {
       $('result-overlay').hidden = true;
@@ -136,6 +140,8 @@ export class GameScreen {
       toast(`创建对局失败：${e.message}`, true);
       return;
     }
+    // 棋谱保存要用 gameId：终局时 store 里的存档会被清掉，所以在这里单独留一份
+    this.gameId = created.gameId;
     this.humanSide = created.youSide || 'red';
     this.renderer.setFlipped(this.humanSide === 'black');
     // 持久化当前对局：断网/刷新后可凭 gameId 重连恢复（返回大厅即清档）。
@@ -202,6 +208,7 @@ export class GameScreen {
   async restore() {
     const saved = store.currentGame;
     if (!saved || !saved.gameId) return false;
+    this.gameId = saved.gameId;
 
     this.mode = saved.mode;
     this.startOpts = saved.opts || {};
@@ -258,6 +265,7 @@ export class GameScreen {
     const isPuzzle = mode === 'puzzle';
     const isCustom = isPuzzle && String(opts.puzzleId || '').startsWith('custom-');
     $('btn-restart').hidden = !isPuzzle;
+    $('btn-save-record').hidden = true; // 只在终局后出现（见 _onGameOver）
     $('btn-resign').hidden = isPuzzle;
     $('btn-hint').hidden = false;
     $('btn-flip').hidden = false;
@@ -495,6 +503,35 @@ export class GameScreen {
     }
   }
 
+  // _saveRecord 把这一局存成棋谱。服务端从内存里的会话导出记录，前端只发 gameId ——
+  // 因此没有「前端伪造棋谱」的问题，也不需要任何客户端校验。
+  async _saveRecord() {
+    if (this._recordSaved || !this.gameOver || !this.gameId) return;
+    const rbtn = $('btn-result-save');
+    const sbtn = $('btn-save-record');
+    const slabel = $('btn-save-record-label');
+    const setBusy = (on) => {
+      rbtn.disabled = on;
+      sbtn.disabled = on;
+      rbtn.textContent = on ? '保存中…' : '保存此局';
+      slabel.textContent = on ? '保存中…' : '保存此局';
+    };
+    setBusy(true);
+    try {
+      await saveRecord(this.gameId);
+      this._recordSaved = true;
+      rbtn.disabled = true;
+      sbtn.disabled = true;
+      rbtn.textContent = '已保存 ✓';
+      slabel.textContent = '已保存 ✓';
+      sfx.play('star');
+      toast('已存入棋谱，可在「棋谱复盘」里回看', false, 2800);
+    } catch (e) {
+      setBusy(false);
+      toast('保存失败：' + e.message, true, 3600);
+    }
+  }
+
   _onError(m) {
     if (m.code === 'illegal_move' || m.code === 'thinking' || m.code === 'not_your_turn') {
       sfx.play('illegal');
@@ -526,6 +563,17 @@ export class GameScreen {
     $('result-title').textContent = title;
     $('result-title').className = `result-title ${cls}`;
     $('result-sub').textContent = `${reasonText[m.reason] || m.reason || ''}`;
+    // 「保存此局」只给三种主模式（残局挑战不入棋谱）。按钮状态每局重置：
+    // 上一局存过之后，这一局的按钮必须回到可点的「保存此局」。
+    this._recordSaved = false;
+    this.gameId && ($('btn-save-record').hidden = isPuzzle);
+    for (const [id, label] of [['btn-result-save', null], ['btn-save-record', 'btn-save-record-label']]) {
+      const b = $(id);
+      b.hidden = isPuzzle;
+      b.disabled = false;
+      if (label) $(label).textContent = '保存此局';
+      else b.textContent = '保存此局';
+    }
     const stars = $('result-stars');
     if (isPuzzle && m.stars) {
       stars.hidden = false;

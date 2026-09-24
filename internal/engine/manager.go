@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/game"
 	"github.com/IamAyang233/panda-xiangqi/internal/search"
@@ -257,6 +258,61 @@ func (m *Manager) BestMoveObserve(ctx context.Context, pos *game.Position, level
 		m.noteDiag("内嵌 Go 引擎搜索失败，降级: " + err.Error())
 	}
 	return m.BestMove(ctx, pos, level)
+}
+
+// RootScore 根节点上一个着法的分值。
+type RootScore struct {
+	UCI   string
+	Score int
+}
+
+// PositionScore 一次浅搜的结果（复盘筛关键手用）。
+type PositionScore struct {
+	// Score 从**轮走方**视角的分值（正 = 该方占优），与 Evaluate 同一量级（兵约 100）。
+	Score int
+	// Best 最佳着法（UCI）；只有静态兜底时为空。
+	Best string
+	// Roots 根节点各着法及其分值（按分值降序，来自**同一次**搜索）。
+	//
+	// 复盘要问的是「我这一手比最佳手亏多少」，而这必须取自同一次搜索：
+	// 若改成「走子前搜一次、走子后另搜一次」再相减，两次搜索的地平线效应不同源，
+	// 分差里混进系统性偏差 —— 实测会把「马8进7」这种正常出子也算成亏 129 分。
+	Roots []RootScore
+	// Depth 搜索深度（静态兜底为 0）。
+	Depth int
+	// Strong 表示分值来自真正的搜索（内嵌引擎可用）。false = 只有静态评估兜底，
+	// 此时「疑问手/失误」的判定会粗糙得多，调用方应据此降低结论强度（复盘里就
+	// 干脆不打这些标签，免得拿静态评估的噪声当棋理结论）。
+	Strong bool
+}
+
+// ScorePosition 给一个局面打分（复盘用）。
+//
+// 为什么必须加这一个方法：Manager 此前只暴露「给我最佳着法」（BestMove / Hint /
+// RankedMoves），而复盘要回答的是「这一手比最佳手亏了多少」—— 那需要分值。
+// 内嵌引擎有带分值的 SearchTimed（native.go:284），外置 UCI 引擎拿不到分值，
+// 因此退化顺序是：内嵌搜索 → 静态评估 Evaluate。
+//
+// 永不返回错误：ctx 取消时返回零值且 Strong=false，调用方自行检查 ctx。
+func (m *Manager) ScorePosition(ctx context.Context, pos *game.Position, movetime time.Duration) PositionScore {
+	if ctxErr(ctx) == nil && m.HasNative() {
+		if res, err := m.native.SearchTimed(ctx, pos, movetime); err == nil {
+			ps := PositionScore{Score: res.Score, Best: res.Best.String(), Depth: res.Depth, Strong: true}
+			for _, r := range res.Roots {
+				ps.Roots = append(ps.Roots, RootScore{UCI: r.Move.String(), Score: r.Score})
+			}
+			return ps
+		}
+	}
+	if ctxErr(ctx) != nil {
+		return PositionScore{}
+	}
+	// 兜底：静态评估（Evaluate 是红方视角，换算成轮走方视角）
+	sc := int(Evaluate(pos))
+	if pos.Turn != game.Red {
+		sc = -sc
+	}
+	return PositionScore{Score: sc}
 }
 
 // Hint 提示：中档位计算（T5.4）。

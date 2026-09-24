@@ -68,7 +68,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
    长短出现/消失（残局列表在「入门 68 张」与「自定义 1 张」之间切页签就会这样）。
    不预留装订线时可用宽度来回变 6px，居中的内容就整块左右横移 3px —— 用户报的
    「从内置残局切到自定义有横向抖动」就是这个（实测 .puzzle-grid x 87→90）。 */
-#screen-lobby, #screen-puzzles { overflow-y: auto; scrollbar-gutter: stable; }
+#screen-lobby, #screen-puzzles, #screen-records { overflow-y: auto; scrollbar-gutter: stable; }
 /* 摆局屏：标题行固定，棋盘+侧栏填满剩余高度（.game-layout 默认 height:100%
    会和标题行叠加，导致底部操作条被 overflow:hidden 裁掉） */
 #screen-setup { overflow: hidden; display: flex; flex-direction: column; }
@@ -522,7 +522,11 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar,
 .about-wrap::-webkit-scrollbar,
 .palette::-webkit-scrollbar,
-.setup-tools::-webkit-scrollbar {
+.setup-tools::-webkit-scrollbar
+.record-keys::-webkit-scrollbar,
+.record-review-text::-webkit-scrollbar,
+#screen-records::-webkit-scrollbar,
+.record-layout .side-panel::-webkit-scrollbar {
   width: 6px; height: 6px;
 }
 .move-list::-webkit-scrollbar-thumb,
@@ -533,7 +537,11 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar-thumb,
 .about-wrap::-webkit-scrollbar-thumb,
 .palette::-webkit-scrollbar-thumb,
-.setup-tools::-webkit-scrollbar-thumb {
+.setup-tools::-webkit-scrollbar-thumb
+.record-keys::-webkit-scrollbar-thumb,
+.record-review-text::-webkit-scrollbar-thumb,
+#screen-records::-webkit-scrollbar-thumb,
+.record-layout .side-panel::-webkit-scrollbar-thumb {
   background: var(--gold-soft); border-radius: 3px;
 }
 .move-list::-webkit-scrollbar-thumb:hover,
@@ -544,7 +552,11 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar-thumb:hover,
 .about-wrap::-webkit-scrollbar-thumb:hover,
 .palette::-webkit-scrollbar-thumb:hover,
-.setup-tools::-webkit-scrollbar-thumb:hover {
+.setup-tools::-webkit-scrollbar-thumb:hover
+.record-keys::-webkit-scrollbar-thumb:hover,
+.record-review-text::-webkit-scrollbar-thumb:hover,
+#screen-records::-webkit-scrollbar-thumb:hover,
+.record-layout .side-panel::-webkit-scrollbar-thumb:hover {
   background: var(--gold);
 }
 .move-list::-webkit-scrollbar-track,
@@ -555,16 +567,83 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar-track,
 .about-wrap::-webkit-scrollbar-track,
 .palette::-webkit-scrollbar-track,
-.setup-tools::-webkit-scrollbar-track {
+.setup-tools::-webkit-scrollbar-track
+.record-keys::-webkit-scrollbar-track,
+.record-review-text::-webkit-scrollbar-track,
+#screen-records::-webkit-scrollbar-track,
+.record-layout .side-panel::-webkit-scrollbar-track {
   background: rgba(255,255,255,0.04); border-radius: 3px;
 }
 /* Firefox 兜底：-moz-appearance 是 Firefox 独有，Chromium 不会命中这条分支 */
 @supports (-moz-appearance: none) {
   .move-list, .settings-card, #screen-lobby, #screen-puzzles, .puzzle-grid,
-  .setup-scroll, .about-wrap, .palette, .setup-tools {
+  .setup-scroll, .about-wrap, .palette, .setup-tools, .record-keys, .record-review-text,
+  #screen-records, .record-layout .side-panel {
     scrollbar-width: thin;
     scrollbar-color: var(--gold-soft) transparent;
   }
+}
+
+/* ---------- 棋谱复盘 ---------- */
+.record-count { font-size: 13px; color: var(--text-dim); letter-spacing: 1px; }
+.record-more { text-align: center; padding: 0 0 26px; }
+.record-more .ctl-btn { min-width: 140px; }
+.record-empty {
+  grid-column: 1 / -1; text-align: center; color: var(--text-dim); font-size: 13px;
+  padding: 40px 20px; line-height: 2;
+}
+/* 已分析 / 讲解 N 这类标记放右下角，与右上角的删除键错开，互不遮挡 */
+.record-badges { position: absolute; bottom: 10px; right: 12px; display: flex; gap: 6px; }
+.record-card { padding-bottom: 36px; }
+
+/* 详情布局：与摆局屏同一个坑 —— .game-layout 带 margin:0 auto，而 #screen-records
+   是 flex 纵向容器，auto 外边距会压过 align-items:stretch，整块收缩到内容宽度，
+   棋盘面板（flex:1、无固有宽度）会被挤小；显式 100% 即恢复。 */
+/* height:100%（而不是摆局屏那种 auto）不可省：本屏是「棋盘自己撑满 + 侧栏固定宽」，
+   高度若交给内容决定，就只会高到侧栏那么高（实测约 600px，而可用 789px），
+   下方留一大片空白、棋盘也不会放大。手机上另有 height:100% 的同款处理。 */
+.record-layout { flex: 1; min-height: 0; height: 100%; align-items: stretch; width: 100%; }
+.record-layout .board-panel { min-height: 0; }
+.record-layout .side-panel { gap: 8px; }
+
+#record-board { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: var(--shadow); }
+.record-step { align-self: center; font-size: 13px; color: var(--text-dim); min-width: 62px; text-align: center; letter-spacing: 1px; }
+.record-meta { font-size: 12px; color: var(--text-dim); line-height: 1.8; }
+.record-meta div:first-child { color: var(--text); font-size: 13px; }
+.record-keys { display: flex; flex-direction: column; gap: 6px; max-height: 172px; overflow-y: auto; }
+.record-keys-title, .record-keys-loading { font-size: 12px; color: var(--text-dim); letter-spacing: 1px; }
+.key-chip {
+  text-align: left; font-size: 12px; padding: 4px 8px; border-radius: 8px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--line); color: var(--text-dim);
+  font-family: inherit; cursor: pointer; transition: all 0.15s;
+}
+.key-chip:hover { border-color: var(--gold-soft); color: var(--gold); }
+/* 失误用暖红、疑问手用琥珀：一眼能分出轻重（两者都来自引擎评分差） */
+.key-chip.blunder { color: #e08a6c; border-color: rgba(224,90,58,0.45); }
+.key-chip.mistake { color: #e0c07a; border-color: rgba(212,169,65,0.45); }
+.key-chip.capture, .key-chip.check, .key-chip.mate { color: var(--text); }
+.record-review { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.record-review-text { font-size: 13px; line-height: 1.8; color: var(--text-dim); max-height: 168px; overflow-y: auto; }
+
+@media (max-width: 860px) {
+  /* 棋谱详情（手机）：必须让「棋盘 + 控制条 + 侧栏」三者之和落在视口内 ——
+     棋盘由 .board-panel:flex 1 自适应收缩，侧栏给 40vh 上限并在内部滚动。
+     否则整块高过视口，而 #screen-records 原是 overflow:hidden（→ 着法列表与
+     「问 AI 讲解」被裁掉、又没有滚动条可拖；实测按钮 top=1009 > 视口 844）。 */
+  .record-layout { height: 100%; }
+  /* 手机端侧栏改成**整体滚动**：关键手/着法/讲解三段不再各自滚动。
+     三段各自滚动在触屏上很难用（要看讲解得先找准那个小滚动区的拇指位置），
+     而且内层收缩不彻底时最后一段会把按钮顶出面板下沿（实测超出 18px）。 */
+  .record-layout .side-panel { max-height: 44vh; min-height: 0; overflow-y: auto; }
+  /* 控制条：手机上去掉「回到开局 / 跳到终局」两个纯图标按钮 —— 上一手/下一手
+     已经够用，而 6 个按钮挤在 390px 里会被 flex 压到 23px 宽、文字糊成一团
+     （实测宽度 23~35px）。剩下的按钮禁止收缩，标签才读得清。 */
+  .record-layout #btn-rec-first, .record-layout #btn-rec-last { display: none; }
+  .record-layout .game-controls .ctl-btn { flex: 0 0 auto; }
+  .record-keys { max-height: none; overflow: visible; }
+  .record-review { min-height: 0; }
+  .record-review-text { max-height: none; overflow: visible; }
+  .record-layout .move-list { flex: none; max-height: none; }
 }
 
 /* ---------- 关于页 ---------- */
@@ -780,6 +859,9 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
   /* 例外：摆局屏的工具按钮（橡皮/撤销/清空）与操作按钮保留文字 ——
      这三个动作靠图标不足以自解释；span 被隐藏时连可访问名也会一起丢掉。 */
   .setup-tools .ctl-btn span { display: inline; }
+  /* 棋谱回放的控制条同理：上一手/下一手/返回列表靠图标自解释不了
+     （而且 span 被隐藏时连可访问名一起丢）。这里必须保留文字。 */
+  .record-layout .game-controls .ctl-btn span { display: inline; }
   .ctl-btn { padding: 8px 11px; }
   .hero h1 { font-size: 30px; }
 }

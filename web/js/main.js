@@ -3,6 +3,7 @@ import { showScreen, currentScreen, toast, confirmDialog } from './ui.js';
 import { initLobby } from './screens/lobby.js';
 import { initPuzzles, refresh as refreshPuzzles, siblingOf, selectDiff } from './screens/puzzles.js';
 import { initSetup } from './screens/setup.js';
+import { initRecords } from './screens/records.js';
 import { initSettings } from './screens/settings.js';
 import { initAbout } from './screens/about.js';
 import { GameScreen } from './screens/game.js';
@@ -51,6 +52,8 @@ initSettings(() => {
   });
   game.renderer.particles.enabled = store.theme.particles;
 });
+
+initRecords();
 
 initAbout();
 

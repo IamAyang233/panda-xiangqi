@@ -1,4 +1,4 @@
-# 熊猫象棋 通信协议 v2
+# 熊猫象棋 通信协议 v3
 
 坐标约定（与 UCI 一致）：列 `a~i` 自红方左侧起（红方视角），行 `0~9` 自红方底线起。
 格子表示为 `<列><行>`，如 `h2`。着法表示为 `from` + `to` 两个格子，如 `h2e2` = 炮二平五。
@@ -17,6 +17,12 @@
 | `GET /api/puzzles/{id}` | — | `{id, name, difficulty, playerSide, goal, firstSide, parMoves, tags?}`（不含答案） |
 | `POST /api/puzzles` | `{name?, fen, side: "red"\|"black", goal: "win"\|"draw"}` | `{id, name, difficulty, playerSide, goal, firstSide, parMoves}`；保存一个**自摆残局** |
 | `POST /api/puzzles/{id}/delete` | — | `{ok: true}`；仅可删除自定义残局 |
+| `POST /api/games/{id}/save` | — | `{ok: true, id, existed}`；把**已终局**的这一局存成棋谱（幂等，id = 对局 id） |
+| `GET /api/records?page=0` | — | `{total, page, pageSize, items: [{id,name,mode,level?,model?,humanSide,result,reason,moveCount,created,analyzed,reviewedCount}]}`；列表**不含着法** |
+| `GET /api/records/{id}` | — | 完整棋谱（含 `startFen` / `moves` / `analysis` / `reviews`），供回放 |
+| `POST /api/records/{id}/delete` | — | `{ok: true}`；幂等。内存态（目录不可写）时 400 说明原因 |
+| `POST /api/records/{id}/analyze` | — | `{analysis: [{index, tag, delta?, bestUci?}], cached?}`；关键手（首次计算并落盘缓存） |
+| `POST /api/records/{id}/review` | `{index, llm: LLMConfig}` | `{text, cached?}`；问 AI 讲解某一手（一次调用可能几十秒，讲完写回缓存） |
 | `POST /api/llm/validate` | `LLMConfig` | `{ok: bool, message: string, latencyMs: number}` |
 | `GET /api/update` | — | 转发 PanDa 更新服务，并附 `selfVersion`（本机版本，供前端比对） |
 | `POST /api/feedback` | `{category, title, desc, contact?, logs?}` | `{ok: bool, message: string}`（转发 PanDa 反馈系统） |
@@ -43,6 +49,24 @@ API Key 仅存浏览器 localStorage，服务端只做内存透传，不落盘�
   也不依赖网关放行 `DELETE`。内置残局 id 一律 403 拒绝；目录不可写（内存态）时返回 400 说明原因。
 - **难度字段**：固定为 `"自定义"`，`parMoves` 恒为 `0`（无正解步数，故不评星）；
   守方引擎档位取玩家开局时传入的 `level`。
+
+### 棋谱（v3 新增）
+
+- **只能由对局产生**：没有「新建棋谱」接口。用户在结算弹窗点「保存此局」时，服务端从内存里的
+  会话导出记录 —— 前端不上传任何对局内容，因此既不需要输入校验，也不可能伪造别人的棋谱。
+- **只存下完的局**：未终局（`result` 为空）→ 409；残局挑战与自定义残局不进棋谱（那是关卡）。
+- **幂等**：记录 id 等于对局 id，重复保存覆盖同一文件。
+- **字段**：`{id, name, mode, level?, model?, humanSide, startFen, moves[{uci,cn,red,captured?}],
+  result, reason, created, analysis[], reviews{}}`。`startFen` 是重放的前提；
+  `model` 只存模型名 —— **API Key 绝不落盘**（它只活在浏览器 localStorage 与请求内存里）。
+- **存储**：独立目录（配置项 `records` / `records_dir` / `records-dir`，环境变量 `QIJING_RECORDS`）。
+  默认位置与自定义残局同口径：飞牛上为 `${TRIM_PKGVAR}/records`，本地运行为 `./records`；
+  目录不可用时降级为内存态，由 `/api/status` 的 `recordsWritable` 如实暴露。
+- **关键手**：`analyze` 会重放整局，逐手用引擎浅搜（每手 40ms，上限 240 手）算「与最佳手的
+  分差」，叠加规则层（吃子/将军/终局手）标出关键手，结果写回棋谱缓存。引擎不可用时只用规则层。
+- **AI 讲解**：`review` 按需触发（一次 45~90 秒），结果是自由文本（不套出着的 JSON 契约），
+  讲完写回 `reviews`；讲解失败如实报 502，不会拿引擎建议冒充讲解。
+- **全服共享、任何访问者可看可删**（无账号体系，与自定义残局同一已知代价），删除有二次确认。
 
 ## WebSocket `/api/ws?gameId=...`
 
@@ -108,6 +132,9 @@ API Key 仅存浏览器 localStorage，服务端只做内存透传，不落盘�
 ## 变更纪律
 
 联调点之后如需修改本协议，必须升版本号并在此登记变更与兼容策略。
+
+v3（2026-09-24）：新增棋谱接口（`/api/games/{id}/save`、`/api/records*`）；
+`/api/status` 增加 `records` / `recordsDir` / `recordsWritable` 三个字段。
 
 ## 修订记录
 
