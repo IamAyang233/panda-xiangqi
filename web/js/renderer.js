@@ -229,6 +229,15 @@ export class BoardRenderer {
 
   // ---------------- 主循环（A17：脏标记 + 降频 + 画质自适应）----------------
   _loop(t) {
+    // 画布几何不可用（屏幕隐藏时父容器为 0）就整帧跳过：resize() 会提前返回，
+    // cell/mx/my 仍是 NaN，继续绘制会在 createLinearGradient 这类 API 上抛
+    // 「non-finite」，而且**每帧都抛** —— 实测在 NAS 上十几秒刷了 884 条 console.error。
+    // ⚠️ 必须「先续帧再返回」：续帧的 requestAnimationFrame 在函数**末尾**，
+    // 裸 return 会把循环永久停掉（画布从此不再重绘）。
+    if (!isFinite(this.cell) || this.cell <= 0 || this.cssW < 50 || this.cssH < 50) {
+      requestAnimationFrame(this._loop);
+      return;
+    }
     try {
       const dt = Math.min(0.05, (t - this.lastT) / 1000);
       this.lastT = t;
