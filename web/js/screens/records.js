@@ -161,6 +161,7 @@ async function openDetail(id) {
     return;
   }
   cur = rec;
+  reviewing = false; // 上一条记录的「讲解中」标志不能留给这一条（按钮会一直禁用）
   keys = rec.analysis || [];
   keysLoading = false;
   $('record-list').hidden = true;
@@ -174,8 +175,10 @@ async function openDetail(id) {
   renderKeys();
   renderer.setFlipped(rec.humanSide === 'black'); // 默认按「我当时执哪方」摆
   gotoStep(frames.length); // 打开就停在终局，往回翻
-  // 关键手第一次打开才让服务端算（几秒），有缓存立刻回
-  if (!keys.length) loadAnalysis();
+  // 关键手第一次打开才让服务端算（几秒），有缓存立刻回。
+  // 判据用服务端的 analyzed 标记而不是「列表非空」：干净对局本来就没有关键手，
+  // 拿列表长度当判据会让它每次打开都重算一遍整局。
+  if (!rec.analyzed) loadAnalysis();
   setReviewText(rec, step);
 }
 
@@ -274,7 +277,12 @@ function highlightMoveRow() {
 function renderKeys() {
   const box = $('record-keys');
   if (keysLoading) { box.innerHTML = '<div class="record-keys-loading">正在分析关键手…</div>'; return; }
-  if (!keys.length) { box.innerHTML = ''; return; }
+  if (!keys.length) {
+    box.innerHTML = cur && cur.analyzed
+      ? '<div class="record-keys-title">关键手</div><div class="record-keys-loading">未发现明显的关键手（本局没有吃子/将军，引擎也没看出明显失误）</div>'
+      : '';
+    return;
+  }
   box.innerHTML = '<div class="record-keys-title">关键手</div>' + keys.map((k) => {
     const tag = TAG_TEXT[k.tag] || k.tag;
     const cn = (frames[k.index] && frames[k.index].cn) || `第 ${k.index + 1} 手`;
@@ -294,6 +302,7 @@ async function loadAnalysis() {
     const out = await analyzeRecord(id);
     if (!cur || cur.id !== id) return; // 切走了就别写回来
     keys = out.analysis || [];
+    cur.analyzed = true;
   } catch (e) {
     keys = [];
     toast('关键手分析失败：' + e.message, true, 3200);
@@ -324,13 +333,12 @@ function setReviewText(rec, k) {
   label.textContent = cached ? '重新问 AI' : '问 AI 讲解这一手';
 }
 
-function keyOf(k) {
-  for (const x of keys) if (x.index === k) return x;
-  return null;
-}
-
 async function askAI() {
   if (reviewing || step <= 0 || !cur) return;
+  // 记下发起时的记录 id：讲解要几十秒，期间用户可能返回列表或打开别的记录，
+  // 那时把结果写回界面会串到另一局上（服务端写的是对的，只是界面错了），
+  // 返回列表后 cur 置空还会直接抛 TypeError。
+  const id = cur.id;
   const idx = step - 1;
   const btn = $('btn-rec-review');
   const label = $('btn-rec-review-label');
@@ -339,14 +347,15 @@ async function askAI() {
   label.textContent = '正在讲解…（最长约 1 分钟）';
   sfx.play('button');
   try {
-    const out = await reviewRecord(cur.id, idx, store.llm);
+    const out = await reviewRecord(id, idx, store.llm);
+    if (!cur || cur.id !== id) { reviewing = false; return; }
     cur.reviews = cur.reviews || {};
     cur.reviews[String(idx)] = out.text;
     setReviewText(cur, step);
     sfx.play('star');
   } catch (e) {
     toast('讲解失败：' + e.message, true, 4200);
-    setReviewText(cur, step);
+    if (cur && cur.id === id) setReviewText(cur, step);
   } finally {
     reviewing = false;
     btn.disabled = false;
@@ -356,6 +365,7 @@ async function askAI() {
 
 function showList() {
   cur = null;
+  reviewing = false;
   $('record-detail').hidden = true;
   $('record-list').hidden = false;
   // 列表里可能已有多处讲解/分析标记，回来时刷一遍（同页数据已变）

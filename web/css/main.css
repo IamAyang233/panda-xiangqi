@@ -522,7 +522,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar,
 .about-wrap::-webkit-scrollbar,
 .palette::-webkit-scrollbar,
-.setup-tools::-webkit-scrollbar
+.setup-tools::-webkit-scrollbar,
 .record-keys::-webkit-scrollbar,
 .record-review-text::-webkit-scrollbar,
 #screen-records::-webkit-scrollbar,
@@ -537,7 +537,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar-thumb,
 .about-wrap::-webkit-scrollbar-thumb,
 .palette::-webkit-scrollbar-thumb,
-.setup-tools::-webkit-scrollbar-thumb
+.setup-tools::-webkit-scrollbar-thumb,
 .record-keys::-webkit-scrollbar-thumb,
 .record-review-text::-webkit-scrollbar-thumb,
 #screen-records::-webkit-scrollbar-thumb,
@@ -552,7 +552,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar-thumb:hover,
 .about-wrap::-webkit-scrollbar-thumb:hover,
 .palette::-webkit-scrollbar-thumb:hover,
-.setup-tools::-webkit-scrollbar-thumb:hover
+.setup-tools::-webkit-scrollbar-thumb:hover,
 .record-keys::-webkit-scrollbar-thumb:hover,
 .record-review-text::-webkit-scrollbar-thumb:hover,
 #screen-records::-webkit-scrollbar-thumb:hover,
@@ -567,7 +567,7 @@ button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: tra
 .setup-scroll::-webkit-scrollbar-track,
 .about-wrap::-webkit-scrollbar-track,
 .palette::-webkit-scrollbar-track,
-.setup-tools::-webkit-scrollbar-track
+.setup-tools::-webkit-scrollbar-track,
 .record-keys::-webkit-scrollbar-track,
 .record-review-text::-webkit-scrollbar-track,
 #screen-records::-webkit-scrollbar-track,

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -26,6 +27,7 @@ func mkRec(id, created string) *Record {
 		Moves:  []Move{{UCI: "e1e2", CN: "车一进一", Red: true, Captured: "p"}},
 		Result: "red_win", Reason: "resign", Created: created,
 		Analysis: []KeyMove{{Index: 0, Tag: TagCapture, Delta: 0}},
+		Analyzed: true, // 摘要的 analyzed 现在取自这个显式标记
 		Reviews:  map[string]string{"0": "这一手吃子很实惠。"},
 	}
 }
@@ -190,5 +192,59 @@ func writeFile(t *testing.T, dir, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestUpdateMergesConcurrently analyze 与 review 是两条长耗时路径，都必须通过 Update
+// 只合并自己的字段 —— 谁拿计算前的快照整体覆盖，就会把对方刚写的结果抹掉。
+func TestUpdateMergesConcurrently(t *testing.T) {
+	st := NewEmpty()
+	if err := st.Add(mkRec("g1", "2026-09-24 10:00:00")); err != nil {
+		t.Fatal(err)
+	}
+	// 先塞一条已有讲解，模拟「已经问过一手」
+	if _, ok := st.Update("g1", func(r *Record) {
+		r.Reviews = map[string]string{"0": "旧讲解"}
+	}); !ok {
+		t.Fatal("Update 应找到记录")
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // 分析路径：只改 Analysis/Analyzed
+		defer wg.Done()
+		if _, ok := st.Update("g1", func(r *Record) {
+			r.Analysis = []KeyMove{{Index: 1, Tag: TagBlunder, Delta: 500}}
+			r.Analyzed = true
+		}); !ok {
+			t.Error("分析 Update 未命中")
+		}
+	}()
+	go func() { // 讲解路径：只加一条 review
+		defer wg.Done()
+		if _, ok := st.Update("g1", func(r *Record) {
+			if r.Reviews == nil {
+				r.Reviews = map[string]string{}
+			}
+			r.Reviews["1"] = "新讲解"
+		}); !ok {
+			t.Error("讲解 Update 未命中")
+		}
+	}()
+	wg.Wait()
+	got, _ := st.Get("g1")
+	if !got.Analyzed || len(got.Analysis) != 1 {
+		t.Fatalf("分析结果应在：%+v", got)
+	}
+	if got.Reviews["0"] != "旧讲解" || got.Reviews["1"] != "新讲解" {
+		t.Fatalf("两条讲解都应在（原有那条不能被覆盖掉）：%+v", got.Reviews)
+	}
+}
+
+// TestValidateRequiresReason 缺结束原因的手改文件必须被拦下（终局手判定依赖它）。
+func TestValidateRequiresReason(t *testing.T) {
+	r := mkRec("g2", "2026-09-24 10:00:00")
+	r.Reason = ""
+	if err := NewEmpty().Add(r); err == nil {
+		t.Fatal("缺少结束原因应被拒绝")
 	}
 }

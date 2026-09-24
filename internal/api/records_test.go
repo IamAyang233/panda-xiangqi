@@ -291,3 +291,104 @@ func TestRecordFileKeepsModelNotKey(t *testing.T) {
 		t.Fatalf("落盘内容不对: %+v", parsed)
 	}
 }
+
+// TestRecordIDTraversalRejected 棋谱 id 取自 URL 路径并参与 filepath.Join —— 必须被挡住。
+//
+// 这条是审查实测的成果：Go 的 ServeMux 按 **EscapedPath** 做路径清理，`%2e%2e%2f`
+// 不是 `..`、不会被清理，解码后 id 里就带着 `../`，于是 Join 会逃出 records 目录，
+// 加上删除是「先删文件后查索引」，等于给了一个盲删任意 .json 的接口。
+func TestRecordIDTraversalRejected(t *testing.T) {
+	ts, srv, dir := recordServer(t)
+	defer ts.Close()
+	parent := filepath.Dir(dir)
+	grand := filepath.Dir(parent)
+	// 两级目录各放一个诱饵：谁能被删掉，谁就说明穿越成功了
+	decoys := []string{filepath.Join(parent, "victim.json"), filepath.Join(grand, "victim.json")}
+	for _, d := range decoys {
+		if err := os.WriteFile(d, []byte("重要数据"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(d)
+	}
+	if err := srv.Records.Add(&record.Record{ID: "abc123", Name: "x", Mode: "engine",
+		HumanSide: "red", StartFEN: "3k5/9/9/9/9/9/9/9/4R4/4K4 w", Result: "draw",
+		Reason: "repetition", Created: "2026-09-24 10:00:00"}); err != nil {
+		t.Fatal(err)
+	}
+	evil := []string{
+		"%2e%2e%2fvictim", // 真正的绕过：编码的点斜杠不会被 ServeMux 清理
+		"..%2fvictim",     // 只编码斜杠，同样能过
+		"..%5Cvictim",     // Windows 反斜杠变体
+		"..%2f..%2fvictim",
+		"....//victim",
+	}
+	for _, e := range evil {
+		code, out := postJSON(t, ts, "/api/records/"+e+"/delete", "")
+		if code != http.StatusBadRequest {
+			t.Errorf("id=%q 应被拒绝(400)，实际 %d %v", e, code, out)
+		}
+		if code, _ := getRaw(t, ts, "/api/records/"+e); code >= 500 {
+			t.Errorf("id=%q 详情不该 5xx，实际 %d", e, code)
+		}
+	}
+	for _, d := range decoys {
+		if _, err := os.Stat(d); err != nil {
+			t.Fatalf("目录外的文件被删掉了：%s", d)
+		}
+	}
+	if _, ok := srv.Records.Get("abc123"); !ok {
+		t.Fatal("正当记录被误删")
+	}
+}
+
+// TestRecordAnalyzeEmptyResultCached 分析结果为空时也必须记「已分析」。
+//
+// 否则干净对局（没吃子没将军、引擎也没看出失误）每次打开详情都会重跑整局引擎，
+// 前端也会一遍遍转「正在分析关键手…」。
+func TestRecordAnalyzeEmptyResultCached(t *testing.T) {
+	ts, srv, _ := recordServer(t)
+	defer ts.Close()
+	// 炮二平五：既不吃子也不将军，且测试环境没有 NNUE 权重（分差类标签不打）
+	rec := &record.Record{ID: "clean1", Name: "干净局", Mode: "engine", HumanSide: "red",
+		StartFEN: "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
+		Moves:    []record.Move{{UCI: "b2e2", CN: "炮二平五", Red: true}},
+		Result:   "resign", Reason: "resign", Created: "2026-09-24 10:00:00"}
+	if err := srv.Records.Add(rec); err != nil {
+		t.Fatal(err)
+	}
+	code, out := postJSON(t, ts, "/api/records/clean1/analyze", "")
+	if code != http.StatusOK || out["cached"] != nil {
+		t.Fatalf("首次分析应 200 且不带 cached：%d %v", code, out)
+	}
+	code, out = postJSON(t, ts, "/api/records/clean1/analyze", "")
+	if code != http.StatusOK || out["cached"] != true {
+		t.Fatalf("空结果也要命中缓存，实际 %d %v", code, out)
+	}
+	// 摘要里的 analyzed 也要为真（前端据此决定要不要再请求）
+	got := getStatus(t, ts, "/api/records")
+	items, _ := got["items"].([]any)
+	first, _ := items[0].(map[string]any)
+	if first["analyzed"] != true {
+		t.Fatalf("摘要 analyzed 应为 true：%v", first)
+	}
+	// 重新从磁盘加载后仍然记得「分析过」
+	st2, err := record.LoadDir(srv.RecordsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2, ok := st2.Get("clean1"); !ok || !r2.Analyzed {
+		t.Fatalf("落盘后应保留「已分析」标记：%+v", r2)
+	}
+}
+
+// TestRecordListHugePageNoPanic ?page 溢出曾让 all[from:to] 负下标 panic（白送的 500）。
+func TestRecordListHugePageNoPanic(t *testing.T) {
+	ts, _, _ := recordServer(t)
+	defer ts.Close()
+	for _, p := range []string{"?page=1000000000000000000", "?page=999999999", "?page=-1", "?page=abc"} {
+		code, body := getRaw(t, ts, "/api/records"+p)
+		if code != http.StatusOK {
+			t.Fatalf("%s 应 200，实际 %d %s", p, code, strings.TrimSpace(body))
+		}
+	}
+}

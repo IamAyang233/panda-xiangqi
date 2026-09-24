@@ -361,6 +361,14 @@ export class GameScreen {
     this.renderer.checkSide = m.check ? m.turn : null;
     this.renderer.dirty = true;
     this.moves = m.moves || [];
+    // 重连/刷新到一局**已结束**的对局时，结算弹窗不会再弹（它是 game_over 消息驱动的），
+    // 于是保存入口会一起消失 —— 下完没点保存就刷新就只能重下。这里把侧栏那个入口补上，
+    // 弹窗内容（标题/星级）仍只由 game_over 渲染，避免重连时突然弹窗打断。
+    if (m.status === 'over' && !this.gameOver) {
+      this._recordSaved = false;
+      if (this.mode !== 'puzzle') $('btn-save-record').hidden = false;
+      toast('这局已结束，可点侧栏「保存此局」存入棋谱', false, 3600);
+    }
     this.gameOver = m.status === 'over';
     // 服务端下发的档位（守方实际采用的难度）。自摆残局的档位显示取这里，
     // 而不是玩家提交时的 opts —— 以服务端实际生效的值为准。

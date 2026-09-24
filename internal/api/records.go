@@ -30,8 +30,8 @@ const (
 	// analyzeTimeout 关键手分析的外层上限：一局 40 手 × 前后两次 40ms 约 3 秒，
 	// 30 秒是给长局留的余量（分析上限 240 手）。
 	analyzeTimeout = 30 * time.Second
-	// reviewTimeout 讲解的外层上限：要包住 llm 自己的超时与「截断加倍重试」，
-	// 所以比默认的 180s 宽（用户可能把超时调到很大）。
+	// reviewTimeout 讲解外层超时的**下限**：实际值由用户配置的超时推导
+	// （见 handleRecordReview），因为要包住 llm 内部的「3 次尝试 + 退避」。
 	reviewTimeout = 6 * time.Minute
 )
 
@@ -82,6 +82,12 @@ func (s *Server) handleRecordList(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v > 0 {
 		page = v
 	}
+	// 钳死页号：page*50 溢出成负数会让 from/to 变负、钳制不触发，all[from:to] 直接 panic。
+	// 一个 ?page=1000000000000000000 就能打出 500 + 一整段栈，属于白送的噪声。
+	const maxPage = 1 << 20
+	if page > maxPage {
+		page = maxPage
+	}
 	from, to := page*recordPageSize, (page+1)*recordPageSize
 	if from > len(all) {
 		from = len(all)
@@ -97,16 +103,48 @@ func (s *Server) handleRecordList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validRecordID 棋谱 id 只可能是「对局 id」（16 位十六进制），因此按白名单校验。
+//
+// 这是**安全边界**：id 取自 URL 路径、随后参与 filepath.Join(dir, id+".json")。
+// Go 的 ServeMux 是按 EscapedPath 做路径清理的，`%2e%2e%2f`（编码的点斜杠）不是 `..`、
+// 不会被清理，解码后 id 里就带着 `../` —— 足以让 Join 逃出 records 目录、删掉目录外的
+// 任意 .json（删除是「先删文件后查索引」，纯盲删）。对照：自定义残局的删除有
+// `custom-` 前缀校验，恰好使 `..` 前面必为一段非空路径而被 filepath.Clean 吃掉。
+func validRecordID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // handleRecord GET /api/records/{id} 及其子动作（/delete、/analyze、/review）。
 func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/records/")
-	switch {
-	case strings.HasSuffix(id, "/delete"):
-		s.handleRecordDelete(w, r, strings.TrimSuffix(id, "/delete"))
-	case strings.HasSuffix(id, "/analyze"):
-		s.handleRecordAnalyze(w, r, strings.TrimSuffix(id, "/analyze"))
-	case strings.HasSuffix(id, "/review"):
-		s.handleRecordReview(w, r, strings.TrimSuffix(id, "/review"))
+	raw := strings.TrimPrefix(r.URL.Path, "/api/records/")
+	action, id := "", raw
+	for _, a := range []string{"/delete", "/analyze", "/review"} {
+		if strings.HasSuffix(raw, a) {
+			action, id = a, strings.TrimSuffix(raw, a)
+			break
+		}
+	}
+	if !validRecordID(id) {
+		writeErr(w, http.StatusBadRequest, "棋谱 id 非法")
+		return
+	}
+	switch action {
+	case "/delete":
+		s.handleRecordDelete(w, r, id)
+	case "/analyze":
+		s.handleRecordAnalyze(w, r, id)
+	case "/review":
+		s.handleRecordReview(w, r, id)
 	default:
 		if r.Method != http.MethodGet {
 			writeErr(w, http.StatusMethodNotAllowed, "需要 GET")
@@ -140,6 +178,11 @@ func (s *Server) handleRecordDelete(w http.ResponseWriter, r *http.Request, id s
 		writeErr(w, http.StatusServiceUnavailable, "棋谱功能未启用")
 		return
 	}
+	// 先查存在性再删文件：反过来会「文件已经删了、才回 404」，语义颠倒。
+	if _, ok := s.Records.Get(id); !ok {
+		writeErr(w, http.StatusNotFound, "棋谱不存在")
+		return
+	}
 	if s.RecordsDir == "" {
 		// 内存态：磁盘上本来就没有记录，无从删起。如实告知而不是假装成功。
 		writeErr(w, http.StatusBadRequest, "棋谱当前为内存态（目录不可写），重启后会重新出现")
@@ -149,10 +192,7 @@ func (s *Server) handleRecordDelete(w http.ResponseWriter, r *http.Request, id s
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !s.Records.Remove(id) {
-		writeErr(w, http.StatusNotFound, "棋谱不存在")
-		return
-	}
+	s.Records.Remove(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -174,7 +214,7 @@ func (s *Server) handleRecordAnalyze(w http.ResponseWriter, r *http.Request, id 
 		writeErr(w, http.StatusNotFound, "棋谱不存在")
 		return
 	}
-	if len(rec.Analysis) > 0 {
+	if rec.Analyzed {
 		writeJSON(w, http.StatusOK, map[string]any{"analysis": rec.Analysis, "cached": true})
 		return
 	}
@@ -189,17 +229,21 @@ func (s *Server) handleRecordAnalyze(w http.ResponseWriter, r *http.Request, id 
 		writeErr(w, http.StatusInternalServerError, "分析失败: "+err.Error())
 		return
 	}
-	// 写回：内存里**换成新对象**（不能原地改 Get 拿到的指针，那会和并发读者抢数据）
-	updated := *rec
-	updated.Analysis = km
+	// 写回：走 Store.Update 在锁内**合并**（只改 Analysis）——不能拿计算前的快照整体覆盖，
+	// 那会把并发的讲解结果一起抹掉。
+	updated, ok2 := s.Records.Update(id, func(r *record.Record) {
+		r.Analysis = km
+		r.Analyzed = true // 空结果也要记「分析过」，否则每次打开都重算
+	})
+	if !ok2 {
+		writeErr(w, http.StatusNotFound, "棋谱不存在")
+		return
+	}
 	if s.RecordsDir != "" {
-		if err := record.SaveToDir(s.RecordsDir, &updated); err != nil {
+		if err := record.SaveToDir(s.RecordsDir, updated); err != nil {
 			// 缓存写不进磁盘不影响本次结果：照常返回，只是下次还要再算一遍。
 			log.Printf("棋谱分析缓存落盘失败 %s: %v", updated.ID, err)
 		}
-	}
-	if err := s.Records.Add(&updated); err != nil {
-		log.Printf("棋谱分析缓存入内存失败 %s: %v", updated.ID, err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"analysis": km})
 }
@@ -234,6 +278,11 @@ func (s *Server) handleRecordReview(w http.ResponseWriter, r *http.Request, id s
 		writeErr(w, http.StatusNotFound, "棋谱不存在")
 		return
 	}
+	if req.Index < 0 || req.Index >= len(rec.Moves) {
+		// 参数错误就是参数错误：返回 400，别把客户端问题伪装成上游模型故障（502）
+		writeErr(w, http.StatusBadRequest, "手数超出范围")
+		return
+	}
 	key := strconv.Itoa(req.Index)
 	if text, ok := rec.Reviews[key]; ok && strings.TrimSpace(text) != "" {
 		writeJSON(w, http.StatusOK, map[string]any{"text": text, "cached": true})
@@ -247,7 +296,13 @@ func (s *Server) handleRecordReview(w http.ResponseWriter, r *http.Request, id s
 			break
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), reviewTimeout)
+	// 外层要包住 llm 内部最坏情况：3 次尝试 + 退避。原先写死 6 分钟，
+	// 而用户把「超时」调大后，一次尝试就可能吃掉外层一半，第二次（截断加倍）会被掐死。
+	outer := reviewTimeout
+	if d := 3*time.Duration(req.LLM.TimeoutMs)*time.Millisecond + 30*time.Second; d > outer {
+		outer = d
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), outer)
 	defer cancel()
 	text, err := review.Explain(ctx, req.LLM, rec, req.Index, km)
 	if err != nil {
@@ -255,20 +310,21 @@ func (s *Server) handleRecordReview(w http.ResponseWriter, r *http.Request, id s
 		writeErr(w, http.StatusBadGateway, "讲解失败: "+err.Error())
 		return
 	}
-	// 写回缓存（复制一份，避免原地改内部记录）
-	updated := *rec
-	updated.Reviews = make(map[string]string, len(rec.Reviews)+1)
-	for k, v := range rec.Reviews {
-		updated.Reviews[k] = v
+	// 写回缓存：同样走 Store.Update 在锁内只合并这一条讲解（理由见 analyze）
+	updated, ok2 := s.Records.Update(id, func(r *record.Record) {
+		if r.Reviews == nil {
+			r.Reviews = map[string]string{}
+		}
+		r.Reviews[key] = text
+	})
+	if !ok2 {
+		writeErr(w, http.StatusNotFound, "棋谱不存在")
+		return
 	}
-	updated.Reviews[key] = text
 	if s.RecordsDir != "" {
-		if err := record.SaveToDir(s.RecordsDir, &updated); err != nil {
+		if err := record.SaveToDir(s.RecordsDir, updated); err != nil {
 			log.Printf("棋谱讲解缓存落盘失败 %s: %v", updated.ID, err)
 		}
-	}
-	if err := s.Records.Add(&updated); err != nil {
-		log.Printf("棋谱讲解缓存入内存失败 %s: %v", updated.ID, err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"text": text})
 }

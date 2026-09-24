@@ -11,7 +11,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// safeID 只放行「普通文件名」：非空、不是 . / ..、不含路径分隔符与 ..
+//
+// 这是**安全边界**而不是洁癖：id 最终会进 filepath.Join，而 id 常常来自 URL 路径。
+// Go 的 ServeMux 按 EscapedPath 做路径清理，`%2e%2e%2f` 不是 `..`、不会被清理，
+// 解码后 id 里就带着 `../` —— 足以让 Join 逃出数据目录。调用方（api 层）另有更严的
+// 白名单，这里再挡一次，避免将来别处传入用户可控的 id。
+func safeID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return false
+	}
+	return true
+}
 
 // SaveJSON 把 v 原子写入 dir 下的 <id>.json。
 //
@@ -24,8 +41,8 @@ func SaveJSON(dir, id string, v any) error {
 	if dir == "" {
 		return fmt.Errorf("目录为空")
 	}
-	if id == "" {
-		return fmt.Errorf("缺少 id")
+	if !safeID(id) {
+		return fmt.Errorf("id 非法")
 	}
 	if st, err := os.Stat(dir); err != nil {
 		return fmt.Errorf("目录不可用: %w", err)
@@ -54,8 +71,8 @@ func RemoveJSON(dir, id string) error {
 	if dir == "" {
 		return fmt.Errorf("目录为空")
 	}
-	if id == "" {
-		return fmt.Errorf("id 为空")
+	if !safeID(id) {
+		return fmt.Errorf("id 非法")
 	}
 	if err := os.Remove(filepath.Join(dir, id+".json")); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("删除失败: %w", err)

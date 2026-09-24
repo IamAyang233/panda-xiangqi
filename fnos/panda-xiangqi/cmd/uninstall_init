@@ -37,7 +37,9 @@ log_msg() {
 resolve_dir() {
   local primary="$1" aliases="$2" envname="$3" defname="$4"
   local cfg line key val a
-  for cfg in "${TRIM_APPDEST:-}/server/config.yaml" "${TRIM_PKGETC:-}/config.yaml"; do
+  # .yaml 与 .yml 都要认：Go 侧 findConfigFile() 两者都接受，只认 .yaml 会让用 .yml
+  # 配了目录的用户「点了删除却没删到该删的」。
+  for cfg in "${TRIM_APPDEST:-}/server/config.yaml" "${TRIM_APPDEST:-}/server/config.yml"              "${TRIM_PKGETC:-}/config.yaml" "${TRIM_PKGETC:-}/config.yml"; do
     [ -f "$cfg" ] || continue
     while IFS= read -r line; do
       # 与 Go 侧同样跳过空行与注释行

@@ -67,7 +67,13 @@ type Record struct {
 	// Created 用本地时间字符串：列表按它倒序即时间序，人工翻 JSON 也一眼能读。
 	Created string `json:"created"`
 	// Analysis / Reviews 是复盘缓存（第一次打开详情时算、问过 AI 后写回）。
-	Analysis []KeyMove         `json:"analysis,omitempty"`
+	Analysis []KeyMove `json:"analysis,omitempty"`
+	// Analyzed 是否已经跑过关键手分析。
+	//
+	// 必须显式记一个标记，不能拿「Analysis 非空」代替：对没有关键手的干净对局，
+	// 分析结果本身就是空数组（且 omitempty 让它不落盘），于是「分析过但没找到」
+	// 与「还没分析」在数据上分不开 —— 结果是每次打开详情都重跑一遍整局引擎浅搜。
+	Analyzed bool              `json:"analyzed,omitempty"`
 	Reviews  map[string]string `json:"reviews,omitempty"` // "手数下标" → 讲解文本
 }
 
@@ -94,7 +100,7 @@ func (r *Record) summary() Summary {
 		ID: r.ID, Name: r.Name, Mode: r.Mode, Level: r.Level, Model: r.Model,
 		HumanSide: r.HumanSide, Result: r.Result, Reason: r.Reason,
 		MoveCount: len(r.Moves), Created: r.Created,
-		Analyzed: len(r.Analysis) > 0, Reviewed: len(r.Reviews),
+		Analyzed: r.Analyzed, Reviewed: len(r.Reviews),
 	}
 }
 
@@ -130,6 +136,11 @@ func validate(r *Record) error {
 	}
 	if r.Result == "" {
 		return fmt.Errorf("棋谱缺少结果")
+	}
+	// 结束原因必须存在：复盘里「终局那一手」的判定依赖它（不满足时终局手会带着极值分差
+	// 被误标成失误），手改过的文件在这里就该被拦下。
+	if r.Reason == "" {
+		return fmt.Errorf("棋谱缺少结束原因")
 	}
 	for i, m := range r.Moves {
 		if _, ok := game.MoveFromUCI(m.UCI); !ok {
@@ -227,6 +238,39 @@ func (s *Store) Add(r *Record) error {
 	}
 	s.add(r)
 	return nil
+}
+
+// Update 在锁内取最新快照、按 mutate 修改后整体替换。
+//
+// 为什么必须有它：analyze 与 review 都是「Get 快照 → 长耗时计算（几秒~几十秒）→
+// 复制后 Add 整体覆盖」。两条路径各持**计算开始前**的快照，谁后写谁赢，会把对方刚写进去
+// 的结果整条抹掉（实测：用户点「问 AI 讲解」期间分析完成并落盘，讲解结束时用旧快照覆盖，
+// Analysis 丢失、摘要 analyzed 又变回 false）。这里把「读最新 → 合并 → 替换」放进同一把锁，
+// 让两条路径只合并各自的字段。
+func (s *Store) Update(id string, mutate func(*Record)) (*Record, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.byID[id]
+	if !ok {
+		return nil, false
+	}
+	next := *old // 浅拷贝；Moves 只读共享
+	// Reviews 是 map，浅拷贝会与旧对象共享，必须复制一份再交给 mutate
+	if old.Reviews != nil {
+		next.Reviews = make(map[string]string, len(old.Reviews)+1)
+		for k, v := range old.Reviews {
+			next.Reviews[k] = v
+		}
+	}
+	mutate(&next)
+	for i, x := range s.records {
+		if x == old {
+			s.records[i] = &next
+			break
+		}
+	}
+	s.byID[id] = &next
+	return &next, true
 }
 
 // Remove 摘除索引；返回是否原本存在。
