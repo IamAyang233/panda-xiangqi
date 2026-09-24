@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -23,17 +24,20 @@ import (
 
 // Server HTTP 服务：REST + WS + 静态资源。
 type Server struct {
-	Sessions      *session.Manager
-	Engines       *engine.Manager
-	Puzzles       *puzzle.Store
-	Custom        *puzzle.Store // 自定义残局（自摆局面，全服共享、可增删）
-	CustomDir     string        // 自定义残局落盘目录；空表示内存态（不持久化）
-	Records       *record.Store // 棋谱（对局记录，全服共享、可删）
-	RecordsDir    string        // 棋谱落盘目录；空表示内存态（不持久化）
-	Static        fs.FS         // 前端资源（web/dist 或 web/）
-	UpdateAPI     string        // PanDa 推送更新服务入口
-	FeedbackToken string        // 反馈共享 Token
-	GatewayPrefix string        // 飞牛 fnOS 统一网关注册前缀（如 /app/panda-xiangqi）；为空则本地开发直连
+	Sessions  *session.Manager
+	Engines   *engine.Manager
+	Puzzles   *puzzle.Store
+	Custom    *puzzle.Store // 自定义残局（自摆局面，全服共享、可增删）
+	CustomDir string        // 自定义残局落盘目录；空表示内存态（不持久化）
+	Records   *record.Store // 棋谱（对局记录，全服共享、可删）
+	// inflight 同一条记录正在跑的重活（关键手分析 / 某手讲解）的登记表，见 beginWork。
+	inflightMu    sync.Mutex
+	inflight      map[string]chan struct{}
+	RecordsDir    string // 棋谱落盘目录；空表示内存态（不持久化）
+	Static        fs.FS  // 前端资源（web/dist 或 web/）
+	UpdateAPI     string // PanDa 推送更新服务入口
+	FeedbackToken string // 反馈共享 Token
+	GatewayPrefix string // 飞牛 fnOS 统一网关注册前缀（如 /app/panda-xiangqi）；为空则本地开发直连
 }
 
 // Handler 组装路由。

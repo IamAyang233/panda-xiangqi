@@ -67,6 +67,43 @@ func (s *Server) handleGameSave(w http.ResponseWriter, sess *session.Session) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": rec.ID, "existed": existed})
 }
 
+// beginWork 登记「这个 key 上已有重活在跑」。
+//
+// 返回 (wait, done)：
+//   - wait 非 nil → 别人正在跑同一个 key，调用方应等它结束再读结果（等它写进缓存即可）；
+//   - done 非 nil → 本次由调用方执行，**完成后必须调用 done**（摘登记 + 唤醒等待者）。
+//
+// 为什么需要：分析要跑整局引擎浅搜（一局几秒），讲解要调大模型（几十秒）。两个客户端
+// 同时点开同一条记录／同一手时，不登记就会白跑两遍 —— 分析还会与进行中的对局抢引擎。
+func (s *Server) beginWork(key string) (wait <-chan struct{}, done func()) {
+	s.inflightMu.Lock()
+	defer s.inflightMu.Unlock()
+	if s.inflight == nil {
+		s.inflight = map[string]chan struct{}{}
+	}
+	if ch, ok := s.inflight[key]; ok {
+		return ch, nil
+	}
+	ch := make(chan struct{})
+	s.inflight[key] = ch
+	return nil, func() {
+		s.inflightMu.Lock()
+		delete(s.inflight, key)
+		s.inflightMu.Unlock()
+		close(ch)
+	}
+}
+
+// waitWork 等同一 key 上的重活结束。返回 false 表示等待被取消（客户端断开）。
+func waitWork(r *http.Request, ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	case <-r.Context().Done():
+		return false
+	}
+}
+
 // handleRecordList GET /api/records —— 列表（摘要，不含着法）。
 func (s *Server) handleRecordList(w http.ResponseWriter, r *http.Request) {
 	if s.Records == nil {
@@ -222,6 +259,27 @@ func (s *Server) handleRecordAnalyze(w http.ResponseWriter, r *http.Request, id 
 		writeErr(w, http.StatusServiceUnavailable, "引擎不可用，无法分析")
 		return
 	}
+	// 单飞：已有同一局的分析在跑就等它（结果写进缓存后直接取用）
+	if wait, done := s.beginWork("analyze:" + id); wait != nil {
+		if !waitWork(r, wait) {
+			writeErr(w, http.StatusServiceUnavailable, "等待分析结果超时，请稍后重试")
+			return
+		}
+		if rec2, ok := s.Records.Get(id); ok && rec2.Analyzed {
+			writeJSON(w, http.StatusOK, map[string]any{"analysis": rec2.Analysis, "cached": true})
+			return
+		}
+		writeErr(w, http.StatusServiceUnavailable, "分析未完成，请重试")
+		return
+	} else {
+		defer done()
+	}
+	// 拿到单飞令牌后重新读一次：登记窗口内可能已经有人算完了
+	if rec2, ok := s.Records.Get(id); ok && rec2.Analyzed {
+		writeJSON(w, http.StatusOK, map[string]any{"analysis": rec2.Analysis, "cached": true})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), analyzeTimeout)
 	defer cancel()
 	km, err := review.Analyze(ctx, rec, s.Engines)
@@ -287,6 +345,23 @@ func (s *Server) handleRecordReview(w http.ResponseWriter, r *http.Request, id s
 	if text, ok := rec.Reviews[key]; ok && strings.TrimSpace(text) != "" {
 		writeJSON(w, http.StatusOK, map[string]any{"text": text, "cached": true})
 		return
+	}
+	// 单飞：同一手已有讲解在跑就等它（讲解要几十秒、还花 token，白跑两遍最亏）
+	if wait, done := s.beginWork("review:" + id + ":" + key); wait != nil {
+		if !waitWork(r, wait) {
+			writeErr(w, http.StatusServiceUnavailable, "等待讲解结果超时，请稍后重试")
+			return
+		}
+		if rec2, ok := s.Records.Get(id); ok {
+			if text, ok := rec2.Reviews[key]; ok && strings.TrimSpace(text) != "" {
+				writeJSON(w, http.StatusOK, map[string]any{"text": text, "cached": true})
+				return
+			}
+		}
+		writeErr(w, http.StatusServiceUnavailable, "讲解未完成，请重试")
+		return
+	} else {
+		defer done()
 	}
 	// 该手若有关键手标记，把它带给模型当线索（引擎的最佳手与分差）
 	var km *record.KeyMove

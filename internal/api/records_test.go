@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/IamAyang233/panda-xiangqi/internal/engine"
 	"github.com/IamAyang233/panda-xiangqi/internal/puzzle"
@@ -390,5 +392,46 @@ func TestRecordListHugePageNoPanic(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("%s 应 200，实际 %d %s", p, code, strings.TrimSpace(body))
 		}
+	}
+}
+
+// TestRecordAnalyzeSingleFlight 同一条记录的并发分析只该跑一遍，后来者等结果。
+//
+// 这条主要盯**握手**：beginWork 的 wait/done 只要有一处写错，等待者就会一直挂到
+// 自己的超时（这里会表现为 503 而不是 200），或者干脆没人干活。所以断言不只是
+// 「都返回 200」，还要求整批在很短的墙钟内完成。
+func TestRecordAnalyzeSingleFlight(t *testing.T) {
+	ts, srv, _ := recordServer(t)
+	defer ts.Close()
+	rec := &record.Record{ID: "sf1", Name: "并发局", Mode: "engine", HumanSide: "red",
+		StartFEN: "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w",
+		Moves:    []record.Move{{UCI: "b2e2", CN: "炮二平五", Red: true}},
+		Result:   "resign", Reason: "resign", Created: "2026-09-24 10:00:00"}
+	if err := srv.Records.Add(rec); err != nil {
+		t.Fatal(err)
+	}
+	const n = 4
+	start := time.Now()
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			code, _ := postJSON(t, ts, "/api/records/sf1/analyze", "")
+			codes[i] = code
+		}(i)
+	}
+	wg.Wait()
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("并发分析耗时 %v：像是有人在干等", d)
+	}
+	for i, c := range codes {
+		if c != http.StatusOK {
+			t.Fatalf("第 %d 个并发请求返回 %d，期望 200（全体应共享同一次分析）", i, c)
+		}
+	}
+	if got, _ := srv.Records.Get("sf1"); !got.Analyzed {
+		t.Fatal("并发跑完后应标记为已分析")
 	}
 }
